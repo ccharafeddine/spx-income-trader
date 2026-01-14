@@ -80,3 +80,28 @@ SMS_CONFIG = {
     'from_number': os.getenv('TWILIO_FROM_NUMBER'),
     'to_number': os.getenv('TWILIO_TO_NUMBER')
 }
+
+# Validate critical settings on import
+def validate_settings():
+    """Validate that critical settings are configured"""
+    errors = []
+    
+    if not ETRADE_CONFIG['consumer_key']:
+        errors.append("ETRADE_CONSUMER_KEY not set in .env")
+    
+    if not ETRADE_CONFIG['consumer_secret']:
+        errors.append("ETRADE_CONSUMER_SECRET not set in .env")
+    
+    if not ETRADE_CONFIG['account_id']:
+        errors.append("ETRADE_ACCOUNT_ID not set in .env")
+    
+    if TRADING_MODE not in ['paper', 'live']:
+        errors.append(f"Invalid TRADING_MODE: {TRADING_MODE}")
+    
+    if errors:
+        error_msg = "\n".join(errors)
+        raise ValueError(f"Configuration errors:\n{error_msg}")
+
+# Validate on import (but only if not in paper mode)
+if TRADING_MODE == 'live':
+    validate_settings()
