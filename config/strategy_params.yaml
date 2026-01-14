@@ -1,0 +1,56 @@
+strategy:
+  # Pulse bar detection threshold (% of bar range)
+  pulse_threshold: 10.0
+  
+  # Credit spread width in dollars
+  spread_width: 5.0
+  
+  # Profit target as % of max profit
+  profit_target_pct: 80.0
+  
+  # Maximum number of trades per day
+  max_daily_trades: 1
+  
+  # Number of contracts per trade
+  contracts_per_trade: 5
+
+risk:
+  # Maximum position size (contracts)
+  max_position_size: 5
+  
+  # Maximum daily loss before stopping ($)
+  max_daily_loss: 1000
+  
+  # Maximum risk per trade as % of account
+  max_account_risk_pct: 2.0
+
+timing:
+  # Morning trading window (EST)
+  morning_start: "09:30"
+  morning_end: "11:30"
+  
+  # Market close time (EST)
+  market_close: "16:00"
+  
+  # Timezone
+  timezone: "America/New_York"
+
+execution:
+  # Minimum credit to accept (% of expected)
+  min_credit_pct: 90.0
+  
+  # Order timeout in seconds
+  order_timeout: 30
+  
+  # Max slippage tolerance ($)
+  max_slippage: 0.10
+
+monitoring:
+  # Position check interval (seconds)
+  check_interval: 60
+  
+  # Enable 1pm trend check
+  enable_1pm_check: true
+  
+  # Minimum move for trending day ($)
+  trending_threshold: 15.0
