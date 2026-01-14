@@ -39,7 +39,7 @@ class PaperBroker(BrokerInterface):
         self.last_price_update = datetime.now(pytz.timezone("America/New_York"))
         
         logger.info(f"PaperBroker initialized with ${initial_balance:,.2f}")
-        logger.info(f"Slippage: ${slippage:.2f}, Commission: ${commission:.2f}/contract")
+        logger.info(f"Slippage: ${slippage:.2f}, Commission: ${self.commission:.2f}/contract")
     
     def get_current_price(self, symbol: str) -> float:
         """Get current simulated SPX price"""
