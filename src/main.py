@@ -109,35 +109,57 @@ class TradingBot:
     
     def _run_main_loop(self):
         """Main trading loop"""
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+    
         while self.running:
             try:
                 current_time = datetime.now(self.tz)
-                
+            
                 # Check if market is open
                 if not self._is_market_open(current_time):
                     logger.debug("Market closed, waiting...")
                     time_module.sleep(60)
+                    consecutive_errors = 0  # Reset error counter
                     continue
-                
+            
                 # Check daily limits
                 if not self._check_daily_limits():
                     logger.info("Daily limits reached, monitoring only")
                     time_module.sleep(300)
+                    consecutive_errors = 0
                     continue
-                
+            
                 # Monitor existing positions
                 self.position_manager.monitor_positions()
-                
-                # Look for new setups (only during morning window)
+            
+                # Look for new setups
                 if self._is_setup_window(current_time):
                     self._check_for_setups()
-                
+            
+                # Reset error counter on success
+                consecutive_errors = 0
+            
                 # Sleep before next iteration
                 time_module.sleep(30)
-                
+            
+            except KeyboardInterrupt:
+                raise  # Let this propagate
             except Exception as e:
-                logger.error(f"Error in main loop: {e}", exc_info=True)
-                time_module.sleep(60)
+                consecutive_errors += 1
+                logger.error(f"Error in main loop ({consecutive_errors}/{max_consecutive_errors}): {e}", 
+                            exc_info=True)
+            
+                # Stop if too many consecutive errors
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.critical(f"Too many consecutive errors ({consecutive_errors}), shutting down")
+                    self.shutdown(error=True)
+                    break
+            
+                # Exponential backoff
+                sleep_time = min(60 * (2 ** consecutive_errors), 300)  # Max 5 minutes
+                logger.info(f"Sleeping {sleep_time}s before retry...")
+                time_module.sleep(sleep_time)
     
     def _is_market_open(self, dt: datetime) -> bool:
         """Check if market is currently open"""
