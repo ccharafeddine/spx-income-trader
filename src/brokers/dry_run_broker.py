@@ -1,0 +1,371 @@
+"""
+Dry Run Broker Implementation
+
+A broker that:
+- Fetches REAL market data (via Yahoo Finance)
+- Simulates order execution WITHOUT actually trading
+- Logs all trading signals and decisions
+- Tracks hypothetical P&L
+
+Perfect for validating strategy logic with real market conditions
+before going live.
+"""
+
+import logging
+import json
+from datetime import datetime, date, timedelta
+from typing import Dict, List, Optional
+from pathlib import Path
+import pytz
+
+from .base import BrokerInterface
+from ..models.spread import CreditSpread, TradeDirection
+from ..data.yahoo_finance import YahooFinanceProvider
+
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from config.settings import BASE_DIR
+
+logger = logging.getLogger(__name__)
+
+
+class DryRunBroker(BrokerInterface):
+    """
+    Broker for dry-run testing with real market data.
+
+    Features:
+    - Real SPX prices from Yahoo Finance
+    - Simulated options chains based on real underlying price
+    - Full trade logging (what WOULD have been traded)
+    - Hypothetical P&L tracking
+    - No actual order execution
+    """
+
+    def __init__(
+        self,
+        initial_balance: float = 50000.0,
+        log_file: Optional[str] = None
+    ):
+        self.initial_balance = initial_balance
+        self.balance = initial_balance
+        self.tz = pytz.timezone('US/Eastern')
+
+        # Real market data provider
+        self.market_data = YahooFinanceProvider()
+
+        # Simulated positions (for tracking what we WOULD have)
+        self.hypothetical_positions: List[Dict] = []
+        self.hypothetical_trades: List[Dict] = []
+        self.order_counter = 0
+
+        # Trade signal log
+        self.log_file = log_file or str(BASE_DIR / 'logs' / 'dry_run_signals.json')
+        self._ensure_log_file()
+
+        # Options chain simulation parameters
+        self.spread_width = 0.20  # Bid-ask spread
+        self.strike_interval = 5  # SPX strikes are $5 apart
+
+        logger.info(f"DryRunBroker initialized with ${initial_balance:,.2f}")
+        logger.info(f"Signal log: {self.log_file}")
+
+    def _ensure_log_file(self):
+        """Ensure log directory and file exist."""
+        log_path = Path(self.log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if not log_path.exists():
+            with open(log_path, 'w') as f:
+                json.dump({"signals": [], "created": datetime.now().isoformat()}, f)
+
+    def _log_signal(self, signal_type: str, data: dict):
+        """Log a trading signal to file."""
+        try:
+            with open(self.log_file, 'r') as f:
+                log_data = json.load(f)
+
+            signal = {
+                "timestamp": datetime.now(self.tz).isoformat(),
+                "type": signal_type,
+                **data
+            }
+            log_data["signals"].append(signal)
+
+            with open(self.log_file, 'w') as f:
+                json.dump(log_data, f, indent=2, default=str)
+
+            # Also log to console
+            logger.info(f"[DRY RUN SIGNAL] {signal_type}: {data}")
+
+        except Exception as e:
+            logger.error(f"Failed to log signal: {e}")
+
+    def get_current_price(self, symbol: str) -> float:
+        """Get REAL current price from Yahoo Finance."""
+        if symbol.upper() in ('SPX', '$SPX.X', '^GSPC'):
+            quote = self.market_data.get_spx_quote()
+            if quote:
+                price = quote['price']
+                logger.debug(f"SPX price from Yahoo Finance: ${price:,.2f}")
+                return price
+
+        # Fallback for other symbols
+        logger.warning(f"Unknown symbol {symbol}, returning 0")
+        return 0.0
+
+    def get_options_chain(self, symbol: str, expiration: str) -> Dict[float, Dict]:
+        """
+        Generate simulated options chain based on REAL underlying price.
+
+        Uses Black-Scholes-ish approximations for realistic pricing.
+        """
+        # Get real SPX price
+        current_price = self.get_current_price(symbol)
+
+        if current_price == 0:
+            logger.error("Cannot generate options chain without underlying price")
+            return {}
+
+        # Get VIX for volatility estimate
+        vix_quote = self.market_data.get_vix_quote()
+        implied_vol = (vix_quote['price'] / 100) if vix_quote else 0.15
+
+        # Calculate time to expiration
+        exp_date = datetime.strptime(expiration, '%Y-%m-%d').date()
+        today = date.today()
+        dte = max(0, (exp_date - today).days)
+
+        # For 0DTE, use fraction of day remaining
+        if dte == 0:
+            now = datetime.now(self.tz)
+            market_close = now.replace(hour=16, minute=0, second=0)
+            if now < market_close:
+                hours_left = (market_close - now).total_seconds() / 3600
+                dte = hours_left / 24  # Fraction of day
+            else:
+                dte = 0.01  # Minimal time value
+
+        # Generate strikes around ATM
+        atm_strike = round(current_price / self.strike_interval) * self.strike_interval
+        strikes = [atm_strike + (i * self.strike_interval) for i in range(-20, 21)]
+
+        chain = {}
+        for strike in strikes:
+            # Simple option pricing approximation
+            moneyness = (current_price - strike) / current_price
+
+            # Base value from intrinsic
+            call_intrinsic = max(0, current_price - strike)
+            put_intrinsic = max(0, strike - current_price)
+
+            # Time value approximation
+            time_factor = (dte ** 0.5) * implied_vol * current_price * 0.4
+
+            # ATM options have most time value
+            atm_factor = 1 - min(abs(moneyness) * 5, 0.9)
+            time_value = time_factor * atm_factor
+
+            # Calculate option prices
+            call_mid = call_intrinsic + time_value
+            put_mid = put_intrinsic + time_value
+
+            # Apply bid-ask spread
+            half_spread = self.spread_width / 2
+
+            chain[strike] = {
+                'call_bid': max(0.05, call_mid - half_spread),
+                'call_ask': call_mid + half_spread,
+                'call_last': call_mid,
+                'call_volume': 100,
+                'call_oi': 500,
+                'put_bid': max(0.05, put_mid - half_spread),
+                'put_ask': put_mid + half_spread,
+                'put_last': put_mid,
+                'put_volume': 100,
+                'put_oi': 500,
+            }
+
+        logger.debug(f"Generated options chain with {len(chain)} strikes around ${atm_strike}")
+        return chain
+
+    def place_spread_order(
+        self,
+        spread: CreditSpread,
+        quantity: int,
+        limit_price: Optional[float] = None
+    ) -> str:
+        """
+        SIMULATE placing a spread order (does not actually trade).
+
+        Logs the signal and tracks hypothetical position.
+        """
+        self.order_counter += 1
+        order_id = f"DRY-{datetime.now().strftime('%Y%m%d%H%M%S')}-{self.order_counter}"
+
+        # Calculate fill price (simulated)
+        fill_price = limit_price if limit_price else spread.credit_received
+
+        # Log the signal
+        signal_data = {
+            "order_id": order_id,
+            "action": "OPEN",
+            "direction": spread.direction.value,
+            "short_strike": spread.short_leg.strike,
+            "long_strike": spread.long_leg.strike,
+            "quantity": quantity,
+            "limit_price": limit_price,
+            "simulated_fill": fill_price,
+            "credit_per_contract": fill_price,
+            "total_credit": fill_price * quantity * 100,
+            "max_risk": spread.max_risk * quantity,
+            "underlying_price": spread.underlying_price_at_entry,
+            "expiration": spread.expiration.isoformat() if spread.expiration else None,
+        }
+
+        self._log_signal("WOULD_OPEN_SPREAD", signal_data)
+
+        # Track hypothetical position
+        position = {
+            "order_id": order_id,
+            "spread": spread,
+            "quantity": quantity,
+            "entry_price": fill_price,
+            "entry_time": datetime.now(self.tz),
+            "status": "open"
+        }
+        self.hypothetical_positions.append(position)
+
+        # Update hypothetical balance
+        credit = fill_price * quantity * 100
+        self.balance += credit
+
+        print(f"\n{'='*60}")
+        print(f"  [DRY RUN] TRADE SIGNAL DETECTED")
+        print(f"{'='*60}")
+        print(f"  Direction:     {spread.direction.value.upper()}")
+        print(f"  Short Strike:  ${spread.short_leg.strike:,.0f}")
+        print(f"  Long Strike:   ${spread.long_leg.strike:,.0f}")
+        print(f"  Quantity:      {quantity} contracts")
+        print(f"  Credit:        ${fill_price:.2f} per spread")
+        print(f"  Total Credit:  ${credit:,.2f}")
+        print(f"  Max Risk:      ${spread.max_risk * quantity:,.2f}")
+        print(f"  SPX Price:     ${spread.underlying_price_at_entry:,.2f}")
+        print(f"{'='*60}")
+        print(f"  ** NO ACTUAL ORDER PLACED - DRY RUN MODE **")
+        print(f"{'='*60}\n")
+
+        return order_id
+
+    def get_order_status(self, order_id: str) -> Dict:
+        """Return simulated fill status."""
+        # Find the position
+        for pos in self.hypothetical_positions:
+            if pos["order_id"] == order_id:
+                return {
+                    "status": "filled",  # Always "fill" in dry run
+                    "fill_price": pos["entry_price"],
+                    "filled_quantity": pos["quantity"]
+                }
+
+        return {"status": "not_found", "fill_price": 0, "filled_quantity": 0}
+
+    def close_spread(
+        self,
+        spread: CreditSpread,
+        quantity: int,
+        limit_price: float = 0.20
+    ) -> str:
+        """SIMULATE closing a spread."""
+        self.order_counter += 1
+        order_id = f"DRY-CLOSE-{datetime.now().strftime('%Y%m%d%H%M%S')}-{self.order_counter}"
+
+        # Log the signal
+        signal_data = {
+            "order_id": order_id,
+            "action": "CLOSE",
+            "direction": spread.direction.value,
+            "short_strike": spread.short_leg.strike,
+            "long_strike": spread.long_leg.strike,
+            "quantity": quantity,
+            "limit_price": limit_price,
+            "debit_per_contract": limit_price,
+            "total_debit": limit_price * quantity * 100,
+        }
+
+        self._log_signal("WOULD_CLOSE_SPREAD", signal_data)
+
+        # Update hypothetical balance
+        debit = limit_price * quantity * 100
+        self.balance -= debit
+
+        print(f"\n{'='*60}")
+        print(f"  [DRY RUN] CLOSE SIGNAL")
+        print(f"{'='*60}")
+        print(f"  Closing {quantity} contracts at ${limit_price:.2f}")
+        print(f"  Total Debit: ${debit:,.2f}")
+        print(f"  ** NO ACTUAL ORDER PLACED - DRY RUN MODE **")
+        print(f"{'='*60}\n")
+
+        return order_id
+
+    def get_position_value(self, spread: CreditSpread) -> float:
+        """Get current value of spread based on real market price."""
+        current_price = self.get_current_price('SPX')
+
+        if current_price == 0:
+            return 0
+
+        # Simple spread valuation based on intrinsic value
+        if spread.direction == TradeDirection.BULLISH:
+            # Put credit spread
+            if current_price >= spread.short_leg.strike:
+                return 0  # Both OTM, spread worth ~0
+            elif current_price <= spread.long_leg.strike:
+                return spread.spread_width * 100  # Max loss
+            else:
+                return (spread.short_leg.strike - current_price) * 100
+        else:
+            # Call credit spread
+            if current_price <= spread.short_leg.strike:
+                return 0  # Both OTM
+            elif current_price >= spread.long_leg.strike:
+                return spread.spread_width * 100  # Max loss
+            else:
+                return (current_price - spread.short_leg.strike) * 100
+
+    def get_account_balance(self) -> Dict:
+        """Get hypothetical account balance."""
+        return {
+            'net_account_value': self.balance,
+            'cash_available': self.balance,
+            'buying_power': self.balance * 4,
+            'initial_balance': self.initial_balance,
+            'hypothetical_pnl': self.balance - self.initial_balance,
+            'open_positions': len([p for p in self.hypothetical_positions if p['status'] == 'open'])
+        }
+
+    def get_signal_log(self) -> List[Dict]:
+        """Read the signal log."""
+        try:
+            with open(self.log_file, 'r') as f:
+                return json.load(f).get('signals', [])
+        except:
+            return []
+
+    def print_summary(self):
+        """Print summary of dry run session."""
+        signals = self.get_signal_log()
+        open_signals = [s for s in signals if s['type'] == 'WOULD_OPEN_SPREAD']
+        close_signals = [s for s in signals if s['type'] == 'WOULD_CLOSE_SPREAD']
+
+        print(f"\n{'='*60}")
+        print(f"  DRY RUN SESSION SUMMARY")
+        print(f"{'='*60}")
+        print(f"  Total Signals:     {len(signals)}")
+        print(f"  Open Signals:      {len(open_signals)}")
+        print(f"  Close Signals:     {len(close_signals)}")
+        print(f"  Starting Balance:  ${self.initial_balance:,.2f}")
+        print(f"  Current Balance:   ${self.balance:,.2f}")
+        print(f"  Hypothetical P&L:  ${self.balance - self.initial_balance:+,.2f}")
+        print(f"  Signal Log:        {self.log_file}")
+        print(f"{'='*60}\n")

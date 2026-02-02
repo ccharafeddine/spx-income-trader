@@ -27,6 +27,7 @@ from config.settings import (
     LOG_LEVEL
 )
 from src.brokers.paper_trader import PaperBroker
+from src.brokers.dry_run_broker import DryRunBroker
 from src.core.strategy import SPXIncomeStrategy
 from src.core.position_manager import PositionManager
 from src.core.bar_builder import BarBuilder
@@ -49,12 +50,16 @@ class TradingBot:
         broker,
         strategy: SPXIncomeStrategy,
         db_manager: DatabaseManager,
-        notification_manager: Optional[NotificationManager] = None
+        notification_manager: Optional[NotificationManager] = None,
+        dry_run: bool = False,
+        skip_confirm: bool = False
     ):
         self.broker = broker
         self.strategy = strategy
         self.db = db_manager
         self.notifier = notification_manager
+        self.dry_run = dry_run
+        self.skip_confirm = skip_confirm
         
         # Initialize components
         self.position_manager = PositionManager(broker, strategy, db_manager)
@@ -80,6 +85,9 @@ class TradingBot:
         logger.info("=" * 60)
         logger.info("SPX Income Trading Bot Starting")
         logger.info("=" * 60)
+        if self.dry_run:
+            logger.info("*** DRY RUN MODE - NO ORDERS WILL BE PLACED ***")
+            logger.info("Using real market data from Yahoo Finance")
         logger.info(f"Mode: {TRADING_MODE.upper()}")
         logger.info(f"Max daily trades: {self.max_daily_trades}")
         logger.info(f"Max daily loss: ${self.max_daily_loss}")
@@ -118,7 +126,7 @@ class TradingBot:
             
                 # Check if market is open
                 if not self._is_market_open(current_time):
-                    logger.debug("Market closed, waiting...")
+                    logger.info(f"Market closed ({current_time.strftime('%a %H:%M')} ET). Next check in 60s...")
                     time_module.sleep(60)
                     consecutive_errors = 0  # Reset error counter
                     continue
@@ -293,12 +301,12 @@ class TradingBot:
     
     def _confirm_trade(self, spread) -> bool:
         """Prompt user to confirm trade (in interactive mode)"""
-        # Skip confirmation in non-interactive mode
-        if not sys.stdin.isatty():
-            return True
-        
+        # Always show trade details
         print("\n" + "=" * 60)
-        print("TRADE CONFIRMATION REQUIRED")
+        if self.dry_run:
+            print("DRY RUN - TRADE SIGNAL DETECTED")
+        else:
+            print("TRADE CONFIRMATION REQUIRED")
         print("=" * 60)
         print(f"Direction: {spread.direction.value.upper()}")
         print(f"Short Strike: ${spread.short_leg.strike}")
@@ -307,8 +315,20 @@ class TradingBot:
         print(f"Max Profit: ${spread.max_profit:.2f}")
         print(f"Max Risk: ${spread.max_risk:.2f}")
         print("=" * 60)
-        
-        response = input("Execute this trade? (yes/no): ").strip().lower()
+
+        # In dry-run mode with skip_confirm, auto-accept
+        if self.dry_run and self.skip_confirm:
+            print("[DRY RUN] Auto-accepting signal (--no-confirm)")
+            return True
+
+        # Skip confirmation in non-interactive mode or if flag set
+        if self.skip_confirm or not sys.stdin.isatty():
+            return True
+
+        if self.dry_run:
+            response = input("Log this signal? (yes/no): ").strip().lower()
+        else:
+            response = input("Execute this trade? (yes/no): ").strip().lower()
         return response in ['yes', 'y']
     
     def shutdown(self, error: bool = False):
@@ -352,7 +372,17 @@ def main():
         default=LOG_LEVEL,
         help='Logging level'
     )
-    
+    parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Dry run mode: use real market data but do not execute trades'
+    )
+    parser.add_argument(
+        '--no-confirm',
+        action='store_true',
+        help='Skip trade confirmation prompts (useful for unattended dry runs)'
+    )
+
     args = parser.parse_args()
     
     # Update log level if specified
@@ -363,11 +393,14 @@ def main():
         # Initialize components
         logger.info("Initializing trading system...")
         
-        # For now, only paper trading is implemented
-        if args.mode == 'paper':
+        # Initialize broker based on mode
+        if args.dry_run:
+            logger.info("*** DRY RUN MODE - Using real market data, no orders will be placed ***")
+            broker = DryRunBroker(initial_balance=50000.0)
+        elif args.mode == 'paper':
             broker = PaperBroker(initial_balance=50000.0)
         else:
-            logger.error("Live trading not yet implemented. Use --mode paper")
+            logger.error("Live trading not yet implemented. Use --mode paper or --dry-run")
             return 1
         
         strategy = SPXIncomeStrategy()
@@ -375,7 +408,11 @@ def main():
         notifier = NotificationManager()
         
         # Create bot
-        bot = TradingBot(broker, strategy, db_manager, notifier)
+        bot = TradingBot(
+            broker, strategy, db_manager, notifier,
+            dry_run=args.dry_run,
+            skip_confirm=args.no_confirm
+        )
         
         # Set up signal handlers
         def signal_handler(sig, frame):

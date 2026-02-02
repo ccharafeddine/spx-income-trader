@@ -10,12 +10,18 @@ load_dotenv()
 BASE_DIR = Path(__file__).parent.parent
 
 # E*TRADE Configuration
+_etrade_sandbox = os.getenv('ETRADE_SANDBOX', 'true').lower() == 'true'
+
+# Use sandbox credentials when in sandbox mode, production credentials otherwise
 ETRADE_CONFIG = {
-    'consumer_key': os.getenv('ETRADE_CONSUMER_KEY'),
-    'consumer_secret': os.getenv('ETRADE_CONSUMER_SECRET'),
+    'consumer_key': os.getenv('ETRADE_SANDBOX_KEY') if _etrade_sandbox else os.getenv('ETRADE_CONSUMER_KEY'),
+    'consumer_secret': os.getenv('ETRADE_SANDBOX_SECRET') if _etrade_sandbox else os.getenv('ETRADE_CONSUMER_SECRET'),
     'account_id': os.getenv('ETRADE_ACCOUNT_ID'),
-    'sandbox': os.getenv('ETRADE_SANDBOX', 'true').lower() == 'true',
-    'base_url': 'https://apisb.etrade.com' if os.getenv('ETRADE_SANDBOX', 'true').lower() == 'true' else 'https://api.etrade.com'
+    'sandbox': _etrade_sandbox,
+    'base_url': 'https://apisb.etrade.com' if _etrade_sandbox else 'https://api.etrade.com',
+    # Authorization URL is ALWAYS us.etrade.com, even for sandbox
+    'auth_base_url': 'https://us.etrade.com',
+    'token_file': str(BASE_DIR / 'tokens' / ('sandbox_tokens.json' if _etrade_sandbox else 'tokens.json'))
 }
 
 # Trading Configuration
