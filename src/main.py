@@ -119,35 +119,47 @@ class TradingBot:
         """Main trading loop"""
         consecutive_errors = 0
         max_consecutive_errors = 5
-    
+        loop_count = 0
+        last_heartbeat = datetime.now(self.tz)
+
         while self.running:
             try:
                 current_time = datetime.now(self.tz)
-            
+                loop_count += 1
+
+                # Heartbeat logging every 5 minutes
+                if (current_time - last_heartbeat).total_seconds() >= 300:
+                    logger.info(f"[Heartbeat] Loop #{loop_count} at {current_time.strftime('%H:%M:%S')} ET")
+                    last_heartbeat = current_time
+
                 # Check if market is open
                 if not self._is_market_open(current_time):
                     logger.info(f"Market closed ({current_time.strftime('%a %H:%M')} ET). Next check in 60s...")
                     time_module.sleep(60)
                     consecutive_errors = 0  # Reset error counter
                     continue
-            
+
                 # Check daily limits
                 if not self._check_daily_limits():
                     logger.info("Daily limits reached, monitoring only")
                     time_module.sleep(300)
                     consecutive_errors = 0
                     continue
-            
+
                 # Monitor existing positions
                 self.position_manager.monitor_positions()
-            
+
                 # Look for new setups
                 if self._is_setup_window(current_time):
                     self._check_for_setups()
-            
+                else:
+                    # Log once on startup if outside setup window, or every 10 minutes
+                    if loop_count == 1 or loop_count % 20 == 0:  # every ~10 min at 30s intervals
+                        logger.info(f"Outside setup window (9:30-11:30 ET). Current: {current_time.strftime('%H:%M')} ET. Monitoring only.")
+
                 # Reset error counter on success
                 consecutive_errors = 0
-            
+
                 # Sleep before next iteration
                 time_module.sleep(30)
             
@@ -209,10 +221,22 @@ class TradingBot:
         try:
             # Get current SPX price
             current_price = self.broker.get_current_price("SPX")
-            
+            if current_price == 0:
+                logger.warning("Failed to get SPX price, skipping setup check")
+                return
+
+            logger.debug(f"SPX price: ${current_price:,.2f}")
+
             # Update bar builder
             current_time = datetime.now(self.tz)
             bar = self.bar_builder.add_price(current_time, current_price)
+
+            # Log current bar building status periodically
+            if self.bar_builder.current_bar_start and self.bar_builder.tick_count % 5 == 0:
+                logger.info(f"Building bar {self.bar_builder.current_bar_start.strftime('%H:%M')}: "
+                           f"O=${self.bar_builder.open_price:.2f} H=${self.bar_builder.high_price:.2f} "
+                           f"L=${self.bar_builder.low_price:.2f} C=${current_price:.2f} "
+                           f"({self.bar_builder.tick_count} ticks)")
             
             # If bar just completed, check for setup
             if bar:
@@ -242,8 +266,8 @@ class TradingBot:
             logger.info(f"EXECUTING {direction.value.upper()} SETUP")
             logger.info("=" * 60)
             
-            # Get options chain
-            expiration = datetime.now(self.tz).strftime("%Y%m%d")
+            # Get options chain (format: YYYY-MM-DD for dry_run_broker compatibility)
+            expiration = datetime.now(self.tz).strftime("%Y-%m-%d")
             options_chain = self.broker.get_options_chain("SPX", expiration)
             
             # Construct spread
