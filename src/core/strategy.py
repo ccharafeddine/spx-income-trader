@@ -3,6 +3,11 @@ from datetime import datetime, time
 import logging
 import pytz
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from config.settings import STRATEGY_PARAMS
+
 from ..models.bar import Bar, BarType
 from ..models.spread import CreditSpread, OptionLeg, TradeDirection
 from ..models.trade import Trade
@@ -25,24 +30,29 @@ class SPXIncomeStrategy:
         self,
         pulse_threshold: float = 10.0,
         spread_width: float = 5.0,
-        profit_target_pct: float = 80.0
+        profit_target_pct: float = 80.0,
+        min_credit: float = 1.00
     ):
         self.pulse_detector = PulseBarDetector(pulse_threshold)
         self.spread_width = spread_width
         self.profit_target = profit_target_pct / 100.0
-        
+
+        # Hard floor for credit received
+        execution_params = STRATEGY_PARAMS.get('execution', {})
+        self.min_credit = execution_params.get('min_credit', min_credit)
+
         self.tz = pytz.timezone("America/New_York")
-        
+
         # Expected credit ranges based on moneyness
         self.credit_expectations = {
             "OTM": (2.40, 2.60),
             "ATM": (2.50, 2.80),
             "ITM": (2.80, 3.00)
         }
-        
+
         logger.info(f"SPXIncomeStrategy initialized: "
                    f"pulse={pulse_threshold}%, spread=${spread_width}, "
-                   f"target={profit_target_pct}%")
+                   f"target={profit_target_pct}%, min_credit=${self.min_credit:.2f}")
     
     def evaluate_setup(
         self,
@@ -133,13 +143,20 @@ class SPXIncomeStrategy:
             
             # Calculate net credit
             credit = short_price - long_price
-            
+
             logger.info(f"Credit: ${credit:.2f} (short=${short_price:.2f}, long=${long_price:.2f})")
-            
-            # Validate credit
+
+            # Hard floor check - reject spreads with insufficient credit
+            if credit < self.min_credit:
+                logger.warning(
+                    f"Credit ${credit:.2f} is below minimum ${self.min_credit:.2f} - REJECTING spread"
+                )
+                return None
+
+            # Validate credit against expectations
             if not self._validate_credit(credit, current_price, short_strike, direction):
                 logger.warning(f"Credit ${credit:.2f} below expectations")
-            
+
             # Create spread
             short_leg = OptionLeg(
                 strike=short_strike,

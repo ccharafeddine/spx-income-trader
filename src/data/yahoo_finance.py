@@ -181,6 +181,13 @@ class YahooFinanceProvider:
                         break
 
             now = datetime.now(self.tz)
+
+            # Extract market time from Yahoo's response for freshness checks
+            market_time_epoch = meta.get('regularMarketTime', 0)
+            market_time_dt = None
+            if market_time_epoch:
+                market_time_dt = datetime.fromtimestamp(market_time_epoch, tz=self.tz)
+
             quote_data = {
                 'symbol': symbol,
                 'price': price,
@@ -189,7 +196,9 @@ class YahooFinanceProvider:
                 'low': low_price,
                 'previous_close': prev_close,
                 'volume': volume,
-                'timestamp': now.isoformat()
+                'timestamp': now.isoformat(),
+                'market_time': market_time_dt.isoformat() if market_time_dt else None,
+                'market_time_epoch': market_time_epoch
             }
 
             # Calculate change
@@ -250,7 +259,9 @@ class YahooFinanceProvider:
                 'low': low_price,
                 'previous_close': prev_close,
                 'volume': volume,
-                'timestamp': now.isoformat()
+                'timestamp': now.isoformat(),
+                'market_time': None,
+                'market_time_epoch': 0
             }
 
             if prev_close > 0:

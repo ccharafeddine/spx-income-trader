@@ -107,6 +107,19 @@ class DryRunBroker(BrokerInterface):
             if quote:
                 price = quote['price']
                 logger.debug(f"SPX price from Yahoo Finance: ${price:,.2f}")
+
+                # Check data freshness
+                market_time_epoch = quote.get('market_time_epoch', 0)
+                if market_time_epoch:
+                    now = datetime.now(self.tz)
+                    market_dt = datetime.fromtimestamp(market_time_epoch, tz=self.tz)
+                    staleness = (now - market_dt).total_seconds()
+                    if staleness > 7200:  # 2 hours
+                        logger.warning(
+                            f"Market data may be stale: last update {market_dt.strftime('%Y-%m-%d %H:%M')} ET "
+                            f"({staleness / 3600:.1f} hours ago)"
+                        )
+
                 return price
 
         # Fallback for other symbols

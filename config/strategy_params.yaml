@@ -38,6 +38,9 @@ timing:
 execution:
   # Minimum credit to accept (% of expected)
   min_credit_pct: 90.0
+
+  # Hard floor for credit received ($) - spreads below this are rejected
+  min_credit: 1.00
   
   # Order timeout in seconds
   order_timeout: 30

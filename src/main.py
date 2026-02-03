@@ -5,6 +5,7 @@ This is the main entry point for the trading bot.
 """
 
 import sys
+import os
 import argparse
 import logging
 from pathlib import Path
@@ -19,6 +20,7 @@ import pytz
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.settings import (
+    BASE_DIR,
     ETRADE_CONFIG,
     TRADING_MODE,
     STRATEGY_PARAMS,
@@ -71,6 +73,7 @@ class TradingBot:
         self.tz = pytz.timezone("America/New_York")
         self.trades_today = 0
         self.daily_pnl = 0.0
+        self.current_trading_date = None
         
         # Parameters
         self.max_daily_trades = STRATEGY_PARAMS['strategy']['max_daily_trades']
@@ -126,6 +129,19 @@ class TradingBot:
             try:
                 current_time = datetime.now(self.tz)
                 loop_count += 1
+
+                # Daily reset check - reset counters when date changes
+                today = current_time.date()
+                if today != self.current_trading_date:
+                    if self.current_trading_date is not None:
+                        logger.info(
+                            f"New trading day: {today}. "
+                            f"Resetting counters (prev: {self.trades_today} trades, "
+                            f"${self.daily_pnl:.2f} P&L)"
+                        )
+                    self.current_trading_date = today
+                    self.trades_today = 0
+                    self.daily_pnl = 0.0
 
                 # Heartbeat logging every 5 minutes
                 if (current_time - last_heartbeat).total_seconds() >= 300:
@@ -219,6 +235,12 @@ class TradingBot:
     def _check_for_setups(self):
         """Check for new trading setups"""
         try:
+            # Redundant market-hours guard - prevents signals if called outside market hours
+            current_time = datetime.now(self.tz)
+            if not self._is_market_open(current_time):
+                logger.warning("_check_for_setups called outside market hours - skipping")
+                return
+
             # Get current SPX price
             current_price = self.broker.get_current_price("SPX")
             if current_price == 0:
@@ -379,6 +401,15 @@ class TradingBot:
         logger.info("Shutdown complete")
 
 
+def _check_pid_alive(pid: int) -> bool:
+    """Check if a process with the given PID is still running."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
@@ -408,15 +439,41 @@ def main():
     )
 
     args = parser.parse_args()
-    
+
     # Update log level if specified
     if args.log_level != LOG_LEVEL:
         logging.getLogger().setLevel(args.log_level)
-    
+
+    # --- PID Lockfile ---
+    lockfile = BASE_DIR / 'spx_trader.lock'
+
+    if lockfile.exists():
+        try:
+            existing_pid = int(lockfile.read_text().strip())
+            if _check_pid_alive(existing_pid):
+                logger.error(f"Another bot instance is running (PID {existing_pid}). Exiting.")
+                print(f"ERROR: Another bot instance is running (PID {existing_pid}). "
+                      f"Remove {lockfile} if this is stale.")
+                return 1
+            else:
+                logger.warning(f"Stale lockfile found (PID {existing_pid} not running). Removing.")
+                lockfile.unlink()
+        except (ValueError, OSError) as e:
+            logger.warning(f"Invalid lockfile, removing: {e}")
+            lockfile.unlink(missing_ok=True)
+
+    # Write current PID
+    try:
+        lockfile.write_text(str(os.getpid()))
+        logger.info(f"PID lockfile created: {lockfile} (PID {os.getpid()})")
+    except OSError as e:
+        logger.error(f"Failed to create lockfile: {e}")
+        return 1
+
     try:
         # Initialize components
         logger.info("Initializing trading system...")
-        
+
         # Initialize broker based on mode
         if args.dry_run:
             logger.info("*** DRY RUN MODE - Using real market data, no orders will be placed ***")
@@ -426,34 +483,47 @@ def main():
         else:
             logger.error("Live trading not yet implemented. Use --mode paper or --dry-run")
             return 1
-        
+
         strategy = SPXIncomeStrategy()
         db_manager = DatabaseManager(DATABASE_PATH)
         notifier = NotificationManager()
-        
+
         # Create bot
         bot = TradingBot(
             broker, strategy, db_manager, notifier,
             dry_run=args.dry_run,
             skip_confirm=args.no_confirm
         )
-        
+
         # Set up signal handlers
         def signal_handler(sig, frame):
             logger.info("Interrupt signal received")
             bot.shutdown()
+            # Clean up lockfile
+            try:
+                lockfile.unlink(missing_ok=True)
+            except OSError:
+                pass
             sys.exit(0)
-        
+
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
-        
+
         # Start bot
         bot.start()
-    
+
     except Exception as e:
         logger.error(f"Failed to start bot: {e}", exc_info=True)
         return 1
-    
+
+    finally:
+        # Always clean up lockfile on exit
+        try:
+            lockfile.unlink(missing_ok=True)
+            logger.info("PID lockfile removed")
+        except OSError:
+            pass
+
     return 0
 
 
