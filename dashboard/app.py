@@ -1328,7 +1328,7 @@ def _get_market_context(trade, signal=None, log_cache=None):
     vix_level = None
     if signal:
         vix_level = signal.get('vix_at_signal')
-    if vix_level is None and trade_date == today_str:
+    if vix_level is None:
         try:
             vix_quote = yahoo.get_vix_quote()
             if vix_quote:
