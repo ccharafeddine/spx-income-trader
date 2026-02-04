@@ -42,7 +42,10 @@ MIN_CREDIT_THRESHOLD = 1.00  # Signals below this were before safeguards
 # ---------------------------------------------------------------------------
 
 def check_bot_status():
-    """Check if the trading bot process is running via its lockfile."""
+    """Check if the trading bot process is running via its lockfile.
+
+    Includes heartbeat-based staleness detection as secondary check.
+    """
     if not LOCKFILE.exists():
         return {'running': False, 'pid': None, 'status': 'stopped'}
 
@@ -51,13 +54,42 @@ def check_bot_status():
     except (ValueError, OSError):
         return {'running': False, 'pid': None, 'status': 'stopped'}
 
+    # Check if process is alive
+    process_alive = False
     try:
         os.kill(pid, 0)
-        return {'running': True, 'pid': pid, 'status': 'running'}
+        process_alive = True
     except PermissionError:
-        return {'running': True, 'pid': pid, 'status': 'running'}
+        process_alive = True
     except OSError:
+        process_alive = False
+
+    if not process_alive:
         return {'running': False, 'pid': pid, 'status': 'stale'}
+
+    # Process is alive — check heartbeat freshness as secondary signal
+    heartbeat_warning = None
+    try:
+        log_data = parse_todays_log()
+        if log_data.get('last_heartbeat'):
+            hb_time_str = log_data['last_heartbeat']['time']
+            now_et = datetime.now(ET)
+            hb_time = now_et.replace(
+                hour=int(hb_time_str[:2]),
+                minute=int(hb_time_str[3:5]),
+                second=int(hb_time_str[6:8]),
+                microsecond=0
+            )
+            secs = (now_et - hb_time).total_seconds()
+            if secs > 600:
+                heartbeat_warning = f'Last heartbeat {int(secs // 60)}m ago'
+    except Exception:
+        pass
+
+    result = {'running': True, 'pid': pid, 'status': 'running'}
+    if heartbeat_warning:
+        result['heartbeat_warning'] = heartbeat_warning
+    return result
 
 
 def is_market_open():

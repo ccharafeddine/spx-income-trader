@@ -933,9 +933,17 @@ async function updateStatus() {
   const dot = document.getElementById('bot-dot');
   const txt = document.getElementById('bot-status-text');
   if (d.bot.running) {
-    dot.className = 'dot running';
-    txt.textContent = 'RUNNING';
-    txt.style.color = 'var(--green)';
+    if (d.bot.heartbeat_warning) {
+      dot.className = 'dot running';
+      txt.textContent = 'RUNNING ⚠';
+      txt.title = d.bot.heartbeat_warning;
+      txt.style.color = 'var(--yellow, #f0ad4e)';
+    } else {
+      dot.className = 'dot running';
+      txt.textContent = 'RUNNING';
+      txt.title = '';
+      txt.style.color = 'var(--green)';
+    }
   } else {
     dot.className = 'dot';
     txt.textContent = d.bot.status === 'stale' ? 'STALE' : 'STOPPED';
