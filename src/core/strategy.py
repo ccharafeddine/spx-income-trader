@@ -1,5 +1,6 @@
 from typing import Optional, Tuple, Dict
 from datetime import datetime, time
+from datetime import time as dt_time
 import logging
 import pytz
 
@@ -50,9 +51,18 @@ class SPXIncomeStrategy:
             "ITM": (2.80, 3.00)
         }
 
+        # 1pm in-trade management settings
+        monitoring = STRATEGY_PARAMS.get('monitoring', {})
+        self.enable_1pm_check = monitoring.get('enable_1pm_check', True)
+        self.trending_threshold = monitoring.get('trending_threshold', 15.0)
+        self.management_mode = monitoring.get('management_mode', 'MODERATE').upper()
+
         logger.info(f"SPXIncomeStrategy initialized: "
                    f"pulse={pulse_threshold}%, spread=${spread_width}, "
                    f"target={profit_target_pct}%, min_credit=${self.min_credit:.2f}")
+        logger.info(f"1pm management: enabled={self.enable_1pm_check}, "
+                   f"mode={self.management_mode}, "
+                   f"trending_threshold=${self.trending_threshold}")
     
     def evaluate_setup(
         self,
@@ -254,28 +264,160 @@ class SPXIncomeStrategy:
             else:
                 return "OTM"
     
-    def should_exit(
-        self,
-        trade: Trade,
-        current_spread_price: float,
-        current_time: datetime
-    ) -> Tuple[bool, str]:
+    def check_1pm_management(self, trade, current_price: float, current_time) -> Tuple[bool, str, dict]:
         """
-        Determine if position should be exited
-        
-        Returns:
-            (should_exit, reason)
+        1pm ET in-trade management check per Production Line Trading strategy (p.19-20).
+
+        At 1pm, evaluates whether day is trending (|move| > threshold) or not,
+        and whether the move is favorable to our position direction.
+
+        Decision matrix by management_mode:
+        - Trending (any): always run to expiration (all modes)
+        - Non-trending favorable: CONSERVATIVE closes, others hold
+        - Non-trending unfavorable: MODERATE and CONSERVATIVE close, AGGRESSIVE holds
+
+        Returns (should_close, reason, assessment_dict)
         """
-        # Check profit target (80% of max profit)
+        check_start = dt_time(13, 0)
+        check_end = dt_time(14, 0)
+        current_time_only = current_time.time()
+
+        if not (check_start <= current_time_only < check_end):
+            return False, "", {}
+
+        if not self.enable_1pm_check:
+            return False, "", {}
+
+        entry_price = trade.spread.underlying_price_at_entry
+        if not entry_price or entry_price == 0:
+            logger.warning("1pm check: No entry price available, skipping")
+            return False, "", {}
+
+        move = current_price - entry_price
+        abs_move = abs(move)
+
+        # Favorable = move in our trade's direction
+        direction = trade.spread.direction
+        if direction.value == 'bullish':
+            favorable = move >= 0  # Put spread = want SPX up/flat
+        else:
+            favorable = move <= 0  # Call spread = want SPX down/flat
+
+        is_trending = abs_move >= self.trending_threshold
+
+        assessment = {
+            'entry_price': round(entry_price, 2),
+            'current_price': round(current_price, 2),
+            'move': round(move, 2),
+            'abs_move': round(abs_move, 2),
+            'is_trending': is_trending,
+            'is_favorable': favorable,
+            'direction': direction.value,
+            'management_mode': self.management_mode,
+            'trending_threshold': self.trending_threshold,
+        }
+
+        should_close = False
+        reason = ""
+
+        if is_trending:
+            fav_str = 'FAVORABLE' if favorable else 'UNFAVORABLE'
+            reason = (
+                f"1PM CHECK: TRENDING {fav_str} "
+                f"(SPX moved ${move:+.2f}, >{self.trending_threshold} threshold). "
+                f"Action: RUN TO EXPIRATION"
+            )
+        else:
+            if favorable:
+                if self.management_mode == 'CONSERVATIVE':
+                    should_close = True
+                    reason = (
+                        f"1PM CHECK: NON-TRENDING FAVORABLE "
+                        f"(SPX moved ${move:+.2f}). "
+                        f"Mode: CONSERVATIVE — closing early for partial gain"
+                    )
+                else:
+                    reason = (
+                        f"1PM CHECK: NON-TRENDING FAVORABLE "
+                        f"(SPX moved ${move:+.2f}). "
+                        f"Mode: {self.management_mode} — holding"
+                    )
+            else:
+                if self.management_mode in ('MODERATE', 'CONSERVATIVE'):
+                    should_close = True
+                    reason = (
+                        f"1PM CHECK: NON-TRENDING UNFAVORABLE "
+                        f"(SPX moved ${move:+.2f}). "
+                        f"Mode: {self.management_mode} — closing early (+10bp edge)"
+                    )
+                else:
+                    reason = (
+                        f"1PM CHECK: NON-TRENDING UNFAVORABLE "
+                        f"(SPX moved ${move:+.2f}). "
+                        f"Mode: AGGRESSIVE — holding"
+                    )
+
+        logger.info(reason)
+        assessment['decision'] = 'CLOSE_EARLY' if should_close else 'RUN_TO_EXPIRATION'
+        assessment['reason'] = reason
+
+        return should_close, reason, assessment
+
+    def classify_credit_quality(self, credit_received: float, current_price: float, short_strike: float, direction) -> dict:
+        """
+        Classify credit quality per strategy expectations (page 20).
+        OTM ~$2.40, ITM $2.50-$2.80, 2xITM $2.80-$3.00.
+        """
+        moneyness = self._get_moneyness(current_price, short_strike, direction)
+        expected_range = self.credit_expectations.get(moneyness, (2.40, 2.80))
+        expected_min, expected_max = expected_range
+
+        if credit_received >= expected_min:
+            quality = "GOOD" if credit_received <= expected_max * 1.1 else "ABOVE_EXPECTED"
+        elif credit_received >= expected_min * 0.8:
+            quality = "ACCEPTABLE"
+        else:
+            quality = "BELOW_EXPECTED"
+
+        return {
+            'quality': quality,
+            'credit_received': round(credit_received, 2),
+            'moneyness': moneyness,
+            'expected_range': f"${expected_min:.2f}-${expected_max:.2f}",
+            'expected_min': expected_min,
+            'expected_max': expected_max,
+            'pct_of_expected_min': round((credit_received / expected_min) * 100, 1) if expected_min > 0 else 0,
+            'is_simulated_concern': credit_received < 1.50,
+        }
+
+    def should_exit(self, trade, current_spread_price: float, current_time) -> Tuple[bool, str]:
+        """
+        Determine if position should be exited.
+        Checks: 1) 80% profit target, 2) 1pm trend management, 3) expiration.
+        """
+        # 1. Profit target
         max_profit = trade.spread.max_profit * trade.quantity
         current_profit = (trade.entry_price - current_spread_price) * 100 * trade.quantity
         profit_target = max_profit * self.profit_target
-        
+
         if current_profit >= profit_target:
             return True, f"Profit target reached: ${current_profit:.2f} (target: ${profit_target:.2f})"
-        
-        # Check expiration
+
+        # 2. 1pm management check (run once per trade per day)
+        if self.enable_1pm_check and not getattr(trade, '_1pm_checked', False):
+            current_spx = getattr(trade, '_current_spx_price', 0)
+            if current_spx > 0:
+                should_close, reason, assessment = self.check_1pm_management(
+                    trade, current_spx, current_time
+                )
+                if assessment:  # Check was performed (in 1pm-2pm window)
+                    trade._1pm_checked = True
+                    trade._1pm_assessment = assessment
+                    if should_close:
+                        return True, reason
+
+        # 3. Expiration
         if current_time >= trade.spread.expiration:
             return True, "Expiration reached (4:00 PM EST)"
-        
+
         return False, ""
