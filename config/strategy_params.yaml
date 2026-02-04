@@ -57,3 +57,9 @@ monitoring:
   
   # Minimum move for trending day ($)
   trending_threshold: 15.0
+
+  # 1pm management mode (Production Line Trading p.19-20):
+  #   AGGRESSIVE    - Always run to expiration (ignores 1pm check)
+  #   MODERATE      - Close early on non-trending + unfavorable only
+  #   CONSERVATIVE  - Close early on any non-trending day
+  management_mode: "MODERATE"
