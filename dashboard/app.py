@@ -10,6 +10,7 @@ import os
 import re
 import json
 import sqlite3
+import ctypes
 from pathlib import Path
 from datetime import datetime, date, timedelta
 from flask import Flask, render_template, jsonify, request
@@ -54,15 +55,23 @@ def check_bot_status():
     except (ValueError, OSError):
         return {'running': False, 'pid': None, 'status': 'stopped'}
 
-    # Check if process is alive
+    # Check if process is alive (cross-platform)
     process_alive = False
-    try:
-        os.kill(pid, 0)
-        process_alive = True
-    except PermissionError:
-        process_alive = True
-    except OSError:
-        process_alive = False
+    if sys.platform == 'win32':
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if handle:
+            ctypes.windll.kernel32.CloseHandle(handle)
+            process_alive = True
+    else:
+        try:
+            os.kill(pid, 0)
+            process_alive = True
+        except PermissionError:
+            process_alive = True
+        except OSError:
+            process_alive = False
 
     if not process_alive:
         return {'running': False, 'pid': pid, 'status': 'stale'}
@@ -81,7 +90,7 @@ def check_bot_status():
                 microsecond=0
             )
             secs = (now_et - hb_time).total_seconds()
-            if secs > 600:
+            if secs > 900:  # 15 minutes
                 heartbeat_warning = f'Last heartbeat {int(secs // 60)}m ago'
     except Exception:
         pass
