@@ -232,6 +232,22 @@ def get_db_connection():
     return conn
 
 
+def _ensure_journal_notes_table(conn):
+    """Create journal_notes table if it doesn't exist."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS journal_notes (
+            trade_id TEXT PRIMARY KEY,
+            rating INTEGER DEFAULT NULL,
+            what_differently TEXT DEFAULT NULL,
+            review_notes TEXT DEFAULT NULL,
+            news_catalyst TEXT DEFAULT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES trades(id)
+        )
+    """)
+    conn.commit()
+
+
 def load_signals():
     """Load all signals from the dry-run signals JSON file."""
     try:
@@ -694,10 +710,11 @@ def api_journal():
 
     try:
         conn = get_db_connection()
+        _ensure_journal_notes_table(conn)
         _, all_closed = classify_trades(conn, spx_price)
         open_pos, _ = classify_trades(conn, spx_price)
-        conn.close()
     except Exception:
+        conn = None
         all_closed = []
         open_pos = []
 
@@ -712,6 +729,14 @@ def api_journal():
 
     # Load signals for correlation
     all_signals = load_signals()
+
+    # Build log cache: parse log bars for each unique trade date
+    log_cache = {}
+    for trade in all_trades:
+        entry_time = trade.get('entry_time', '')
+        trade_date = entry_time[:10] if entry_time else None
+        if trade_date and trade_date not in log_cache:
+            log_cache[trade_date] = _parse_log_bars_for_date(trade_date)
 
     # Strategy params
     strat = STRATEGY_PARAMS.get('strategy', {})
@@ -735,8 +760,20 @@ def api_journal():
         # Exit analysis
         exit_analysis = _compute_exit_analysis(trade)
 
-        # Market context
-        market_context = _get_market_context(trade)
+        # Market context (expanded)
+        market_context = _get_market_context(trade, signal=signal, log_cache=log_cache)
+
+        # Pulse bar details
+        pulse_bar = _parse_pulse_bar_from_log(trade, log_cache, signal=signal)
+
+        # Strike analysis
+        strike_analysis = _build_strike_analysis(trade, signal)
+
+        # Journal notes
+        journal_notes = _get_journal_notes(conn, trade.get('id')) if conn else {
+            'rating': None, 'what_differently': None,
+            'review_notes': None, 'news_catalyst': None,
+        }
 
         # Compute totals for aggregation
         spread_width = trade.get('spread_width') or abs(
@@ -772,6 +809,9 @@ def api_journal():
             'entry_reasons': entry_reasons,
             'exit_analysis': exit_analysis,
             'market_context': market_context,
+            'pulse_bar': pulse_bar,
+            'strike_analysis': strike_analysis,
+            'journal_notes': journal_notes,
             'signal': signal,
             'flag': trade.get('flag'),
             'flag_note': trade.get('flag_note'),
@@ -803,6 +843,10 @@ def api_journal():
                 pct_max_count += 1
             reason = exit_analysis.get('exit_reason') or 'unknown'
             exit_reasons[reason] = exit_reasons.get(reason, 0) + 1
+
+    # Close DB connection
+    if conn:
+        conn.close()
 
     # Sort newest first
     journal_entries.sort(key=lambda e: e.get('entry_time') or '', reverse=True)
@@ -843,6 +887,46 @@ def api_journal():
         'stats': stats,
         'strategy_params': strategy_params,
     })
+
+
+@app.route('/api/journal/notes', methods=['POST'])
+def api_journal_save_notes():
+    """Save or update journal notes for a trade."""
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'JSON body required'}), 400
+
+    trade_id = data.get('trade_id')
+    if not trade_id:
+        return jsonify({'error': 'trade_id is required'}), 400
+
+    rating = data.get('rating')
+    if rating is not None:
+        try:
+            rating = int(rating)
+            if rating < 1 or rating > 5:
+                return jsonify({'error': 'rating must be 1-5'}), 400
+        except (ValueError, TypeError):
+            return jsonify({'error': 'rating must be an integer 1-5'}), 400
+
+    what_differently = data.get('what_differently')
+    review_notes = data.get('review_notes')
+    news_catalyst = data.get('news_catalyst')
+
+    try:
+        conn = get_db_connection()
+        _ensure_journal_notes_table(conn)
+        conn.execute(
+            """INSERT OR REPLACE INTO journal_notes
+               (trade_id, rating, what_differently, review_notes, news_catalyst, updated_at)
+               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+            (trade_id, rating, what_differently, review_notes, news_catalyst)
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({'status': 'ok', 'trade_id': trade_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 def _correlate_trade_with_signal(trade, signals):
@@ -1034,10 +1118,249 @@ def _compute_exit_analysis(trade):
     }
 
 
-def _get_market_context(trade):
-    """Get market context at the time of trade entry."""
+def _parse_log_bars_for_date(date_str):
+    """Parse log file for completed bars and pulse detections on a given date.
+
+    Args:
+        date_str: 'YYYY-MM-DD' date string
+
+    Returns:
+        list of dicts with bar OHLC data and pulse info for that date.
+    """
+    bars = []
+    bar_re = re.compile(
+        r'Bar\(time=(\d{2}:\d{2}), '
+        r'O=([\d.]+), H=([\d.]+), L=([\d.]+), C=([\d.]+)\)'
+    )
+    pulse_re = re.compile(r'(BULLISH|BEARISH) PULSE detected at')
+
+    try:
+        with open(LOG_FILE, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                if date_str not in line:
+                    continue
+
+                m = bar_re.search(line)
+                if m:
+                    bars.append({
+                        'time': m.group(1),
+                        'open': float(m.group(2)),
+                        'high': float(m.group(3)),
+                        'low': float(m.group(4)),
+                        'close': float(m.group(5)),
+                        'is_pulse': False,
+                    })
+
+                m = pulse_re.search(line)
+                if m and bars:
+                    # Mark the most recent bar as a pulse bar
+                    bars[-1]['is_pulse'] = True
+                    bars[-1]['pulse_direction'] = m.group(1)
+    except FileNotFoundError:
+        pass
+
+    return bars
+
+
+def _parse_pulse_bar_from_log(trade, log_cache, signal=None):
+    """Find the pulse bar that triggered this trade.
+
+    Primary source: pulse_bar dict embedded in the signal JSON (captured at trade time).
+    Fallback: match setup_bar_time against parsed log bars.
+
+    Returns dict with bar details or None.
+    """
+    # Primary: use signal-embedded pulse bar data (exact OHLC captured at signal time)
+    if signal and signal.get('pulse_bar'):
+        pb = signal['pulse_bar']
+        return {
+            'time': pb.get('time'),
+            'open': pb.get('open'),
+            'high': pb.get('high'),
+            'low': pb.get('low'),
+            'close': pb.get('close'),
+            'close_position_pct': pb.get('close_position_pct'),
+            'bar_range': pb.get('bar_range'),
+            'volume': None,
+        }
+
+    # Fallback: match by setup_bar_time in log cache
+    setup_bar_time = trade.get('setup_bar_time', '')
+    if not setup_bar_time:
+        return None
+
+    # Extract HH:MM from setup_bar_time
+    if 'T' in setup_bar_time:
+        hhmm = setup_bar_time.split('T')[1][:5]
+    elif len(setup_bar_time) >= 5:
+        # Could be "HH:MM" directly or a full timestamp
+        m = re.search(r'(\d{2}:\d{2})', setup_bar_time)
+        hhmm = m.group(1) if m else None
+    else:
+        hhmm = None
+
+    if not hhmm:
+        return None
+
+    # Determine the date of this trade for log_cache lookup
+    entry_time = trade.get('entry_time', '')
+    trade_date = entry_time[:10] if entry_time else None
+    if not trade_date or trade_date not in log_cache:
+        return None
+
+    bars = log_cache[trade_date]
+    for bar in bars:
+        if bar['time'] == hhmm:
+            bar_range = bar['high'] - bar['low']
+            if bar_range > 0:
+                close_pos_pct = round(((bar['close'] - bar['low']) / bar_range) * 100, 1)
+            else:
+                close_pos_pct = 50.0
+
+            return {
+                'time': bar['time'],
+                'open': bar['open'],
+                'high': bar['high'],
+                'low': bar['low'],
+                'close': bar['close'],
+                'close_position_pct': close_pos_pct,
+                'bar_range': round(bar_range, 2),
+                'volume': None,
+            }
+
+    return None
+
+
+def _build_strike_analysis(trade, signal):
+    """Build strike selection analysis for a trade.
+
+    Returns dict with strike_rationale, delta_note, credit_vs_min, distance_to_short.
+    """
+    short_strike = trade.get('short_strike')
+    spx_at_entry = trade.get('underlying_price_at_entry')
+    credit = trade.get('credit_received', 0)
+
+    # Strike rationale
+    if short_strike and spx_at_entry:
+        dist = round(abs(short_strike - spx_at_entry), 1)
+        direction_word = 'above' if short_strike > spx_at_entry else 'below'
+        strike_rationale = (
+            f"Short strike {short_strike} selected {dist}pts "
+            f"{direction_word} SPX at ${spx_at_entry:,.2f}"
+        )
+    else:
+        strike_rationale = "Strike data unavailable"
+
+    # Delta note (not tracked in current system)
+    delta_note = "N/A (not tracked)"
+
+    # Credit vs minimum
+    min_credit = MIN_CREDIT_THRESHOLD
+    if credit > 0 and min_credit > 0:
+        pct_above = round((credit - min_credit) / min_credit * 100, 0)
+        credit_vs_min = {
+            'received': credit,
+            'minimum': min_credit,
+            'pct_above_floor': pct_above,
+            'display': f"${credit:.2f} vs ${min_credit:.2f} min ({pct_above:.0f}% above floor)",
+        }
+    else:
+        credit_vs_min = {
+            'received': credit,
+            'minimum': min_credit,
+            'pct_above_floor': 0,
+            'display': f"${credit:.2f} vs ${min_credit:.2f} min",
+        }
+
+    # Distance to short strike
+    if short_strike and spx_at_entry:
+        pts = round(abs(short_strike - spx_at_entry), 1)
+        direction_label = 'above' if short_strike > spx_at_entry else 'below'
+        distance_to_short = {
+            'points': pts,
+            'direction_label': direction_label,
+        }
+    else:
+        distance_to_short = {
+            'points': None,
+            'direction_label': None,
+        }
+
     return {
-        'spx_price': trade.get('underlying_price_at_entry'),
+        'strike_rationale': strike_rationale,
+        'delta_note': delta_note,
+        'credit_vs_min': credit_vs_min,
+        'distance_to_short': distance_to_short,
+    }
+
+
+def _get_market_context(trade, signal=None, log_cache=None):
+    """Get market context at the time of trade entry.
+
+    Expanded to include SPX open, SPX at signal, and VIX level.
+    """
+    spx_price = trade.get('underlying_price_at_entry')
+
+    # SPX open: for today's trades use live quote, for historical use first log bar
+    spx_open = None
+    entry_time = trade.get('entry_time', '')
+    trade_date = entry_time[:10] if entry_time else None
+    today_str = date.today().isoformat()
+
+    if trade_date == today_str:
+        try:
+            spx_quote = yahoo.get_spx_quote()
+            if spx_quote:
+                spx_open = spx_quote.get('open')
+        except Exception:
+            pass
+    elif trade_date and log_cache and trade_date in log_cache:
+        bars = log_cache[trade_date]
+        if bars:
+            spx_open = bars[0]['open']
+
+    # SPX at signal time
+    spx_at_signal = None
+    if signal:
+        spx_at_signal = signal.get('underlying_price')
+
+    # VIX level: prefer signal-captured value, fall back to live quote for today
+    vix_level = None
+    if signal:
+        vix_level = signal.get('vix_at_signal')
+    if vix_level is None and trade_date == today_str:
+        try:
+            vix_quote = yahoo.get_vix_quote()
+            if vix_quote:
+                vix_level = vix_quote.get('price')
+        except Exception:
+            pass
+
+    return {
+        'spx_price': spx_price,
+        'spx_open': spx_open,
+        'spx_at_signal': spx_at_signal,
+        'vix_level': vix_level,
+    }
+
+
+def _get_journal_notes(conn, trade_id):
+    """Fetch journal notes for a trade from the journal_notes table."""
+    try:
+        row = conn.execute(
+            "SELECT rating, what_differently, review_notes, news_catalyst "
+            "FROM journal_notes WHERE trade_id = ?",
+            (trade_id,)
+        ).fetchone()
+        if row:
+            return dict(row)
+    except Exception:
+        pass
+    return {
+        'rating': None,
+        'what_differently': None,
+        'review_notes': None,
+        'news_catalyst': None,
     }
 
 

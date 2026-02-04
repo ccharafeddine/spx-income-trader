@@ -43,16 +43,18 @@ class PositionManager:
         self,
         spread: CreditSpread,
         setup_bar: Bar,
-        quantity: int
+        quantity: int,
+        breakout_time: Optional[datetime] = None
     ) -> Optional[Trade]:
         """
         Enter a new trade
-        
+
         Args:
             spread: CreditSpread to trade
             setup_bar: Bar that triggered the setup
             quantity: Number of contracts
-            
+            breakout_time: When the breakout was confirmed (None if legacy immediate entry)
+
         Returns:
             Trade object if successful, None otherwise
         """
@@ -60,9 +62,28 @@ class PositionManager:
             logger.info("=" * 60)
             logger.info("ENTERING TRADE")
             logger.info("=" * 60)
-            
+
+            # Build metadata with pulse bar OHLC for signal logging
+            bar_metadata = None
+            if setup_bar:
+                close_pct = setup_bar.close_percentage_in_range()
+                bar_metadata = {
+                    'pulse_bar': {
+                        'time': setup_bar.timestamp.strftime('%H:%M') if setup_bar.timestamp else None,
+                        'open': round(setup_bar.open, 2),
+                        'high': round(setup_bar.high, 2),
+                        'low': round(setup_bar.low, 2),
+                        'close': round(setup_bar.close, 2),
+                        'close_position_pct': round(close_pct, 1),
+                        'bar_range': round(setup_bar.range, 2),
+                    }
+                }
+                if breakout_time:
+                    bar_metadata['setup_bar_time'] = setup_bar.timestamp.isoformat()
+                    bar_metadata['breakout_time'] = breakout_time.isoformat()
+
             # Place order
-            order_id = self.broker.place_spread_order(spread, quantity)
+            order_id = self.broker.place_spread_order(spread, quantity, metadata=bar_metadata)
             
             # Wait briefly for fill
             import time

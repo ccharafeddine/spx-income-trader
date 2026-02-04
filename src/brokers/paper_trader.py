@@ -110,7 +110,8 @@ class PaperBroker(BrokerInterface):
         self,
         spread: CreditSpread,
         quantity: int,
-        limit_price: Optional[float] = None
+        limit_price: Optional[float] = None,
+        metadata: Optional[Dict] = None
     ) -> str:
         """Simulate placing a spread order"""
         self.order_counter += 1

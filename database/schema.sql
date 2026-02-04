@@ -59,6 +59,16 @@ CREATE TABLE IF NOT EXISTS system_events (
     details TEXT
 );
 
+CREATE TABLE IF NOT EXISTS journal_notes (
+    trade_id TEXT PRIMARY KEY,
+    rating INTEGER DEFAULT NULL,         -- 1-5 star rating
+    what_differently TEXT DEFAULT NULL,
+    review_notes TEXT DEFAULT NULL,
+    news_catalyst TEXT DEFAULT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (trade_id) REFERENCES trades(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_trades_entry_time ON trades(entry_time);
 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
 CREATE INDEX IF NOT EXISTS idx_daily_stats_date ON daily_stats(date);

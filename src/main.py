@@ -74,11 +74,14 @@ class TradingBot:
         self.trades_today = 0
         self.daily_pnl = 0.0
         self.current_trading_date = None
-        
+
+        # Pending setup state (pulse bar detected, waiting for breakout)
+        self.pending_setup = None  # {direction, bar, trigger_price, timestamp}
+
         # Parameters
         self.max_daily_trades = STRATEGY_PARAMS['strategy']['max_daily_trades']
         self.max_daily_loss = STRATEGY_PARAMS['risk']['max_daily_loss']
-        
+
         logger.info("TradingBot initialized")
     
     def start(self):
@@ -142,10 +145,19 @@ class TradingBot:
                     self.current_trading_date = today
                     self.trades_today = 0
                     self.daily_pnl = 0.0
+                    self.pending_setup = None
 
                 # Heartbeat logging every 5 minutes
                 if (current_time - last_heartbeat).total_seconds() >= 300:
-                    logger.info(f"[Heartbeat] Loop #{loop_count} at {current_time.strftime('%H:%M:%S')} ET")
+                    setup_str = ""
+                    if self.pending_setup:
+                        ps = self.pending_setup
+                        setup_str = (
+                            f" | Pending {ps['direction'].value.upper()} setup "
+                            f"- trigger {'above' if ps['direction'].value == 'bullish' else 'below'} "
+                            f"${ps['trigger_price']:,.2f}"
+                        )
+                    logger.info(f"[Heartbeat] Loop #{loop_count} at {current_time.strftime('%H:%M:%S')} ET{setup_str}")
                     last_heartbeat = current_time
 
                 # Check if market is open
@@ -157,7 +169,11 @@ class TradingBot:
 
                 # Check daily limits
                 if not self._check_daily_limits():
-                    logger.info("Daily limits reached, monitoring only")
+                    if self.pending_setup:
+                        logger.info("Daily limits reached, clearing pending setup")
+                        self.pending_setup = None
+                    else:
+                        logger.info("Daily limits reached, monitoring only")
                     time_module.sleep(300)
                     consecutive_errors = 0
                     continue
@@ -169,6 +185,16 @@ class TradingBot:
                 if self._is_setup_window(current_time):
                     self._check_for_setups()
                 else:
+                    # Expire pending setup when setup window closes
+                    if self.pending_setup:
+                        ps = self.pending_setup
+                        logger.info(
+                            f"Pending {ps['direction'].value.upper()} setup expired "
+                            f"(setup window closed at 11:30 ET without breakout). "
+                            f"Trigger was {'above' if ps['direction'].value == 'bullish' else 'below'} "
+                            f"${ps['trigger_price']:,.2f}"
+                        )
+                        self.pending_setup = None
                     # Log once on startup if outside setup window, or every 10 minutes
                     if loop_count == 1 or loop_count % 20 == 0:  # every ~10 min at 30s intervals
                         logger.info(f"Outside setup window (9:30-11:30 ET). Current: {current_time.strftime('%H:%M')} ET. Monitoring only.")
@@ -233,7 +259,13 @@ class TradingBot:
         return True
     
     def _check_for_setups(self):
-        """Check for new trading setups"""
+        """Check for new trading setups and pending breakout triggers.
+
+        Per Production Line Trading strategy:
+        1. A pulse bar is a SETUP, not an entry signal.
+        2. Entry triggers when the NEXT bar/tick breaks the setup bar's
+           high (bullish) or low (bearish).
+        """
         try:
             # Redundant market-hours guard - prevents signals if called outside market hours
             current_time = datetime.now(self.tz)
@@ -253,56 +285,127 @@ class TradingBot:
             current_time = datetime.now(self.tz)
             bar = self.bar_builder.add_price(current_time, current_price)
 
-            # Log current bar building status periodically
+            # Log current bar building status periodically (with pending setup info)
             if self.bar_builder.current_bar_start and self.bar_builder.tick_count % 5 == 0:
+                setup_str = ""
+                if self.pending_setup:
+                    ps = self.pending_setup
+                    above_below = 'above' if ps['direction'].value == 'bullish' else 'below'
+                    dist = abs(current_price - ps['trigger_price'])
+                    setup_str = (
+                        f" | Pending {ps['direction'].value.upper()} "
+                        f"trigger {above_below} ${ps['trigger_price']:,.2f} "
+                        f"({dist:.1f}pts away)"
+                    )
                 logger.info(f"Building bar {self.bar_builder.current_bar_start.strftime('%H:%M')}: "
                            f"O=${self.bar_builder.open_price:.2f} H=${self.bar_builder.high_price:.2f} "
                            f"L=${self.bar_builder.low_price:.2f} C=${current_price:.2f} "
-                           f"({self.bar_builder.tick_count} ticks)")
-            
-            # If bar just completed, check for setup
+                           f"({self.bar_builder.tick_count} ticks)"
+                           f"{setup_str}")
+
+            # --- Check pending setup for breakout trigger ---
+            if self.pending_setup and not self.position_manager.has_open_position():
+                ps = self.pending_setup
+                triggered = False
+
+                if ps['direction'].value == 'bullish' and current_price > ps['trigger_price']:
+                    logger.info(
+                        f"BREAKOUT CONFIRMED: SPX ${current_price:,.2f} > "
+                        f"setup bar high ${ps['trigger_price']:,.2f} "
+                        f"(BULLISH trigger from {ps['bar'].timestamp.strftime('%H:%M')} bar)"
+                    )
+                    triggered = True
+                elif ps['direction'].value == 'bearish' and current_price < ps['trigger_price']:
+                    logger.info(
+                        f"BREAKOUT CONFIRMED: SPX ${current_price:,.2f} < "
+                        f"setup bar low ${ps['trigger_price']:,.2f} "
+                        f"(BEARISH trigger from {ps['bar'].timestamp.strftime('%H:%M')} bar)"
+                    )
+                    triggered = True
+
+                if triggered:
+                    setup_bar = ps['bar']
+                    direction = ps['direction']
+                    self.pending_setup = None
+                    self._execute_setup(setup_bar, current_price, direction, breakout_time=current_time)
+                    return
+
+            # --- If bar just completed, check for new pulse bar setup ---
             if bar:
                 logger.info(f"New 30-min bar completed: {bar}")
-                
+
                 # Check if we already have an open position
                 if self.position_manager.has_open_position():
                     logger.debug("Already have open position, skipping setup check")
                     return
-                
+
                 # Evaluate for pulse bar setup
                 direction = self.strategy.evaluate_setup(bar, current_price)
-                
+
                 if direction:
-                    logger.info(f"Setup detected: {direction.value.upper()}")
-                    self._execute_setup(bar, current_price, direction)
+                    # Pulse bar detected — store as pending setup, DON'T enter yet
+                    trigger_price = bar.high if direction.value == 'bullish' else bar.low
+                    above_below = 'above' if direction.value == 'bullish' else 'below'
+
+                    if self.pending_setup:
+                        logger.info(
+                            f"Replacing pending {self.pending_setup['direction'].value.upper()} setup "
+                            f"with new {direction.value.upper()} pulse bar"
+                        )
+
+                    self.pending_setup = {
+                        'direction': direction,
+                        'bar': bar,
+                        'trigger_price': trigger_price,
+                        'timestamp': current_time,
+                    }
+
+                    logger.info(
+                        f"PENDING SETUP: {direction.value.upper()} pulse bar at "
+                        f"{bar.timestamp.strftime('%H:%M')} "
+                        f"(H=${bar.high:.2f} L=${bar.low:.2f} C=${bar.close:.2f}). "
+                        f"Entry trigger: price {above_below} ${trigger_price:,.2f}"
+                    )
                 else:
                     logger.debug("No setup detected")
-        
+
         except Exception as e:
             logger.error(f"Error checking for setups: {e}", exc_info=True)
     
-    def _execute_setup(self, setup_bar, current_price, direction):
-        """Execute a trading setup"""
+    def _execute_setup(self, setup_bar, current_price, direction, breakout_time=None):
+        """Execute a trading setup after breakout confirmation.
+
+        Args:
+            setup_bar: The pulse bar that formed the setup.
+            current_price: SPX price at breakout confirmation.
+            direction: TradeDirection (BULLISH/BEARISH).
+            breakout_time: Datetime when breakout was confirmed (None for legacy calls).
+        """
         try:
             logger.info("=" * 60)
             logger.info(f"EXECUTING {direction.value.upper()} SETUP")
+            if breakout_time:
+                logger.info(
+                    f"Setup bar: {setup_bar.timestamp.strftime('%H:%M')} | "
+                    f"Breakout confirmed: {breakout_time.strftime('%H:%M:%S')} ET"
+                )
             logger.info("=" * 60)
-            
+
             # Get options chain (format: YYYY-MM-DD for dry_run_broker compatibility)
             expiration = datetime.now(self.tz).strftime("%Y-%m-%d")
             options_chain = self.broker.get_options_chain("SPX", expiration)
-            
+
             # Construct spread
             spread = self.strategy.construct_spread(
                 current_price,
                 direction,
                 options_chain
             )
-            
+
             if not spread:
                 logger.warning("Failed to construct spread")
                 return
-            
+
             # Display trade details
             logger.info(f"Direction: {spread.direction.value.upper()}")
             logger.info(f"Short Strike: ${spread.short_leg.strike}")
@@ -311,29 +414,33 @@ class TradingBot:
             logger.info(f"Max Profit: ${spread.max_profit:.2f}")
             logger.info(f"Max Risk: ${spread.max_risk:.2f}")
             logger.info(f"Breakeven: ${spread.breakeven:.2f}")
-            
+
             # Confirm trade
             if not self._confirm_trade(spread):
                 logger.info("Trade cancelled by user")
                 return
-            
+
             # Place order
             quantity = STRATEGY_PARAMS['strategy']['contracts_per_trade']
             trade = self.position_manager.enter_trade(
                 spread,
                 setup_bar,
-                quantity
+                quantity,
+                breakout_time=breakout_time
             )
-            
+
             if trade:
-                logger.info(f"✓ Trade executed: {trade.id}")
-                
+                logger.info(f"Trade executed: {trade.id}")
+
                 self.trades_today += 1
-                
+
+                # Clear pending setup now that we've entered
+                self.pending_setup = None
+
                 # Send notification
                 if self.notifier:
                     self.notifier.send(
-                        f"🎯 Trade Entered: {spread.direction.value.upper()}",
+                        f"Trade Entered: {spread.direction.value.upper()}",
                         f"Strikes: ${spread.short_leg.strike}/${spread.long_leg.strike}\n"
                         f"Credit: ${spread.credit_received:.2f}\n"
                         f"Max Profit: ${spread.max_profit:.2f}\n"
@@ -341,7 +448,7 @@ class TradingBot:
                     )
             else:
                 logger.error("Trade execution failed")
-        
+
         except Exception as e:
             logger.error(f"Error executing setup: {e}", exc_info=True)
     

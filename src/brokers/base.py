@@ -24,10 +24,18 @@ class BrokerInterface(ABC):
         self,
         spread: CreditSpread,
         quantity: int,
-        limit_price: Optional[float] = None
+        limit_price: Optional[float] = None,
+        metadata: Optional[Dict] = None
     ) -> str:
         """
         Place vertical spread order
+
+        Args:
+            spread: The credit spread to trade
+            quantity: Number of contracts
+            limit_price: Optional limit price override
+            metadata: Optional extra context (e.g. setup bar OHLC) for signal logging
+
         Returns: order_id
         """
         pass

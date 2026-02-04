@@ -343,7 +343,8 @@ class ETradeBroker(BrokerInterface):
         self,
         spread: CreditSpread,
         quantity: int,
-        limit_price: Optional[float] = None
+        limit_price: Optional[float] = None,
+        metadata: Optional[Dict] = None
     ) -> str:
         """Place vertical spread order"""
         # Build order request

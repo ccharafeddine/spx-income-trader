@@ -550,12 +550,128 @@ header {
 .exit-grid .td-label { color: var(--text-dim); }
 .exit-grid .td-value { color: #fff; font-weight: bold; }
 
+/* Post-Trade Review fields */
+.review-field {
+  margin-bottom: 10px;
+}
+.review-field label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+.review-textarea {
+  width: 100%;
+  min-height: 50px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 8px;
+  resize: vertical;
+}
+.review-textarea:focus {
+  outline: 1px solid var(--blue);
+  border-color: var(--blue);
+}
+
+/* Star rating */
+.star-rating {
+  display: inline-flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.star-rating .star {
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--border);
+  transition: color 0.15s;
+  user-select: none;
+}
+.star-rating .star:hover,
+.star-rating .star.filled {
+  color: var(--amber);
+}
+
+/* Save button */
+.btn-save {
+  padding: 6px 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-save:hover {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+/* Save status indicator */
+.save-status {
+  display: inline-block;
+  margin-left: 10px;
+  font-size: 11px;
+  color: var(--green);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.save-status.visible {
+  opacity: 1;
+}
+.save-status.error {
+  color: var(--red);
+}
+
+/* Market context grid */
+.market-context-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 16px;
+  font-size: 12px;
+}
+.market-context-grid .td-label { color: var(--text-dim); }
+.market-context-grid .td-value { color: #fff; font-weight: bold; }
+
+/* Pulse bar grid */
+.pulse-bar-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px 16px;
+  font-size: 12px;
+}
+.pulse-bar-grid .td-label { color: var(--text-dim); }
+.pulse-bar-grid .td-value { color: #fff; font-weight: bold; }
+
+/* Strike analysis subsection */
+.strike-analysis {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #1f1f35;
+}
+.strike-analysis-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 16px;
+  font-size: 12px;
+}
+.strike-analysis-grid .td-label { color: var(--text-dim); }
+.strike-analysis-grid .td-value { color: #fff; font-weight: bold; }
+
 /* Responsive */
 @media (max-width: 900px) {
   .dashboard { grid-template-columns: 1fr; }
   .bottom-row { grid-template-columns: 1fr; }
   .account-bar { flex-wrap: wrap; gap: 16px; }
   .trade-details-grid { grid-template-columns: 1fr 1fr; }
+  .pulse-bar-grid { grid-template-columns: 1fr 1fr; }
 }
 </style>
 </head>
@@ -1310,7 +1426,7 @@ async function updateJournal() {
     // Body (expanded view)
     html += '<div class="journal-card-body">';
 
-    // Entry Analysis
+    // 1. Entry Analysis + Strike Analysis subsection
     html += '<div class="journal-section">';
     html += '<div class="journal-section-title">Entry Analysis &mdash; Why This Trade Happened</div>';
     html += '<ul class="reason-list">';
@@ -1323,9 +1439,61 @@ async function updateJournal() {
       if (r.detail) html += ' <span class="reason-detail">&mdash; ' + r.detail + '</span>';
       html += '</span></li>';
     });
-    html += '</ul></div>';
+    html += '</ul>';
 
-    // Trade Details
+    // Strike Analysis subsection
+    if (e.strike_analysis) {
+      const sa = e.strike_analysis;
+      html += '<div class="strike-analysis">';
+      html += '<div class="strike-analysis-grid">';
+      html += '<span class="td-label">Strike Rationale</span><span class="td-value">' + (sa.strike_rationale || '--') + '</span>';
+      html += '<span class="td-label">Short Delta</span><span class="td-value">' + (sa.delta_note || 'N/A') + '</span>';
+      if (sa.credit_vs_min) {
+        html += '<span class="td-label">Credit vs Floor</span><span class="td-value">' + (sa.credit_vs_min.display || '--') + '</span>';
+      }
+      if (sa.distance_to_short && sa.distance_to_short.points != null) {
+        html += '<span class="td-label">Distance to Short</span><span class="td-value">' + sa.distance_to_short.points + ' pts ' + sa.distance_to_short.direction_label + '</span>';
+      }
+      html += '</div></div>';
+    }
+    html += '</div>';
+
+    // 2. Market Context
+    if (e.market_context) {
+      const mc = e.market_context;
+      html += '<div class="journal-section">';
+      html += '<div class="journal-section-title">Market Context</div>';
+      html += '<div class="market-context-grid">';
+      html += '<span class="td-label">SPX at Entry</span><span class="td-value">' + (mc.spx_price ? '$' + Number(mc.spx_price).toLocaleString('en-US', {minimumFractionDigits: 2}) : 'N/A') + '</span>';
+      html += '<span class="td-label">SPX Open</span><span class="td-value">' + (mc.spx_open ? '$' + Number(mc.spx_open).toLocaleString('en-US', {minimumFractionDigits: 2}) : 'N/A') + '</span>';
+      html += '<span class="td-label">SPX at Signal</span><span class="td-value">' + (mc.spx_at_signal ? '$' + Number(mc.spx_at_signal).toLocaleString('en-US', {minimumFractionDigits: 2}) : 'N/A') + '</span>';
+      html += '<span class="td-label">VIX</span><span class="td-value">' + (mc.vix_level ? Number(mc.vix_level).toFixed(2) : 'N/A') + '</span>';
+      html += '</div></div>';
+    }
+
+    // 3. Pulse Bar Details
+    if (e.pulse_bar) {
+      const pb = e.pulse_bar;
+      html += '<div class="journal-section">';
+      html += '<div class="journal-section-title">Pulse Bar Details</div>';
+      html += '<div class="pulse-bar-grid">';
+      html += '<span class="td-label">Bar Time</span><span class="td-value">' + (pb.time || '--') + '</span>';
+      html += '<span class="td-label">Open</span><span class="td-value">' + (pb.open ? pb.open.toFixed(2) : '--') + '</span>';
+      html += '<span class="td-label">High</span><span class="td-value">' + (pb.high ? pb.high.toFixed(2) : '--') + '</span>';
+      html += '<span class="td-label">Low</span><span class="td-value">' + (pb.low ? pb.low.toFixed(2) : '--') + '</span>';
+      html += '<span class="td-label">Close</span><span class="td-value">' + (pb.close ? pb.close.toFixed(2) : '--') + '</span>';
+      html += '<span class="td-label">Close Pos %</span><span class="td-value">' + (pb.close_position_pct != null ? pb.close_position_pct + '%' : '--') + '</span>';
+      html += '<span class="td-label">Range</span><span class="td-value">' + (pb.bar_range != null ? pb.bar_range + ' pts' : '--') + '</span>';
+      html += '<span class="td-label">Volume</span><span class="td-value">N/A</span>';
+      html += '</div></div>';
+    } else {
+      html += '<div class="journal-section">';
+      html += '<div class="journal-section-title">Pulse Bar Details</div>';
+      html += '<div style="color:var(--text-dim);font-size:12px;">No pulse bar data available from logs</div>';
+      html += '</div>';
+    }
+
+    // 4. Trade Details (SPX at Entry line removed — now in Market Context)
     html += '<div class="journal-section">';
     html += '<div class="journal-section-title">Trade Details</div>';
     html += '<div class="trade-details-grid">';
@@ -1342,12 +1510,9 @@ async function updateJournal() {
     const expHHMM = e.expiration ? (e.expiration.includes('T') ? e.expiration.substring(11, 16) : e.expiration.substring(11, 16)) : '--';
     html += '<span class="td-label">Entry</span><span class="td-value">' + entryHHMM + ' ET</span>';
     html += '<span class="td-label">Expiration</span><span class="td-value">' + expHHMM + ' ET</span>';
-    if (e.market_context && e.market_context.spx_price) {
-      html += '<span class="td-label">SPX at Entry</span><span class="td-value">$' + Number(e.market_context.spx_price).toLocaleString('en-US', {minimumFractionDigits: 2}) + '</span>';
-    }
     html += '</div></div>';
 
-    // Exit Analysis
+    // 5. Exit Analysis (unchanged)
     if (e.exit_analysis) {
       const ex = e.exit_analysis;
       html += '<div class="journal-section">';
@@ -1359,6 +1524,50 @@ async function updateJournal() {
       html += '<span class="td-label">% Max Captured</span><span class="td-value">' + (ex.pct_of_max_profit != null ? ex.pct_of_max_profit + '%' : '--') + '</span>';
       html += '</div></div>';
     }
+
+    // 6. Post-Trade Review (editable)
+    const notes = e.journal_notes || {};
+    const tradeId = e.id || '';
+    const curRating = notes.rating || 0;
+
+    html += '<div class="journal-section">';
+    html += '<div class="journal-section-title">Post-Trade Review</div>';
+
+    // Star rating
+    html += '<div class="review-field">';
+    html += '<label>Rating</label>';
+    html += '<div class="star-rating" id="stars-' + idx + '">';
+    for (let s = 1; s <= 5; s++) {
+      const filled = s <= curRating ? ' filled' : '';
+      html += '<span class="star' + filled + '" data-trade-id="' + tradeId + '" data-idx="' + idx + '" data-star="' + s + '" onclick="setRating(\'' + tradeId + '\',' + idx + ',' + s + ')">&#9733;</span>';
+    }
+    html += '</div></div>';
+
+    // News Catalyst
+    html += '<div class="review-field">';
+    html += '<label>News / Catalyst</label>';
+    html += '<textarea class="review-textarea" id="news-' + idx + '" placeholder="Any news or catalyst driving price action...">' + (notes.news_catalyst || '') + '</textarea>';
+    html += '</div>';
+
+    // What Would I Do Differently
+    html += '<div class="review-field">';
+    html += '<label>What Would I Do Differently?</label>';
+    html += '<textarea class="review-textarea" id="diff-' + idx + '" placeholder="Lessons learned, adjustments for next time...">' + (notes.what_differently || '') + '</textarea>';
+    html += '</div>';
+
+    // Notes
+    html += '<div class="review-field">';
+    html += '<label>Notes</label>';
+    html += '<textarea class="review-textarea" id="rnotes-' + idx + '" placeholder="Additional observations...">' + (notes.review_notes || '') + '</textarea>';
+    html += '</div>';
+
+    // Save button
+    html += '<div>';
+    html += '<button class="btn-save" onclick="saveReview(\'' + tradeId + '\',' + idx + ')">Save Review</button>';
+    html += '<span class="save-status" id="save-status-' + idx + '"></span>';
+    html += '</div>';
+
+    html += '</div>'; // /post-trade review section
 
     html += '</div>'; // /card-body
     html += '</div>'; // /card
@@ -1382,6 +1591,63 @@ function expandAllCards() {
       c.classList.add('expanded');
     }
   });
+}
+
+// Track ratings per card index
+const cardRatings = {};
+
+function setRating(tradeId, idx, stars) {
+  cardRatings[idx] = stars;
+  const container = document.getElementById('stars-' + idx);
+  if (!container) return;
+  const starEls = container.querySelectorAll('.star');
+  starEls.forEach(el => {
+    const s = parseInt(el.getAttribute('data-star'));
+    if (s <= stars) {
+      el.classList.add('filled');
+    } else {
+      el.classList.remove('filled');
+    }
+  });
+}
+
+async function saveReview(tradeId, idx) {
+  const statusEl = document.getElementById('save-status-' + idx);
+  const rating = cardRatings[idx] !== undefined ? cardRatings[idx] : null;
+  const news_catalyst = (document.getElementById('news-' + idx) || {}).value || null;
+  const what_differently = (document.getElementById('diff-' + idx) || {}).value || null;
+  const review_notes = (document.getElementById('rnotes-' + idx) || {}).value || null;
+
+  const body = {
+    trade_id: tradeId,
+    rating: rating,
+    news_catalyst: news_catalyst,
+    what_differently: what_differently,
+    review_notes: review_notes,
+  };
+
+  try {
+    const res = await fetch('/api/journal/notes', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (res.ok && data.status === 'ok') {
+      statusEl.textContent = 'Saved';
+      statusEl.className = 'save-status visible';
+    } else {
+      statusEl.textContent = 'Error: ' + (data.error || 'Unknown');
+      statusEl.className = 'save-status visible error';
+    }
+  } catch (err) {
+    statusEl.textContent = 'Error: ' + err.message;
+    statusEl.className = 'save-status visible error';
+  }
+  // Fade out after 3 seconds
+  setTimeout(() => {
+    statusEl.className = 'save-status';
+  }, 3000);
 }
 
 // ---------------------------------------------------------------

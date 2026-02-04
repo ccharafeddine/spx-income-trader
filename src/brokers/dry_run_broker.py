@@ -205,7 +205,8 @@ class DryRunBroker(BrokerInterface):
         self,
         spread: CreditSpread,
         quantity: int,
-        limit_price: Optional[float] = None
+        limit_price: Optional[float] = None,
+        metadata: Optional[Dict] = None
     ) -> str:
         """
         SIMULATE placing a spread order (does not actually trade).
@@ -217,6 +218,15 @@ class DryRunBroker(BrokerInterface):
 
         # Calculate fill price (simulated)
         fill_price = limit_price if limit_price else spread.credit_received
+
+        # Capture VIX at signal time
+        vix_at_signal = None
+        try:
+            vix_quote = self.market_data.get_vix_quote()
+            if vix_quote:
+                vix_at_signal = vix_quote.get('price')
+        except Exception:
+            pass
 
         # Log the signal
         signal_data = {
@@ -233,7 +243,17 @@ class DryRunBroker(BrokerInterface):
             "max_risk": spread.max_risk * quantity,
             "underlying_price": spread.underlying_price_at_entry,
             "expiration": spread.expiration.isoformat() if spread.expiration else None,
+            "vix_at_signal": vix_at_signal,
         }
+
+        # Merge metadata into signal data if provided
+        if metadata:
+            if 'pulse_bar' in metadata:
+                signal_data['pulse_bar'] = metadata['pulse_bar']
+            if 'setup_bar_time' in metadata:
+                signal_data['setup_bar_time'] = metadata['setup_bar_time']
+            if 'breakout_time' in metadata:
+                signal_data['breakout_time'] = metadata['breakout_time']
 
         self._log_signal("WOULD_OPEN_SPREAD", signal_data)
 
