@@ -173,6 +173,10 @@ class BollingerFilter:
                 logger.warning("No historical data returned from yfinance")
                 return 0
 
+            # Flatten multi-level columns if present (yfinance returns ('Close', '^GSPC'))
+            if hasattr(data.columns, 'nlevels') and data.columns.nlevels > 1:
+                data.columns = data.columns.get_level_values(0)
+
             count = 0
             for _, row in data.iterrows():
                 self.closes.append(float(row['Close']))
