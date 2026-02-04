@@ -89,6 +89,19 @@ class TradingBot:
         self.max_daily_trades = STRATEGY_PARAMS['strategy']['max_daily_trades']
         self.max_daily_loss = STRATEGY_PARAMS['risk']['max_daily_loss']
 
+        # Afternoon window (Bed & Breakfast system, p.23-26)
+        timing_cfg = STRATEGY_PARAMS.get('timing', {})
+        self.afternoon_enabled = timing_cfg.get('afternoon_enabled', False)
+        afternoon_start_str = timing_cfg.get('afternoon_start', '15:00')
+        afternoon_end_str = timing_cfg.get('afternoon_end', '15:30')
+        self.afternoon_start = time(int(afternoon_start_str.split(':')[0]), int(afternoon_start_str.split(':')[1]))
+        self.afternoon_end = time(int(afternoon_end_str.split(':')[0]), int(afternoon_end_str.split(':')[1]))
+
+        if self.afternoon_enabled:
+            logger.info(f"Afternoon window (Bed & Breakfast): {afternoon_start_str}-{afternoon_end_str} ET")
+        else:
+            logger.info("Afternoon window (Bed & Breakfast): disabled")
+
         logger.info("TradingBot initialized")
     
     def start(self):
@@ -211,19 +224,32 @@ class TradingBot:
                 if self._is_setup_window(current_time):
                     self._check_for_setups()
                 else:
-                    # Expire pending setup when setup window closes
+                    # Expire pending setup when its specific window closes
                     if self.pending_setup:
                         ps = self.pending_setup
-                        logger.info(
-                            f"Pending {ps['direction'].value.upper()} setup expired "
-                            f"(setup window closed at 11:30 ET without breakout). "
-                            f"Trigger was {'above' if ps['direction'].value == 'bullish' else 'below'} "
-                            f"${ps['trigger_price']:,.2f}"
-                        )
-                        self.pending_setup = None
+                        ps_window = ps.get('window', 'morning')
+                        # Determine the end time for the setup's window
+                        if ps_window == 'afternoon':
+                            window_end = self.afternoon_end
+                            window_label = f"{self.afternoon_start.strftime('%H:%M')}-{self.afternoon_end.strftime('%H:%M')}"
+                        else:
+                            window_end = time(11, 30)
+                            window_label = "9:30-11:30"
+                        # Expire if we're past the window end
+                        if current_time.time() > window_end:
+                            logger.info(
+                                f"Pending {ps['direction'].value.upper()} setup expired "
+                                f"({ps_window} window closed at {window_end.strftime('%H:%M')} ET without breakout). "
+                                f"Trigger was {'above' if ps['direction'].value == 'bullish' else 'below'} "
+                                f"${ps['trigger_price']:,.2f}"
+                            )
+                            self.pending_setup = None
                     # Log once on startup if outside setup window, or every 10 minutes
                     if loop_count == 1 or loop_count % 20 == 0:  # every ~10 min at 30s intervals
-                        logger.info(f"Outside setup window (9:30-11:30 ET). Current: {current_time.strftime('%H:%M')} ET. Monitoring only.")
+                        windows_str = "9:30-11:30"
+                        if self.afternoon_enabled:
+                            windows_str += f", {self.afternoon_start.strftime('%H:%M')}-{self.afternoon_end.strftime('%H:%M')}"
+                        logger.info(f"Outside setup windows ({windows_str} ET). Current: {current_time.strftime('%H:%M')} ET. Monitoring only.")
 
                 # Reset error counter on success
                 consecutive_errors = 0
@@ -260,12 +286,36 @@ class TradingBot:
         return is_weekday and market_open <= current_time < market_close
     
     def _is_setup_window(self, dt: datetime) -> bool:
-        """Check if we're in the morning setup window"""
+        """Check if we're in any active setup window (morning or afternoon)."""
+        current_time = dt.time()
+
+        # Morning window
         morning_start = time(9, 30)
         morning_end = time(11, 30)
-        
+        if morning_start <= current_time <= morning_end:
+            return True
+
+        # Afternoon window (Bed & Breakfast)
+        if self.afternoon_enabled:
+            if self.afternoon_start <= current_time <= self.afternoon_end:
+                return True
+
+        return False
+
+    def _get_active_window(self, dt: datetime) -> str:
+        """Return which setup window is currently active: 'morning', 'afternoon', or 'none'."""
         current_time = dt.time()
-        return morning_start <= current_time <= morning_end
+
+        morning_start = time(9, 30)
+        morning_end = time(11, 30)
+        if morning_start <= current_time <= morning_end:
+            return 'morning'
+
+        if self.afternoon_enabled:
+            if self.afternoon_start <= current_time <= self.afternoon_end:
+                return 'afternoon'
+
+        return 'none'
     
     def _check_daily_limits(self) -> bool:
         """Check if daily trading limits have been reached"""
@@ -395,18 +445,21 @@ class TradingBot:
                             f"with new {direction.value.upper()} pulse bar"
                         )
 
+                    active_window = self._get_active_window(current_time)
                     self.pending_setup = {
                         'direction': direction,
                         'bar': bar,
                         'trigger_price': trigger_price,
                         'timestamp': current_time,
+                        'window': active_window,
                     }
 
+                    window_label = f" [{active_window} window]" if active_window != 'morning' else ""
                     logger.info(
                         f"PENDING SETUP: {direction.value.upper()} pulse bar at "
                         f"{bar.timestamp.strftime('%H:%M')} "
                         f"(H=${bar.high:.2f} L=${bar.low:.2f} C=${bar.close:.2f}). "
-                        f"Entry trigger: price {above_below} ${trigger_price:,.2f}"
+                        f"Entry trigger: price {above_below} ${trigger_price:,.2f}{window_label}"
                     )
                 else:
                     logger.debug("No setup detected")

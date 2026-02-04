@@ -31,7 +31,13 @@ timing:
   
   # Market close time (EST)
   market_close: "16:00"
-  
+
+  # Afternoon setup window - Bed & Breakfast system (p.23-26)
+  # Uses same pulse bar logic in last 60 min of trading day
+  afternoon_enabled: false
+  afternoon_start: "15:00"
+  afternoon_end: "15:30"
+
   # Timezone
   timezone: "America/New_York"
 
