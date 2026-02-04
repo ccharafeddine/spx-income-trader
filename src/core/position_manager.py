@@ -82,6 +82,28 @@ class PositionManager:
                     bar_metadata['setup_bar_time'] = setup_bar.timestamp.isoformat()
                     bar_metadata['breakout_time'] = breakout_time.isoformat()
 
+            # Credit quality classification
+            credit_quality = self.strategy.classify_credit_quality(
+                credit_received=spread.credit_received,
+                current_price=spread.underlying_price_at_entry,
+                short_strike=spread.short_leg.strike,
+                direction=spread.direction,
+            )
+            if bar_metadata is None:
+                bar_metadata = {}
+            bar_metadata['credit_quality'] = credit_quality
+
+            logger.info(
+                f"Credit quality: {credit_quality['quality']} "
+                f"(${credit_quality['credit_received']:.2f} vs "
+                f"{credit_quality['expected_range']} for {credit_quality['moneyness']})"
+            )
+            if credit_quality['is_simulated_concern']:
+                logger.warning(
+                    f"LOW CREDIT: ${credit_quality['credit_received']:.2f} — "
+                    f"simulated chain may not reflect live pricing"
+                )
+
             # Place order
             order_id = self.broker.place_spread_order(spread, quantity, metadata=bar_metadata)
             
