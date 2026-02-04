@@ -33,6 +33,7 @@ from src.brokers.dry_run_broker import DryRunBroker
 from src.core.strategy import SPXIncomeStrategy
 from src.core.position_manager import PositionManager
 from src.core.bar_builder import BarBuilder
+from src.core.bollinger_filter import BollingerFilter
 from src.data.market_data import MarketDataFeed
 from database.db_manager import DatabaseManager
 from src.utils.notifications import NotificationManager
@@ -66,6 +67,12 @@ class TradingBot:
         # Initialize components
         self.position_manager = PositionManager(broker, strategy, db_manager)
         self.bar_builder = BarBuilder(interval_minutes=30)
+        filters_cfg = STRATEGY_PARAMS.get('filters', {})
+        self.bollinger_enabled = filters_cfg.get('bollinger_enabled', True)
+        self.bollinger = BollingerFilter(
+            period=filters_cfg.get('bollinger_period', 50),
+            num_std=filters_cfg.get('bollinger_std', 2.0),
+        )
         self.market_data = MarketDataFeed(broker)
         
         # State
@@ -112,6 +119,21 @@ class TradingBot:
             "max_daily_trades": self.max_daily_trades
         })
         
+        # Seed Bollinger filter with historical data
+        if self.bollinger_enabled:
+            try:
+                bars_loaded = self.bollinger.seed_historical()
+                bb_status = self.bollinger.get_status()
+                logger.info(
+                    f"Bollinger filter: {bars_loaded} bars loaded, "
+                    f"bias={bb_status['current_bias'] or 'none'}, "
+                    f"bands={'ready' if bb_status['has_data'] else 'insufficient data'}"
+                )
+            except Exception as e:
+                logger.warning(f"Bollinger filter seed failed (will build from live data): {e}")
+        else:
+            logger.info("Bollinger filter disabled by config")
+
         try:
             self._run_main_loop()
         except KeyboardInterrupt:
@@ -157,7 +179,11 @@ class TradingBot:
                             f"- trigger {'above' if ps['direction'].value == 'bullish' else 'below'} "
                             f"${ps['trigger_price']:,.2f}"
                         )
-                    logger.info(f"[Heartbeat] Loop #{loop_count} at {current_time.strftime('%H:%M:%S')} ET{setup_str}")
+                    bb_str = ""
+                    if self.bollinger.has_sufficient_data:
+                        bias = self.bollinger.current_bias or 'none'
+                        bb_str = f" | BB bias={bias.upper()}"
+                    logger.info(f"[Heartbeat] Loop #{loop_count} at {current_time.strftime('%H:%M:%S')} ET{setup_str}{bb_str}")
                     last_heartbeat = current_time
 
                 # Check if market is open
@@ -334,6 +360,9 @@ class TradingBot:
             if bar:
                 logger.info(f"New 30-min bar completed: {bar}")
 
+                # Feed bar to Bollinger filter
+                self.bollinger.add_bar(bar)
+
                 # Check if we already have an open position
                 if self.position_manager.has_open_position():
                     logger.debug("Already have open position, skipping setup check")
@@ -343,6 +372,19 @@ class TradingBot:
                 direction = self.strategy.evaluate_setup(bar, current_price)
 
                 if direction:
+                    # Check Bollinger alignment before storing setup
+                    if self.bollinger_enabled:
+                        bb_aligned, bb_reason = self.bollinger.check_alignment(direction)
+                        logger.info(f"Bollinger check: {bb_reason}")
+
+                        if not bb_aligned:
+                            logger.info(
+                                f"SETUP REJECTED by Bollinger filter: "
+                                f"{direction.value.upper()} pulse bar at "
+                                f"{bar.timestamp.strftime('%H:%M')} blocked"
+                            )
+                            return
+
                     # Pulse bar detected — store as pending setup, DON'T enter yet
                     trigger_price = bar.high if direction.value == 'bullish' else bar.low
                     above_below = 'above' if direction.value == 'bullish' else 'below'

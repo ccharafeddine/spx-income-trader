@@ -63,3 +63,9 @@ monitoring:
   #   MODERATE      - Close early on non-trending + unfavorable only
   #   CONSERVATIVE  - Close early on any non-trending day
   management_mode: "MODERATE"
+
+filters:
+  # Bollinger Band directional bias filter (Tag 'n Turn, p.30-33)
+  bollinger_enabled: true
+  bollinger_period: 50
+  bollinger_std: 2.0
