@@ -254,6 +254,8 @@ class DryRunBroker(BrokerInterface):
                 signal_data['setup_bar_time'] = metadata['setup_bar_time']
             if 'breakout_time' in metadata:
                 signal_data['breakout_time'] = metadata['breakout_time']
+            if 'credit_quality' in metadata:
+                signal_data['credit_quality'] = metadata['credit_quality']
 
         self._log_signal("WOULD_OPEN_SPREAD", signal_data)
 
