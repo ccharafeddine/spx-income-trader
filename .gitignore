@@ -1,1 +1,37 @@
-# Python  __pycache__/  *.py[cod]  *$py.class  .Python  venv/  ENV/  # Environment  .env  .env.local  # Database  *.db  *.sqlite  # Logs  logs/*.log  # IDE  .vscode/  .idea/  # Tokens  tokens/  *.token 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+ENV/
+
+# Environment
+.env
+.env.local
+
+# Database
+*.db
+*.sqlite
+
+# Logs
+logs/*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Tokens
+tokens/
+*.token
+
+# Strategy PDF (copyrighted material)
+*.pdf
+
+# Signal logs and database files
+database/*.json
+signals_*.json
+
+# OS files
+.DS_Store
+Thumbs.db

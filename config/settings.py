@@ -36,7 +36,7 @@ LOG_FILE = os.getenv('LOG_FILE', str(BASE_DIR / 'logs' / 'trading.log'))
 
 # Dashboard Configuration
 DASHBOARD_PORT = int(os.getenv('DASHBOARD_PORT', 5000))
-DASHBOARD_HOST = os.getenv('DASHBOARD_HOST', '0.0.0.0')
+DASHBOARD_HOST = os.getenv('DASHBOARD_HOST', '127.0.0.1')
 
 # Load strategy parameters
 def load_strategy_params():
