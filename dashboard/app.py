@@ -678,6 +678,369 @@ def api_history():
     })
 
 
+@app.route('/api/journal')
+def api_journal():
+    """Trade journal with entry reasons, exit analysis, and market context."""
+    days = request.args.get('days', 90, type=int)
+    direction_filter = request.args.get('direction', '')
+    outcome_filter = request.args.get('outcome', '')
+    flagged_only = request.args.get('flagged', '') == 'true'
+
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+
+    # Get SPX price and all trades
+    spx = yahoo.get_spx_quote() or {}
+    spx_price = spx.get('price')
+
+    try:
+        conn = get_db_connection()
+        _, all_closed = classify_trades(conn, spx_price)
+        open_pos, _ = classify_trades(conn, spx_price)
+        conn.close()
+    except Exception:
+        all_closed = []
+        open_pos = []
+
+    # Include open positions as well
+    all_trades = all_closed + open_pos
+
+    # Filter by cutoff date
+    all_trades = [
+        t for t in all_trades
+        if (t.get('entry_time', '') or '') >= cutoff
+    ]
+
+    # Load signals for correlation
+    all_signals = load_signals()
+
+    # Strategy params
+    strat = STRATEGY_PARAMS.get('strategy', {})
+    timing = STRATEGY_PARAMS.get('timing', {})
+    risk = STRATEGY_PARAMS.get('risk', {})
+
+    journal_entries = []
+    total_duration_hours = 0
+    total_pct_max = 0
+    duration_count = 0
+    pct_max_count = 0
+    exit_reasons = {}
+
+    for trade in all_trades:
+        # Correlate with signal
+        signal = _correlate_trade_with_signal(trade, all_signals)
+
+        # Build entry reasons
+        entry_reasons = _reconstruct_entry_reasons(trade, signal, strat, timing, risk)
+
+        # Exit analysis
+        exit_analysis = _compute_exit_analysis(trade)
+
+        # Market context
+        market_context = _get_market_context(trade)
+
+        # Compute totals for aggregation
+        spread_width = trade.get('spread_width') or abs(
+            (trade.get('long_strike') or 0) - (trade.get('short_strike') or 0)
+        )
+        credit = trade.get('credit_received') or 0
+        qty = trade.get('quantity') or 1
+        max_profit_total = credit * 100 * qty
+        max_risk_total = (spread_width - credit) * 100 * qty if spread_width > credit else 0
+        risk_reward = round(max_profit_total / max_risk_total, 2) if max_risk_total > 0 else 0
+
+        # Direction display
+        dir_raw = (trade.get('direction') or '').lower()
+        dir_display = 'CALL CREDIT' if dir_raw == 'bearish' else 'PUT CREDIT' if dir_raw == 'bullish' else dir_raw.upper()
+
+        entry = {
+            'id': trade.get('id'),
+            'entry_time': trade.get('entry_time'),
+            'exit_time': trade.get('exit_time'),
+            'direction': dir_display,
+            'direction_raw': dir_raw,
+            'status': trade.get('status'),
+            'short_strike': trade.get('short_strike'),
+            'long_strike': trade.get('long_strike'),
+            'spread_width': spread_width,
+            'credit_received': credit,
+            'total_credit': round(max_profit_total, 2),
+            'quantity': qty,
+            'max_profit_total': round(max_profit_total, 2),
+            'max_risk_total': round(max_risk_total, 2),
+            'risk_reward_ratio': risk_reward,
+            'expiration': trade.get('expiration'),
+            'entry_reasons': entry_reasons,
+            'exit_analysis': exit_analysis,
+            'market_context': market_context,
+            'signal': signal,
+            'flag': trade.get('flag'),
+            'flag_note': trade.get('flag_note'),
+            'notes': trade.get('notes'),
+        }
+
+        # Apply filters
+        if direction_filter and direction_filter.lower() != dir_raw:
+            continue
+        if outcome_filter:
+            if outcome_filter == 'win' and exit_analysis['outcome'] != 'win':
+                continue
+            if outcome_filter == 'loss' and exit_analysis['outcome'] != 'loss':
+                continue
+            if outcome_filter == 'open' and exit_analysis['outcome'] != 'open':
+                continue
+        if flagged_only and not trade.get('flag'):
+            continue
+
+        journal_entries.append(entry)
+
+        # Aggregate stats (exclude flagged)
+        if not trade.get('flag'):
+            if exit_analysis['duration_hours'] is not None:
+                total_duration_hours += exit_analysis['duration_hours']
+                duration_count += 1
+            if exit_analysis['pct_of_max_profit'] is not None:
+                total_pct_max += exit_analysis['pct_of_max_profit']
+                pct_max_count += 1
+            reason = exit_analysis.get('exit_reason') or 'unknown'
+            exit_reasons[reason] = exit_reasons.get(reason, 0) + 1
+
+    # Sort newest first
+    journal_entries.sort(key=lambda e: e.get('entry_time') or '', reverse=True)
+
+    # Compute stats (valid = non-flagged)
+    valid = [e for e in journal_entries if not e.get('flag')]
+    wins = [e for e in valid if e['exit_analysis']['outcome'] == 'win']
+    losses = [e for e in valid if e['exit_analysis']['outcome'] == 'loss']
+    total_pnl = sum((e['exit_analysis']['pnl'] or 0) for e in valid)
+    most_common_exit = max(exit_reasons, key=exit_reasons.get) if exit_reasons else None
+
+    stats = {
+        'total_entries': len(journal_entries),
+        'valid_entries': len(valid),
+        'wins': len(wins),
+        'losses': len(losses),
+        'win_rate': round(len(wins) / len(valid) * 100, 1) if valid else 0,
+        'avg_duration_hours': round(total_duration_hours / duration_count, 1) if duration_count else None,
+        'avg_pct_max_profit': round(total_pct_max / pct_max_count, 1) if pct_max_count else None,
+        'total_pnl': round(total_pnl, 2),
+        'most_common_exit_reason': most_common_exit,
+    }
+
+    strategy_params = {
+        'pulse_threshold': strat.get('pulse_threshold', 10),
+        'spread_width': strat.get('spread_width', 5),
+        'profit_target_pct': strat.get('profit_target_pct', 80),
+        'max_daily_trades': strat.get('max_daily_trades', 1),
+        'contracts': strat.get('contracts_per_trade', 5),
+        'min_credit': MIN_CREDIT_THRESHOLD,
+        'morning_start': timing.get('morning_start', '09:30'),
+        'morning_end': timing.get('morning_end', '11:30'),
+        'max_daily_loss': risk.get('max_daily_loss', 1000),
+    }
+
+    return jsonify({
+        'journal': journal_entries,
+        'stats': stats,
+        'strategy_params': strategy_params,
+    })
+
+
+def _correlate_trade_with_signal(trade, signals):
+    """Match a trade to its originating signal via entry_order_id or timestamps."""
+    entry_order_id = trade.get('entry_order_id')
+
+    # Try matching by order ID first
+    if entry_order_id:
+        for s in signals:
+            if s.get('order_id') == entry_order_id:
+                return s
+
+    # Fallback: match by timestamp proximity (within 60 seconds)
+    entry_time = trade.get('entry_time', '')
+    if entry_time:
+        try:
+            trade_dt = datetime.fromisoformat(entry_time)
+            for s in signals:
+                sig_ts = s.get('timestamp', '')
+                if sig_ts:
+                    sig_dt = datetime.fromisoformat(sig_ts)
+                    if abs((trade_dt - sig_dt).total_seconds()) < 60:
+                        return s
+        except (ValueError, TypeError):
+            pass
+
+    return None
+
+
+def _reconstruct_entry_reasons(trade, signal, strat, timing, risk):
+    """Build a list of entry reason checkboxes for a trade."""
+    reasons = []
+
+    # 1. Pulse bar detected
+    setup_bar = trade.get('setup_bar_time', '')
+    direction = (trade.get('direction') or '').upper()
+    pulse_detail = f"{direction} pulse"
+    if setup_bar:
+        pulse_detail += f" at {setup_bar}"
+    reasons.append({
+        'id': 'pulse_detected',
+        'label': 'Pulse bar detected',
+        'met': True,  # Trade exists, so pulse was detected
+        'detail': pulse_detail,
+    })
+
+    # 2. Close % met threshold
+    threshold = strat.get('pulse_threshold', 10)
+    reasons.append({
+        'id': 'close_pct_threshold',
+        'label': f'Close % met {threshold}% threshold',
+        'met': True,  # Enforced by PulseBarDetector
+        'detail': f'Threshold: {threshold}%',
+    })
+
+    # 3. Within setup window
+    morning_start = timing.get('morning_start', '09:30')
+    morning_end = timing.get('morning_end', '11:30')
+    entry_time = trade.get('entry_time', '')
+    in_window = True
+    entry_hhmm = ''
+    if entry_time:
+        try:
+            entry_dt = datetime.fromisoformat(entry_time)
+            if entry_dt.tzinfo:
+                entry_dt = entry_dt.astimezone(ET)
+            entry_hhmm = entry_dt.strftime('%H:%M')
+            in_window = morning_start <= entry_hhmm <= morning_end
+        except (ValueError, TypeError):
+            pass
+    reasons.append({
+        'id': 'setup_window',
+        'label': f'Within {morning_start}-{morning_end} ET window',
+        'met': in_window,
+        'detail': f'Entry at {entry_hhmm} ET' if entry_hhmm else 'Entry time unknown',
+    })
+
+    # 4. Credit >= minimum
+    credit = trade.get('credit_received', 0)
+    min_credit = MIN_CREDIT_THRESHOLD
+    credit_met = credit >= min_credit
+    reasons.append({
+        'id': 'min_credit',
+        'label': f'Credit >= ${min_credit:.2f} minimum',
+        'met': credit_met,
+        'detail': f'Credit: ${credit:.2f}',
+    })
+
+    # 5. Daily trade limit not reached
+    reasons.append({
+        'id': 'daily_trade_limit',
+        'label': 'Daily trade limit not reached',
+        'met': True,  # Trade exists, so limit wasn't reached
+        'detail': f'Limit: {strat.get("max_daily_trades", 1)} per day',
+    })
+
+    # 6. Daily loss limit
+    reasons.append({
+        'id': 'daily_loss_limit',
+        'label': f'Daily loss < ${risk.get("max_daily_loss", 1000):,} limit',
+        'met': True,  # Trade exists, so loss limit wasn't breached
+        'detail': f'Max daily loss: ${risk.get("max_daily_loss", 1000):,}',
+    })
+
+    # 7. No existing open position
+    reasons.append({
+        'id': 'no_open_position',
+        'label': 'No existing open position',
+        'met': True,  # Trade exists, so no conflict
+        'detail': 'Position was clear at entry',
+    })
+
+    # 8. SPX price context
+    spx_at_entry = trade.get('underlying_price_at_entry')
+    short_strike = trade.get('short_strike')
+    if spx_at_entry and short_strike:
+        distance = round(spx_at_entry - short_strike, 1)
+        above_below = 'above' if distance > 0 else 'below'
+        reasons.append({
+            'id': 'spx_context',
+            'label': 'SPX price context at entry',
+            'met': True,
+            'detail': f'SPX at ${spx_at_entry:,.2f}, short {short_strike} ({abs(distance)}pts {above_below})',
+        })
+    else:
+        reasons.append({
+            'id': 'spx_context',
+            'label': 'SPX price context at entry',
+            'met': True,
+            'detail': 'Price data unavailable',
+        })
+
+    return reasons
+
+
+def _compute_exit_analysis(trade):
+    """Compute exit analysis fields for a trade."""
+    pnl = trade.get('pnl')
+    exit_reason = trade.get('exit_reason')
+    entry_time = trade.get('entry_time', '')
+    exit_time = trade.get('exit_time', '')
+    status = trade.get('status', '')
+
+    # Duration
+    duration_display = None
+    duration_hours = None
+    if entry_time and exit_time:
+        try:
+            entry_dt = datetime.fromisoformat(entry_time)
+            exit_dt = datetime.fromisoformat(exit_time)
+            delta = exit_dt - entry_dt
+            total_secs = int(delta.total_seconds())
+            if total_secs >= 0:
+                hours = total_secs // 3600
+                minutes = (total_secs % 3600) // 60
+                duration_display = f'{hours}h {minutes}m'
+                duration_hours = round(total_secs / 3600, 1)
+        except (ValueError, TypeError):
+            pass
+
+    # % of max profit captured
+    pct_of_max_profit = None
+    credit = trade.get('credit_received', 0)
+    qty = trade.get('quantity', 1)
+    max_profit = credit * 100 * qty
+    if pnl is not None and max_profit > 0:
+        pct_of_max_profit = round(pnl / max_profit * 100, 1)
+
+    # Outcome
+    if status == 'active':
+        outcome = 'open'
+    elif pnl is not None:
+        if pnl > 0:
+            outcome = 'win'
+        elif pnl < 0:
+            outcome = 'loss'
+        else:
+            outcome = 'breakeven'
+    else:
+        outcome = 'open'
+
+    return {
+        'exit_reason': exit_reason,
+        'duration_display': duration_display,
+        'duration_hours': duration_hours,
+        'pnl': pnl,
+        'pct_of_max_profit': pct_of_max_profit,
+        'outcome': outcome,
+    }
+
+
+def _get_market_context(trade):
+    """Get market context at the time of trade entry."""
+    return {
+        'spx_price': trade.get('underlying_price_at_entry'),
+    }
+
+
 @app.route('/api/events')
 def api_events():
     """Recent system events."""

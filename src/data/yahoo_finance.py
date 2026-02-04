@@ -293,6 +293,10 @@ class YahooFinanceProvider:
         Returns:
             List of bar dicts with: timestamp, open, high, low, close, volume
         """
+        if not YFINANCE_AVAILABLE:
+            logger.warning("yfinance not installed - intraday bars unavailable")
+            return None
+
         try:
             ticker = yf.Ticker(self.SPX_SYMBOL)
             hist = ticker.history(period=period, interval=interval)

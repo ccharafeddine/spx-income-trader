@@ -352,11 +352,210 @@ header {
   opacity: 0.55;
 }
 
+/* Tab navigation */
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
+}
+.tab-btn {
+  padding: 8px 20px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+  bottom: -1px;
+}
+.tab-btn:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+.tab-btn.active {
+  color: #fff;
+  background: var(--panel);
+  border-color: var(--border);
+  border-bottom: 1px solid var(--panel);
+}
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* Journal stats bar */
+.journal-stats-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 12px 20px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+/* Journal filters */
+.journal-filters {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.journal-filters label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.journal-filters select,
+.journal-filters input[type="checkbox"] {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-family: var(--font);
+  font-size: 12px;
+}
+.journal-filters select:focus { outline: 1px solid var(--blue); }
+.journal-filters .filter-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.journal-filters .spacer { flex: 1; }
+.journal-filters .btn-sm {
+  padding: 4px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 11px;
+  cursor: pointer;
+}
+.journal-filters .btn-sm:hover { color: var(--text); border-color: var(--text-dim); }
+
+/* Journal trade cards */
+.journal-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.journal-card.flagged { opacity: 0.6; }
+.journal-card.flagged:hover { opacity: 0.85; }
+.journal-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-size: 12px;
+}
+.journal-card-header:hover { background: rgba(255,255,255,0.02); }
+.journal-card-header .arrow {
+  color: var(--text-dim);
+  font-size: 10px;
+  transition: transform 0.2s;
+  width: 12px;
+}
+.journal-card.expanded .arrow { transform: rotate(90deg); }
+.journal-card-header .date { color: var(--text-dim); }
+.journal-card-header .dir { font-weight: bold; }
+.journal-card-header .strikes { color: #fff; }
+.journal-card-header .qty { color: var(--text-dim); }
+.journal-card-header .outcome {
+  font-weight: bold;
+  margin-left: auto;
+}
+.journal-card-header .outcome.win { color: var(--green); }
+.journal-card-header .outcome.loss { color: var(--red); }
+.journal-card-header .outcome.open { color: var(--blue); }
+.journal-card-header .outcome.breakeven { color: var(--text-dim); }
+
+.journal-card-body {
+  display: none;
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--border);
+}
+.journal-card.expanded .journal-card-body { display: block; }
+
+/* Journal card sections */
+.journal-section {
+  margin-top: 14px;
+}
+.journal-section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #1f1f35;
+}
+
+/* Entry reason checklist */
+.reason-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.reason-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.reason-check {
+  font-weight: bold;
+  width: 16px;
+  flex-shrink: 0;
+}
+.reason-check.met { color: var(--green); }
+.reason-check.unmet { color: var(--red); }
+.reason-label { color: var(--text); }
+.reason-detail { color: var(--text-dim); font-size: 11px; }
+
+/* Trade details grid */
+.trade-details-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px 16px;
+  font-size: 12px;
+}
+.trade-details-grid .td-label { color: var(--text-dim); }
+.trade-details-grid .td-value { color: #fff; font-weight: bold; }
+
+/* Exit analysis grid */
+.exit-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 16px;
+  font-size: 12px;
+}
+.exit-grid .td-label { color: var(--text-dim); }
+.exit-grid .td-value { color: #fff; font-weight: bold; }
+
 /* Responsive */
 @media (max-width: 900px) {
   .dashboard { grid-template-columns: 1fr; }
   .bottom-row { grid-template-columns: 1fr; }
   .account-bar { flex-wrap: wrap; gap: 16px; }
+  .trade-details-grid { grid-template-columns: 1fr 1fr; }
 }
 </style>
 </head>
@@ -420,6 +619,15 @@ header {
     </div>
     <div class="summary-stats" id="summary-stats"></div>
   </div>
+
+  <!-- TAB NAVIGATION -->
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('overview')">Overview</button>
+    <button class="tab-btn" onclick="switchTab('journal')">Trade Journal</button>
+  </div>
+
+  <!-- TAB: OVERVIEW -->
+  <div id="tab-overview" class="tab-content active">
 
   <!-- MAIN 2-COL GRID -->
   <div class="dashboard">
@@ -491,6 +699,63 @@ header {
       </div>
     </div>
   </div>
+
+  </div><!-- /tab-overview -->
+
+  <!-- TAB: TRADE JOURNAL -->
+  <div id="tab-journal" class="tab-content">
+
+    <!-- Journal Stats Bar -->
+    <div class="journal-stats-bar" id="journal-stats-bar">
+      <div class="agg-stat"><div class="val" id="j-total">0</div><div class="lbl">Trades</div></div>
+      <div class="agg-stat"><div class="val" id="j-winrate">0%</div><div class="lbl">Win Rate</div></div>
+      <div class="agg-stat"><div class="val" id="j-pnl">$0.00</div><div class="lbl">P&L</div></div>
+      <div class="agg-stat"><div class="val" id="j-duration">--</div><div class="lbl">Avg Duration</div></div>
+      <div class="agg-stat"><div class="val" id="j-capture">--</div><div class="lbl">Avg Capture</div></div>
+    </div>
+
+    <!-- Filters -->
+    <div class="journal-filters">
+      <div class="filter-group">
+        <label>Period:</label>
+        <select id="j-filter-days" onchange="updateJournal()">
+          <option value="7">7 days</option>
+          <option value="30" selected>30 days</option>
+          <option value="90">90 days</option>
+          <option value="365">1 year</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Direction:</label>
+        <select id="j-filter-dir" onchange="updateJournal()">
+          <option value="">All</option>
+          <option value="bullish">Bullish</option>
+          <option value="bearish">Bearish</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Outcome:</label>
+        <select id="j-filter-outcome" onchange="updateJournal()">
+          <option value="">All</option>
+          <option value="win">Win</option>
+          <option value="loss">Loss</option>
+          <option value="open">Open</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <input type="checkbox" id="j-filter-flagged" onchange="updateJournal()">
+        <label for="j-filter-flagged" style="cursor:pointer">Flagged only</label>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn-sm" onclick="expandAllCards()">Expand All</button>
+    </div>
+
+    <!-- Trade Cards Container -->
+    <div id="journal-cards">
+      <div class="empty">Loading journal...</div>
+    </div>
+
+  </div><!-- /tab-journal -->
 
 </div>
 
@@ -961,12 +1226,173 @@ async function updateHistory() {
 }
 
 // ---------------------------------------------------------------
+// Tab switching
+// ---------------------------------------------------------------
+let activeTab = 'overview';
+
+function switchTab(tabId) {
+  activeTab = tabId;
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.textContent.toLowerCase().replace(' ', '') === tabId ||
+      (tabId === 'overview' && btn.textContent === 'Overview') ||
+      (tabId === 'journal' && btn.textContent === 'Trade Journal'));
+  });
+  document.querySelectorAll('.tab-content').forEach(el => {
+    el.classList.toggle('active', el.id === 'tab-' + tabId);
+  });
+  if (tabId === 'journal') updateJournal();
+}
+
+// ---------------------------------------------------------------
+// Trade Journal
+// ---------------------------------------------------------------
+let journalData = null;
+
+async function updateJournal() {
+  const days = document.getElementById('j-filter-days').value;
+  const dir = document.getElementById('j-filter-dir').value;
+  const outcome = document.getElementById('j-filter-outcome').value;
+  const flagged = document.getElementById('j-filter-flagged').checked;
+
+  let url = '/api/journal?days=' + days;
+  if (dir) url += '&direction=' + dir;
+  if (outcome) url += '&outcome=' + outcome;
+  if (flagged) url += '&flagged=true';
+
+  const d = await fetchJSON(url);
+  if (!d) return;
+  journalData = d;
+
+  // Update stats bar
+  const s = d.stats || {};
+  document.getElementById('j-total').textContent = s.valid_entries || 0;
+  const wr = document.getElementById('j-winrate');
+  wr.textContent = (s.win_rate || 0) + '%';
+  wr.className = 'val ' + (s.win_rate >= 50 ? 'pnl-pos' : s.win_rate > 0 ? 'pnl-neg' : '');
+  const pnlEl = document.getElementById('j-pnl');
+  pnlEl.textContent = fmt$(s.total_pnl);
+  pnlEl.className = 'val ' + pnlClass(s.total_pnl);
+  document.getElementById('j-duration').textContent = s.avg_duration_hours != null ? s.avg_duration_hours + 'h' : '--';
+  document.getElementById('j-capture').textContent = s.avg_pct_max_profit != null ? s.avg_pct_max_profit + '%' : '--';
+
+  // Render trade cards
+  const container = document.getElementById('journal-cards');
+  const entries = d.journal || [];
+
+  if (!entries.length) {
+    container.innerHTML = '<div class="empty">No trades match filters</div>';
+    return;
+  }
+
+  let html = '';
+  entries.forEach((e, idx) => {
+    const dt = e.entry_time ? e.entry_time.substring(0, 10) : '--';
+    const pnl = e.exit_analysis ? e.exit_analysis.pnl : null;
+    const outcome = e.exit_analysis ? e.exit_analysis.outcome : 'open';
+    const outcomeLabel = outcome === 'win' ? 'WIN' : outcome === 'loss' ? 'LOSS' : outcome === 'open' ? 'OPEN' : 'BE';
+    const pnlStr = pnl != null ? ' ' + fmt$(pnl) : '';
+    const flagHtml = e.flag ? '<span class="flag-badge low-credit" title="' + (e.flag_note || '') + '">' + e.flag + '</span>' : '';
+    const flaggedClass = e.flag ? ' flagged' : '';
+
+    html += '<div class="journal-card' + flaggedClass + '" id="jcard-' + idx + '">';
+
+    // Header (collapsed view)
+    html += '<div class="journal-card-header" onclick="toggleCard(' + idx + ')">';
+    html += '<span class="arrow">&#9654;</span>';
+    html += '<span class="date">' + dt + '</span>';
+    html += '<span class="dir ' + (e.direction_raw === 'bearish' ? 'dir-bear' : 'dir-bull') + '">' + e.direction + '</span>';
+    html += '<span class="strikes">' + (e.short_strike || '--') + '/' + (e.long_strike || '--') + '</span>';
+    html += '<span class="qty">' + (e.quantity || 1) + 'x</span>';
+    html += flagHtml;
+    html += '<span class="outcome ' + outcome + '">' + outcomeLabel + pnlStr + '</span>';
+    html += '</div>';
+
+    // Body (expanded view)
+    html += '<div class="journal-card-body">';
+
+    // Entry Analysis
+    html += '<div class="journal-section">';
+    html += '<div class="journal-section-title">Entry Analysis &mdash; Why This Trade Happened</div>';
+    html += '<ul class="reason-list">';
+    (e.entry_reasons || []).forEach(r => {
+      const checkCls = r.met ? 'met' : 'unmet';
+      const checkChar = r.met ? '&#10003;' : '&#10007;';
+      html += '<li class="reason-item">';
+      html += '<span class="reason-check ' + checkCls + '">' + checkChar + '</span>';
+      html += '<span><span class="reason-label">' + r.label + '</span>';
+      if (r.detail) html += ' <span class="reason-detail">&mdash; ' + r.detail + '</span>';
+      html += '</span></li>';
+    });
+    html += '</ul></div>';
+
+    // Trade Details
+    html += '<div class="journal-section">';
+    html += '<div class="journal-section-title">Trade Details</div>';
+    html += '<div class="trade-details-grid">';
+    html += '<span class="td-label">Direction</span><span class="td-value">' + (e.direction_raw || '').toUpperCase() + '</span><span></span>';
+    html += '<span class="td-label">Strikes</span><span class="td-value">' + (e.short_strike || '--') + '/' + (e.long_strike || '--') + '</span>';
+    html += '<span class="td-label">Width</span><span class="td-value">$' + (e.spread_width || '--') + '</span>';
+    html += '<span class="td-label">Credit</span><span class="td-value">$' + (e.credit_received || 0).toFixed(2) + '/ea</span>';
+    html += '<span class="td-label">Total</span><span class="td-value">' + fmt$(e.total_credit) + '</span>';
+    html += '<span class="td-label">Qty</span><span class="td-value">' + (e.quantity || 1) + 'x</span>';
+    html += '<span class="td-label">Max Profit</span><span class="td-value">' + fmt$(e.max_profit_total) + '</span>';
+    html += '<span class="td-label">Max Risk</span><span class="td-value">' + fmt$(e.max_risk_total) + '</span>';
+    html += '<span class="td-label">R:R</span><span class="td-value">' + (e.risk_reward_ratio || 0).toFixed(2) + ':1</span>';
+    const entryHHMM = e.entry_time ? e.entry_time.substring(11, 16) : '--';
+    const expHHMM = e.expiration ? (e.expiration.includes('T') ? e.expiration.substring(11, 16) : e.expiration.substring(11, 16)) : '--';
+    html += '<span class="td-label">Entry</span><span class="td-value">' + entryHHMM + ' ET</span>';
+    html += '<span class="td-label">Expiration</span><span class="td-value">' + expHHMM + ' ET</span>';
+    if (e.market_context && e.market_context.spx_price) {
+      html += '<span class="td-label">SPX at Entry</span><span class="td-value">$' + Number(e.market_context.spx_price).toLocaleString('en-US', {minimumFractionDigits: 2}) + '</span>';
+    }
+    html += '</div></div>';
+
+    // Exit Analysis
+    if (e.exit_analysis) {
+      const ex = e.exit_analysis;
+      html += '<div class="journal-section">';
+      html += '<div class="journal-section-title">Exit Analysis</div>';
+      html += '<div class="exit-grid">';
+      html += '<span class="td-label">Reason</span><span class="td-value">' + (ex.exit_reason || '--') + '</span>';
+      html += '<span class="td-label">Duration</span><span class="td-value">' + (ex.duration_display || '--') + '</span>';
+      html += '<span class="td-label">P&L</span><span class="td-value ' + pnlClass(ex.pnl) + '">' + fmt$(ex.pnl) + '</span>';
+      html += '<span class="td-label">% Max Captured</span><span class="td-value">' + (ex.pct_of_max_profit != null ? ex.pct_of_max_profit + '%' : '--') + '</span>';
+      html += '</div></div>';
+    }
+
+    html += '</div>'; // /card-body
+    html += '</div>'; // /card
+  });
+
+  container.innerHTML = html;
+}
+
+function toggleCard(idx) {
+  const card = document.getElementById('jcard-' + idx);
+  if (card) card.classList.toggle('expanded');
+}
+
+function expandAllCards() {
+  const cards = document.querySelectorAll('.journal-card');
+  const allExpanded = Array.from(cards).every(c => c.classList.contains('expanded'));
+  cards.forEach(c => {
+    if (allExpanded) {
+      c.classList.remove('expanded');
+    } else {
+      c.classList.add('expanded');
+    }
+  });
+}
+
+// ---------------------------------------------------------------
 // Refresh loop
 // ---------------------------------------------------------------
 let countdown = 30;
 
 async function refreshAll() {
-  await Promise.all([updateStatus(), updateToday(), updateSignals(), updateHistory()]);
+  const tasks = [updateStatus(), updateToday(), updateSignals(), updateHistory()];
+  if (activeTab === 'journal') tasks.push(updateJournal());
+  await Promise.all(tasks);
   countdown = 30;
 }
 
