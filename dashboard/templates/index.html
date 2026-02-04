@@ -1115,7 +1115,11 @@ async function updateToday() {
   const pulseTimes = new Set(d.pulse_times || []);
 
   if (bars && bars.length) {
-    const timestamps = bars.map(b => b.timestamp || b.time);
+    const timestamps = bars.map(b => {
+      const raw = b.timestamp || b.time || '';
+      const m = raw.match(/(\d{2}:\d{2})/);
+      return m ? m[1] : raw;
+    });
     const opens = bars.map(b => b.open);
     const highs = bars.map(b => b.high);
     const lows = bars.map(b => b.low);
@@ -1297,7 +1301,7 @@ async function updateHistory() {
   // Trade history table
   if (closedTrades.length) {
     let html = '<table class="signal-table"><thead><tr>' +
-      '<th>Date</th><th>Dir</th><th>Strikes</th><th>Credit</th><th>Exit</th><th>P&L</th><th>Running</th>' +
+      '<th>Date</th><th>Dir</th><th>Strikes</th><th>Credit</th><th>Exit</th><th>P&L</th><th>Cumul. P&L</th>' +
       '</tr></thead><tbody>';
     closedTrades.forEach(t => {
       const dt = t.entry_time ? t.entry_time.substring(0, 10) : '--';
@@ -1305,6 +1309,7 @@ async function updateHistory() {
       const strikes = (t.short_strike || '--') + '/' + (t.long_strike || '--');
       const credit = fmt$(t.credit_received ? t.credit_received * 100 * (t.quantity || 1) : 0);
       const reason = t.exit_reason || '--';
+      const reasonShort = reason.length > 20 ? reason.substring(0, 18) + '\u2026' : reason;
       const pnl = t.pnl || 0;
       const running = t.running_total || 0;
       const isFlagged = t.flag === 'LOW_CREDIT';
@@ -1318,7 +1323,7 @@ async function updateHistory() {
         '<td class="' + dirClass(dir) + '">' + dir + '</td>' +
         '<td>' + strikes + flagHtml + '</td>' +
         '<td>' + credit + '</td>' +
-        '<td>' + reason + '</td>' +
+        '<td title="' + reason.replace(/"/g, '&quot;') + '">' + reasonShort + '</td>' +
         '<td class="' + pnlClass(pnl) + '">' + fmt$(pnl) + '</td>' +
         '<td class="' + pnlClass(running) + '">' + fmt$(running) + '</td>' +
         '</tr>';
