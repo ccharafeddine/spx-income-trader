@@ -616,6 +616,9 @@ def api_today():
                 today_trades.append(t)
 
         # Only truly open positions for strike lines
+        # Add current SPX price so frontend can compute zones
+        for p in open_pos:
+            p['current_price'] = spx_price
         open_positions = open_pos
         conn.close()
     except Exception:

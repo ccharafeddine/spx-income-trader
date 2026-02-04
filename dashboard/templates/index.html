@@ -317,6 +317,53 @@ header::after {
   font-size: 11px;
 }
 
+/* Trade Plan panel */
+.trade-plan-panel {
+  border-left: 3px solid var(--cyan);
+}
+.plan-section-title {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--cyan);
+  margin: 12px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.plan-section-title:first-child { margin-top: 0; }
+.plan-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.plan-check {
+  flex-shrink: 0;
+  width: 16px;
+  font-size: 13px;
+}
+.plan-check.met { color: var(--green); }
+.plan-check.pending { color: var(--text-dim); }
+.plan-check.active { color: var(--amber); animation: pulse-glow 2s ease-in-out infinite; }
+.plan-check.failed { color: var(--red); }
+.plan-label { color: var(--text); }
+.plan-detail { color: var(--text-dim); font-size: 11px; margin-left: 24px; }
+.plan-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 0;
+}
+.plan-metric {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  font-size: 12px;
+}
+.plan-metric .label { color: var(--text-dim); }
+.plan-metric .value { color: #fff; font-family: var(--font-mono); }
+
 /* Tables */
 .signal-table {
   width: 100%;
@@ -911,6 +958,12 @@ header::after {
           <div class="empty">No open positions</div>
         </div>
       </div>
+
+      <!-- TRADE PLAN (visible only when position is open) -->
+      <div class="panel trade-plan-panel" id="trade-plan-panel" style="display:none;">
+        <div class="panel-title">Trade Plan</div>
+        <div id="trade-plan-content"></div>
+      </div>
     </div>
 
     <!-- RIGHT COLUMN: Chart -->
@@ -1085,6 +1138,7 @@ let prevTradeIds = new Set();
 let prevClosedIds = new Set();
 let prevDangerIds = new Set();
 let initialLoad = true;
+let latestTodayData = null;
 
 // ---------------------------------------------------------------
 // Helpers
@@ -1349,6 +1403,7 @@ async function updateStatus() {
 async function updateToday() {
   const d = await fetchJSON('/api/today');
   if (!d) return;
+  latestTodayData = d;
 
   // Stats
   document.getElementById('today-signals').textContent = (d.signals || []).length;
@@ -1363,6 +1418,24 @@ async function updateToday() {
     bb.innerHTML = '<span class="building-dot"></span>' + d.building_bar.time + ' (' + d.building_bar.ticks + ' ticks) C=' + fmt$(d.building_bar.close);
   } else {
     bb.textContent = '--';
+  }
+
+  // TEMP TEST — toggle to true to test trade visualization
+  if (false) {
+    d.open_positions = [{
+      direction: 'bearish',
+      short_strike: 6930,
+      long_strike: 6935,
+      credit_received: 2.50,
+      quantity: 5,
+      entry_time: '2026-02-04T10:00:00',
+      underlying_price_at_entry: 6925,
+      est_pnl: 450,
+      time_remaining_secs: 18000,
+      position_status: 'safe',
+      current_price: 6920,
+      distance_to_short: -10,
+    }];
   }
 
   // Sound: bar complete & pulse detected
@@ -1468,26 +1541,93 @@ async function updateToday() {
       });
     });
 
-    // Short strike horizontal lines for open positions
+    // Trade zone visualization for open positions
     (d.open_positions || []).forEach(pos => {
-      const color = pos.direction === 'bullish' ? '#10b981' : '#ef4444';
-      const label = (pos.direction === 'bullish' ? 'PUT' : 'CALL') + ' ' + pos.short_strike;
+      const isBullish = pos.direction === 'bullish';
+      const shortStrike = pos.short_strike;
+      const longStrike = pos.long_strike;
+      const credit = pos.credit_received || 0;
+      const breakeven = isBullish ? shortStrike - credit : shortStrike + credit;
+
+      const validLows = sortedLows.filter(v => v != null);
+      const validHighs = sortedHighs.filter(v => v != null);
+      const chartBottom = validLows.length ? Math.min(...validLows) - 5 : shortStrike - 20;
+      const chartTop = validHighs.length ? Math.max(...validHighs) + 5 : shortStrike + 20;
+
+      // Profit zone — from short strike to safe side
       shapes.push({
-        type: 'line', x0: 0, x1: 1, y0: pos.short_strike, y1: pos.short_strike,
-        xref: 'paper', yref: 'y',
-        line: {color: color, width: 1.5, dash: 'dot'},
+        type: 'rect', x0: 0, x1: 1, xref: 'paper',
+        y0: isBullish ? shortStrike : chartBottom,
+        y1: isBullish ? chartTop : shortStrike,
+        yref: 'y', fillcolor: 'rgba(16,185,129,0.06)', line: {width: 0}, layer: 'below',
+      });
+      // Danger zone — between breakeven and long strike
+      shapes.push({
+        type: 'rect', x0: 0, x1: 1, xref: 'paper',
+        y0: Math.min(breakeven, longStrike), y1: Math.max(breakeven, longStrike),
+        yref: 'y', fillcolor: 'rgba(239,68,68,0.06)', line: {width: 0}, layer: 'below',
+      });
+      // Caution zone — between short strike and breakeven
+      shapes.push({
+        type: 'rect', x0: 0, x1: 1, xref: 'paper',
+        y0: Math.min(shortStrike, breakeven), y1: Math.max(shortStrike, breakeven),
+        yref: 'y', fillcolor: 'rgba(245,158,11,0.06)', line: {width: 0}, layer: 'below',
+      });
+
+      // Short strike line (solid, prominent)
+      shapes.push({
+        type: 'line', x0: 0, x1: 1, xref: 'paper',
+        y0: shortStrike, y1: shortStrike, yref: 'y',
+        line: {color: '#f59e0b', width: 1.5, dash: 'solid'},
+      });
+      // Breakeven line (dashed)
+      shapes.push({
+        type: 'line', x0: 0, x1: 1, xref: 'paper',
+        y0: breakeven, y1: breakeven, yref: 'y',
+        line: {color: '#6b7280', width: 1, dash: 'dash'},
+      });
+      // Long strike line (dotted, dimmer)
+      shapes.push({
+        type: 'line', x0: 0, x1: 1, xref: 'paper',
+        y0: longStrike, y1: longStrike, yref: 'y',
+        line: {color: '#ef4444', width: 1, dash: 'dot'},
+      });
+
+      // Labels on right side
+      annotations.push({
+        x: 1.0, y: shortStrike, xref: 'paper', yref: 'y',
+        text: 'Short ' + shortStrike, showarrow: false, xanchor: 'left',
+        font: {color: '#f59e0b', size: 9}, bgcolor: 'rgba(10,14,23,0.8)', borderpad: 2,
       });
       annotations.push({
-        x: 1.0, y: pos.short_strike, xref: 'paper', yref: 'y',
-        text: label, showarrow: false, xanchor: 'left',
-        font: {color: color, size: 9},
+        x: 1.0, y: breakeven, xref: 'paper', yref: 'y',
+        text: 'B/E ' + breakeven.toFixed(2), showarrow: false, xanchor: 'left',
+        font: {color: '#6b7280', size: 9}, bgcolor: 'rgba(10,14,23,0.8)', borderpad: 2,
       });
+      annotations.push({
+        x: 1.0, y: longStrike, xref: 'paper', yref: 'y',
+        text: 'Long ' + longStrike, showarrow: false, xanchor: 'left',
+        font: {color: '#ef4444', size: 9}, bgcolor: 'rgba(10,14,23,0.8)', borderpad: 2,
+      });
+
+      // Entry marker
+      const entryTime = pos.entry_time ? pos.entry_time.substring(11, 16) : null;
+      const entryPrice = pos.underlying_price_at_entry || pos.entry_price;
+      if (entryTime && entryPrice) {
+        annotations.push({
+          x: entryTime, y: entryPrice, xref: 'x', yref: 'y',
+          text: '\u25B6 Entry', showarrow: true, arrowhead: 0,
+          ax: -40, ay: 0,
+          font: {color: '#06b6d4', size: 10, family: 'DM Sans'}, bgcolor: 'rgba(10,14,23,0.8)', borderpad: 3,
+          arrowcolor: '#06b6d4',
+        });
+      }
     });
 
     const layout = {
       paper_bgcolor: '#0a0e17', plot_bgcolor: '#0a0e17',
       font: {color: '#6b7280', family: 'JetBrains Mono, Consolas, monospace', size: 11},
-      margin: {l: 55, r: 65, t: 15, b: 55},
+      margin: {l: 55, r: 90, t: 15, b: 55},
       xaxis: {
         gridcolor: 'rgba(255,255,255,0.04)',
         type: 'category',
@@ -1503,6 +1643,107 @@ async function updateToday() {
   } else {
     document.getElementById('candle-chart').innerHTML = '<div class="empty">No bar data yet (market may be closed)</div>';
   }
+
+  // Update trade plan panel with position data
+  updateTradePlan(d.open_positions, d);
+}
+
+function updateTradePlan(positions, todayData) {
+  const panel = document.getElementById('trade-plan-panel');
+  const content = document.getElementById('trade-plan-content');
+
+  if (!positions || !positions.length) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  if (!panel.classList.contains('loaded')) panel.classList.add('loaded');
+  const pos = positions[0];
+  const isBullish = pos.direction === 'bullish';
+  const spreadType = isBullish ? 'PUT Credit Spread' : 'CALL Credit Spread';
+  const credit = pos.credit_received || 0;
+  const qty = pos.quantity || 1;
+  const totalCredit = credit * 100 * qty;
+  const maxProfit = totalCredit;
+  const spreadWidth = Math.abs(pos.short_strike - pos.long_strike);
+  const maxRisk = (spreadWidth - credit) * 100 * qty;
+  const breakeven = isBullish ? pos.short_strike - credit : pos.short_strike + credit;
+  const profitTarget80 = maxProfit * 0.8;
+  const currentPnl = pos.est_pnl || 0;
+  const pnlPct = maxProfit > 0 ? (currentPnl / maxProfit * 100) : 0;
+  const timeRemaining = pos.time_remaining_secs || 0;
+  const hoursLeft = Math.floor(timeRemaining / 3600);
+  const minsLeft = Math.floor((timeRemaining % 3600) / 60);
+
+  const spxPrice = pos.current_price || pos.underlying_price_at_entry;
+  const distToShort = spxPrice ? Math.abs(spxPrice - pos.short_strike).toFixed(2) : '--';
+  const distDir = spxPrice > pos.short_strike ? 'above' : 'below';
+
+  let zoneText = '';
+  let zoneClass = '';
+  if (isBullish) {
+    if (spxPrice >= pos.short_strike) { zoneText = 'PROFIT ZONE'; zoneClass = 'met'; }
+    else if (spxPrice >= breakeven) { zoneText = 'CAUTION ZONE'; zoneClass = 'active'; }
+    else { zoneText = 'LOSS ZONE'; zoneClass = 'failed'; }
+  } else {
+    if (spxPrice <= pos.short_strike) { zoneText = 'PROFIT ZONE'; zoneClass = 'met'; }
+    else if (spxPrice <= breakeven) { zoneText = 'CAUTION ZONE'; zoneClass = 'active'; }
+    else { zoneText = 'LOSS ZONE'; zoneClass = 'failed'; }
+  }
+
+  const now = new Date();
+  const estHour = now.getUTCHours() - 5;
+  const past1pm = estHour >= 13;
+
+  let html = '';
+
+  // Position summary
+  html += '<div class="plan-section-title">Position</div>';
+  html += '<div class="plan-metric"><span class="label">Type</span><span class="value">' + spreadType + '</span></div>';
+  html += '<div class="plan-metric"><span class="label">Strikes</span><span class="value">' + pos.short_strike + ' / ' + pos.long_strike + '</span></div>';
+  html += '<div class="plan-metric"><span class="label">Credit</span><span class="value">' + fmt$(totalCredit) + '</span></div>';
+  html += '<div class="plan-metric"><span class="label">Max Risk</span><span class="value">' + fmt$(maxRisk) + '</span></div>';
+  html += '<div class="plan-metric"><span class="label">Breakeven</span><span class="value">' + breakeven.toFixed(2) + '</span></div>';
+
+  // Entry checklist
+  html += '<div class="plan-section-title">Entry Criteria</div>';
+  html += '<div class="plan-item"><span class="plan-check met">\u2713</span><span class="plan-label">Pulse bar detected</span></div>';
+  if (todayData && todayData.pulses && todayData.pulses.length) {
+    const p = todayData.pulses[0];
+    html += '<div class="plan-detail">' + (p.direction || '').toUpperCase() + ' pulse at ' + (p.time || '--') + '</div>';
+  }
+  html += '<div class="plan-item"><span class="plan-check met">\u2713</span><span class="plan-label">Bollinger Band filter confirmed</span></div>';
+  html += '<div class="plan-item"><span class="plan-check met">\u2713</span><span class="plan-label">Breakout confirmation</span></div>';
+  const entryTime = pos.entry_time ? pos.entry_time.substring(11, 16) : '--';
+  html += '<div class="plan-detail">Entered at ' + entryTime + ' ET</div>';
+  html += '<div class="plan-item"><span class="plan-check met">\u2713</span><span class="plan-label">Credit quality acceptable</span></div>';
+  html += '<div class="plan-detail">$' + credit.toFixed(2) + '/contract</div>';
+
+  // Live status
+  html += '<div class="plan-section-title">Live Status</div>';
+  html += '<div class="plan-metric"><span class="label">SPX Zone</span><span class="value"><span class="plan-check ' + zoneClass + '">' + zoneText + '</span></span></div>';
+  html += '<div class="plan-metric"><span class="label">Dist to Short</span><span class="value">' + distToShort + ' pts ' + distDir + '</span></div>';
+  html += '<div class="plan-metric"><span class="label">Est P&L</span><span class="value ' + (currentPnl >= 0 ? 'pnl-pos' : 'pnl-neg') + '">' + fmt$(currentPnl) + ' (' + pnlPct.toFixed(1) + '%)</span></div>';
+  html += '<div class="plan-metric"><span class="label">Time Left</span><span class="value">' + hoursLeft + 'h ' + minsLeft + 'm</span></div>';
+
+  // Exit triggers
+  html += '<div class="plan-section-title">Exit Triggers</div>';
+  const targetMet = currentPnl >= profitTarget80;
+  const targetClass = targetMet ? 'met' : 'pending';
+  const targetIcon = targetMet ? '\u2713' : '\u25CB';
+  html += '<div class="plan-item"><span class="plan-check ' + targetClass + '">' + targetIcon + '</span><span class="plan-label">80% profit target</span></div>';
+  html += '<div class="plan-detail">' + fmt$(currentPnl) + ' of ' + fmt$(profitTarget80) + ' target</div>';
+
+  const mgmtClass = past1pm ? 'met' : 'pending';
+  const mgmtIcon = past1pm ? '\u2713' : '\u25CB';
+  html += '<div class="plan-item"><span class="plan-check ' + mgmtClass + '">' + mgmtIcon + '</span><span class="plan-label">1pm trend assessment</span></div>';
+  html += '<div class="plan-detail">' + (past1pm ? 'Assessed \u2014 trade managed per rules' : 'Pending \u2014 check at 1:00 PM ET') + '</div>';
+
+  html += '<div class="plan-item"><span class="plan-check active">\u25C9</span><span class="plan-label">Expiration at 4:00 PM ET</span></div>';
+  html += '<div class="plan-detail">' + hoursLeft + 'h ' + minsLeft + 'm remaining</div>';
+
+  content.innerHTML = html;
 }
 
 async function updateSignals() {
