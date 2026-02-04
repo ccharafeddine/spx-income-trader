@@ -144,18 +144,38 @@ class PositionManager:
                 
                 # Update P&L
                 trade.update_pnl(current_value)
-                
+
+                # Inject current SPX price for 1pm management check
+                try:
+                    trade._current_spx_price = self.broker.get_current_price("SPX")
+                except Exception:
+                    trade._current_spx_price = 0
+
                 logger.debug(f"Trade {trade.id[:8]}: Current value=${current_value:.2f}, "
                            f"P&L=${trade.pnl:.2f} ({trade.pnl_percent:.1f}%)")
-                
+
                 # Check exit conditions
                 should_exit, reason = self.strategy.should_exit(
                     trade,
                     current_value,
                     current_time
                 )
-                
+
                 if should_exit:
+                    # Log 1pm assessment details if that was the trigger
+                    if hasattr(trade, '_1pm_assessment') and '1PM CHECK' in reason:
+                        a = trade._1pm_assessment
+                        logger.info(
+                            f"1PM DETAILS: Entry=${a['entry_price']}, "
+                            f"Now=${a['current_price']}, Move=${a['move']:+.2f}, "
+                            f"Trending={a['is_trending']}, Favorable={a['is_favorable']}, "
+                            f"Mode={a['management_mode']}, Decision={a['decision']}"
+                        )
+                        try:
+                            self.db.log_event("1pm_management", reason, a)
+                        except Exception:
+                            pass
+
                     self._exit_trade(trade, reason)
                 
             except Exception as e:
