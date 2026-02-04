@@ -14,7 +14,6 @@
 :root {
   --bg: #0a0e17;
   --panel: #111827;
-  --panel-hover: #1a2332;
   --border: #1e2a3a;
   --text: #d1d5db;
   --text-dim: #6b7280;
@@ -27,7 +26,6 @@
   --cyan: #06b6d4;
   --font-mono: 'JetBrains Mono', Consolas, Monaco, monospace;
   --font-ui: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font: var(--font-mono); /* backward compat for any remaining refs */
 }
 
 body {
@@ -170,7 +168,8 @@ header::after {
 }
 .acct-divider {
   width: 1px;
-  height: 40px;
+  align-self: stretch;
+  min-height: 30px;
   background: var(--border);
 }
 
@@ -350,11 +349,6 @@ header::after {
 .plan-check.failed { color: var(--red); }
 .plan-label { color: var(--text); }
 .plan-detail { color: var(--text-dim); font-size: 11px; margin-left: 24px; }
-.plan-divider {
-  height: 1px;
-  background: var(--border);
-  margin: 8px 0;
-}
 .plan-metric {
   display: flex;
   justify-content: space-between;
@@ -383,7 +377,8 @@ header::after {
   letter-spacing: 1px;
   position: sticky;
   top: 0;
-  background: rgba(255,255,255,0.03);
+  background: var(--panel);
+  z-index: 1;
 }
 .signal-table td {
   padding: 5px 8px;
@@ -394,6 +389,8 @@ header::after {
 .signal-table tr:hover td { background: rgba(255,255,255,0.04); border-left-color: var(--cyan); }
 .dir-bull { color: var(--green); }
 .dir-bear { color: var(--red); }
+.color-pos { color: var(--green); }
+.color-neg { color: var(--red); }
 .pnl-pos { color: var(--green); background: var(--green-dim); padding: 2px 6px; border-radius: 3px; display: inline-block; white-space: nowrap; min-width: 60px; text-align: right; }
 .pnl-neg { color: var(--red); background: var(--red-dim); padding: 2px 6px; border-radius: 3px; display: inline-block; white-space: nowrap; min-width: 60px; text-align: right; }
 
@@ -416,7 +413,7 @@ header::after {
   gap: 12px;
   margin-top: 12px;
 }
-.bottom-row > :last-child { min-width: 500px; }
+.bottom-row { overflow-x: auto; }
 
 /* Scrollable table wrapper */
 .table-scroll {
@@ -834,13 +831,11 @@ header::after {
   animation: building-pulse 1.5s ease-in-out infinite;
 }
 
-/* Data refresh highlight */
-.value-flash {
-  animation: value-highlight 0.4s ease-out;
-}
-@keyframes value-highlight {
-  0% { background-color: rgba(6,182,212,0.15); }
-  100% { background-color: transparent; }
+/* Left column layout */
+.left-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* Responsive */
@@ -848,6 +843,7 @@ header::after {
   .dashboard { grid-template-columns: 1fr; }
   .bottom-row { grid-template-columns: 1fr; }
   .account-bar { flex-wrap: wrap; gap: 16px; }
+  .acct-divider { display: none; }
   .trade-details-grid { grid-template-columns: 1fr 1fr; }
   .pulse-bar-grid { grid-template-columns: 1fr 1fr; }
 }
@@ -865,7 +861,7 @@ header::after {
     <span class="mode-badge" id="mode-badge">--</span>
   </div>
   <div class="header-right">
-    <button id="mute-btn" onclick="toggleMute()" title="Toggle sounds">&#x1F50A;</button>
+    <button id="mute-btn" onclick="toggleMute()" title="Toggle sounds" aria-label="Toggle sound notifications">&#x1F50A;</button>
     <span>Next refresh: <span id="refresh-countdown">30</span>s</span>
     <span id="clock">--:--:--</span>
   </div>
@@ -916,19 +912,19 @@ header::after {
   </div>
 
   <!-- TAB NAVIGATION -->
-  <div class="tab-bar">
-    <button class="tab-btn active" onclick="switchTab('overview')">Overview</button>
-    <button class="tab-btn" onclick="switchTab('journal')">Trade Journal</button>
+  <div class="tab-bar" role="tablist">
+    <button class="tab-btn active" role="tab" aria-selected="true" onclick="switchTab('overview')">Overview</button>
+    <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('journal')">Trade Journal</button>
   </div>
 
   <!-- TAB: OVERVIEW -->
-  <div id="tab-overview" class="tab-content active">
+  <div id="tab-overview" class="tab-content active" role="tabpanel">
 
   <!-- MAIN 2-COL GRID -->
   <div class="dashboard">
 
     <!-- LEFT COLUMN: Status + Positions -->
-    <div style="display:flex; flex-direction:column; gap:12px;">
+    <div class="left-column">
       <!-- STATUS PANEL -->
       <div class="panel" id="status-panel">
         <div class="panel-title">Status</div>
@@ -1004,7 +1000,7 @@ header::after {
   </div><!-- /tab-overview -->
 
   <!-- TAB: TRADE JOURNAL -->
-  <div id="tab-journal" class="tab-content">
+  <div id="tab-journal" class="tab-content" role="tabpanel">
 
     <!-- Journal Stats Bar -->
     <div class="journal-stats-bar" id="journal-stats-bar">
@@ -1048,7 +1044,7 @@ header::after {
         <label for="j-filter-flagged" style="cursor:pointer">Flagged only</label>
       </div>
       <div class="spacer"></div>
-      <button class="btn-sm" onclick="expandAllCards()">Expand All</button>
+      <button class="btn-sm" id="expand-all-btn" onclick="expandAllCards()">Expand All</button>
     </div>
 
     <!-- Trade Cards Container -->
@@ -1089,7 +1085,6 @@ class SoundManager {
   }
   play(type) {
     if (this.muted || !this.ctx) return;
-    const t = this.ctx.currentTime;
     switch (type) {
       case 'bar-complete':
         this._tone(800, 0.05, 0.05, 'sine');
@@ -1121,7 +1116,9 @@ class SoundManager {
   }
 }
 const soundMgr = new SoundManager();
-document.addEventListener('click', () => soundMgr.init(), { once: true });
+['click', 'keydown', 'touchstart'].forEach(evt => {
+  document.addEventListener(evt, () => soundMgr.init(), { once: true });
+});
 
 function toggleMute() {
   soundMgr.muted = !soundMgr.muted;
@@ -1170,6 +1167,12 @@ function fmtPct(v) {
 function pnlClass(v) {
   if (v > 0) return 'pnl-pos';
   if (v < 0) return 'pnl-neg';
+  return '';
+}
+
+function colorClass(v) {
+  if (v > 0) return 'color-pos';
+  if (v < 0) return 'color-neg';
   return '';
 }
 
@@ -1271,7 +1274,7 @@ async function updateStatus() {
     const arrow = ch >= 0 ? '\u25B2 ' : '\u25BC ';
     const sign = ch >= 0 ? '+' : '';
     change.textContent = arrow + sign + ch.toFixed(2) + ' (' + sign + cp.toFixed(2) + '%)';
-    change.className = 'spx-change ' + (ch >= 0 ? 'pnl-pos' : 'pnl-neg');
+    change.className = 'spx-change ' + (ch >= 0 ? 'color-pos' : 'color-neg');
   } else {
     price.textContent = '--';
     change.textContent = '--';
@@ -1304,7 +1307,7 @@ async function updateStatus() {
       '<div class="summary-stat"><div class="val">' + ts.signals_generated + '</div><div class="lbl">Signals</div></div>' +
       '<div class="summary-stat"><div class="val">' + ts.valid_trades + '</div><div class="lbl">Valid Trades</div></div>' +
       '<div class="summary-stat"><div class="val">' + ts.wins + '/' + ts.losses + '</div><div class="lbl">W / L</div></div>' +
-      '<div class="summary-stat"><div class="val ' + pnlClass(ts.total_pnl) + '">' + fmt$(ts.total_pnl) + '</div><div class="lbl">Net P&L</div></div>';
+      '<div class="summary-stat"><div class="val ' + colorClass(ts.total_pnl) + '">' + fmt$(ts.total_pnl) + '</div><div class="lbl">Net P&L</div></div>';
     if (ts.flagged_trades > 0) {
       statsHtml += '<div class="summary-stat"><div class="val" style="color:var(--amber)">' + ts.flagged_trades + '</div><div class="lbl">Flagged</div></div>';
     }
@@ -1318,25 +1321,25 @@ async function updateStatus() {
     const a = d.account;
     const eqEl = document.getElementById('acct-equity');
     eqEl.textContent = fmt$(a.total_equity);
-    eqEl.className = 'val big ' + pnlClass(a.total_equity - a.starting_capital);
+    eqEl.className = 'val big ' + colorClass(a.total_equity - a.starting_capital);
 
     document.getElementById('acct-balance').textContent = fmt$(a.current_balance);
 
     const urEl = document.getElementById('acct-unrealized');
     urEl.textContent = fmt$(a.unrealized_pnl);
-    urEl.className = 'val ' + pnlClass(a.unrealized_pnl);
+    urEl.className = 'val ' + colorClass(a.unrealized_pnl);
 
     const dayEl = document.getElementById('acct-daily');
     dayEl.textContent = fmt$(a.daily_pnl);
-    dayEl.className = 'val ' + pnlClass(a.daily_pnl);
+    dayEl.className = 'val ' + colorClass(a.daily_pnl);
 
     const rlEl = document.getElementById('acct-realized');
     rlEl.textContent = fmt$(a.realized_pnl);
-    rlEl.className = 'val ' + pnlClass(a.realized_pnl);
+    rlEl.className = 'val ' + colorClass(a.realized_pnl);
 
     const retEl = document.getElementById('acct-return');
     retEl.textContent = fmtPct(a.total_return_pct);
-    retEl.className = 'val ' + pnlClass(a.total_return_pct);
+    retEl.className = 'val ' + colorClass(a.total_return_pct);
 
     // Position tracker — sound triggers
     const curTradeIds = new Set();
@@ -1390,7 +1393,7 @@ async function updateStatus() {
             '<span class="status-label">Est P&L</span><span class="status-value ' + pnlClass(p.est_pnl) + '">' + fmt$(p.est_pnl) + '</span>' +
             '<span class="status-label">Qty</span><span class="status-value">' + p.quantity + 'x</span>' +
           '</div>' +
-          '<div class="pos-progress" style="width:' + Math.max(0, Math.min(100, (p.time_remaining_secs || 0) / 234 * 100)) + '%"></div>' +
+          '<div class="pos-progress" style="width:' + Math.max(0, Math.min(100, (p.time_remaining_secs || 0) / 23400 * 100)) + '%"></div>' +
         '</div>';
       });
       posBody.innerHTML = html;
@@ -1418,24 +1421,6 @@ async function updateToday() {
     bb.innerHTML = '<span class="building-dot"></span>' + d.building_bar.time + ' (' + d.building_bar.ticks + ' ticks) C=' + fmt$(d.building_bar.close);
   } else {
     bb.textContent = '--';
-  }
-
-  // TEMP TEST — toggle to true to test trade visualization
-  if (false) {
-    d.open_positions = [{
-      direction: 'bearish',
-      short_strike: 6930,
-      long_strike: 6935,
-      credit_received: 2.50,
-      quantity: 5,
-      entry_time: '2026-02-04T10:00:00',
-      underlying_price_at_entry: 6925,
-      est_pnl: 450,
-      time_remaining_secs: 18000,
-      position_status: 'safe',
-      current_price: 6920,
-      distance_to_short: -10,
-    }];
   }
 
   // Sound: bar complete & pulse detected
@@ -1693,8 +1678,8 @@ function updateTradePlan(positions, todayData) {
   }
 
   const now = new Date();
-  const estHour = now.getUTCHours() - 5;
-  const past1pm = estHour >= 13;
+  const etHour = parseInt(now.toLocaleString('en-US', {hour: 'numeric', hour12: false, timeZone: 'America/New_York'}));
+  const past1pm = etHour >= 13;
 
   let html = '';
 
@@ -1724,7 +1709,7 @@ function updateTradePlan(positions, todayData) {
   html += '<div class="plan-section-title">Live Status</div>';
   html += '<div class="plan-metric"><span class="label">SPX Zone</span><span class="value"><span class="plan-check ' + zoneClass + '">' + zoneText + '</span></span></div>';
   html += '<div class="plan-metric"><span class="label">Dist to Short</span><span class="value">' + distToShort + ' pts ' + distDir + '</span></div>';
-  html += '<div class="plan-metric"><span class="label">Est P&L</span><span class="value ' + (currentPnl >= 0 ? 'pnl-pos' : 'pnl-neg') + '">' + fmt$(currentPnl) + ' (' + pnlPct.toFixed(1) + '%)</span></div>';
+  html += '<div class="plan-metric"><span class="label">Est P&L</span><span class="value ' + (currentPnl >= 0 ? 'color-pos' : 'color-neg') + '">' + fmt$(currentPnl) + ' (' + pnlPct.toFixed(1) + '%)</span></div>';
   html += '<div class="plan-metric"><span class="label">Time Left</span><span class="value">' + hoursLeft + 'h ' + minsLeft + 'm</span></div>';
 
   // Exit triggers
@@ -1758,7 +1743,7 @@ async function updateSignals() {
     '</tr></thead><tbody>';
 
   d.signals.forEach(s => {
-    const ts = s.timestamp ? s.timestamp.substring(0, 16).replace('T', ' ') : '--';
+    const ts = s.timestamp ? s.timestamp.substring(11, 16) : '--';
     const dir = (s.direction || '').toUpperCase();
     const strikes = (s.short_strike || '--') + '/' + (s.long_strike || '--');
     const credit = s.total_credit ? fmt$(s.total_credit) : (s.total_debit ? '-' + fmt$(s.total_debit) : '--');
@@ -1791,11 +1776,11 @@ async function updateHistory() {
   aggEl.innerHTML =
     '<div class="agg-stat"><div class="val">' + (a.total_trades || 0) + '</div><div class="lbl">Trades</div></div>' +
     '<div class="agg-stat"><div class="val">' + (a.win_rate || 0) + '%</div><div class="lbl">Win Rate</div></div>' +
-    '<div class="agg-stat"><div class="val ' + pnlClass(a.total_pnl) + '">' + fmt$(a.total_pnl) + '</div><div class="lbl">Total P&L</div></div>' +
-    '<div class="agg-stat"><div class="val pnl-pos">' + fmt$(a.avg_win) + '</div><div class="lbl">Avg Win</div></div>' +
-    '<div class="agg-stat"><div class="val pnl-neg">' + fmt$(a.avg_loss) + '</div><div class="lbl">Avg Loss</div></div>' +
-    '<div class="agg-stat"><div class="val pnl-pos">' + fmt$(a.max_win) + '</div><div class="lbl">Max Win</div></div>' +
-    '<div class="agg-stat"><div class="val pnl-neg">' + fmt$(a.max_loss) + '</div><div class="lbl">Max Loss</div></div>';
+    '<div class="agg-stat"><div class="val ' + colorClass(a.total_pnl) + '">' + fmt$(a.total_pnl) + '</div><div class="lbl">Total P&L</div></div>' +
+    '<div class="agg-stat"><div class="val color-pos">' + fmt$(a.avg_win) + '</div><div class="lbl">Avg Win</div></div>' +
+    '<div class="agg-stat"><div class="val color-neg">' + fmt$(a.avg_loss) + '</div><div class="lbl">Avg Loss</div></div>' +
+    '<div class="agg-stat"><div class="val color-pos">' + fmt$(a.max_win) + '</div><div class="lbl">Max Win</div></div>' +
+    '<div class="agg-stat"><div class="val color-neg">' + fmt$(a.max_loss) + '</div><div class="lbl">Max Loss</div></div>';
 
   // Equity curve from closed trades running total
   const trades = d.trades || [];
@@ -1891,9 +1876,11 @@ let activeTab = 'overview';
 function switchTab(tabId) {
   activeTab = tabId;
   document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.textContent.toLowerCase().replace(' ', '') === tabId ||
+    const isActive = btn.textContent.toLowerCase().replace(' ', '') === tabId ||
       (tabId === 'overview' && btn.textContent === 'Overview') ||
-      (tabId === 'journal' && btn.textContent === 'Trade Journal'));
+      (tabId === 'journal' && btn.textContent === 'Trade Journal');
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
   });
   document.querySelectorAll('.tab-content').forEach(el => {
     el.classList.toggle('active', el.id === 'tab-' + tabId);
@@ -1904,8 +1891,6 @@ function switchTab(tabId) {
 // ---------------------------------------------------------------
 // Trade Journal
 // ---------------------------------------------------------------
-let journalData = null;
-
 async function updateJournal() {
   const days = document.getElementById('j-filter-days').value;
   const dir = document.getElementById('j-filter-dir').value;
@@ -1919,17 +1904,16 @@ async function updateJournal() {
 
   const d = await fetchJSON(url);
   if (!d) return;
-  journalData = d;
 
   // Update stats bar
   const s = d.stats || {};
   document.getElementById('j-total').textContent = s.valid_entries || 0;
   const wr = document.getElementById('j-winrate');
   wr.textContent = (s.win_rate || 0) + '%';
-  wr.className = 'val ' + (s.win_rate >= 50 ? 'pnl-pos' : s.win_rate > 0 ? 'pnl-neg' : '');
+  wr.className = 'val ' + (s.win_rate >= 50 ? 'color-pos' : s.win_rate > 0 ? 'color-neg' : '');
   const pnlEl = document.getElementById('j-pnl');
   pnlEl.textContent = fmt$(s.total_pnl);
-  pnlEl.className = 'val ' + pnlClass(s.total_pnl);
+  pnlEl.className = 'val ' + colorClass(s.total_pnl);
   document.getElementById('j-duration').textContent = s.avg_duration_hours != null ? s.avg_duration_hours + 'h' : '--';
   document.getElementById('j-capture').textContent = s.avg_pct_max_profit != null ? s.avg_pct_max_profit + '%' : '--';
 
@@ -2133,6 +2117,8 @@ function expandAllCards() {
       c.classList.add('expanded');
     }
   });
+  const btn = document.getElementById('expand-all-btn');
+  if (btn) btn.textContent = allExpanded ? 'Expand All' : 'Collapse All';
 }
 
 // Track ratings per card index
@@ -2145,6 +2131,9 @@ function setRating(tradeId, idx, stars) {
   const starEls = container.querySelectorAll('.star');
   starEls.forEach(el => {
     const s = parseInt(el.getAttribute('data-star'));
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('role', 'button');
+    el.setAttribute('aria-label', s + ' star' + (s > 1 ? 's' : ''));
     if (s <= stars) {
       el.classList.add('filled');
     } else {
@@ -2152,6 +2141,14 @@ function setRating(tradeId, idx, stars) {
     }
   });
 }
+
+// Keyboard support for star ratings (Enter/Space to select)
+document.addEventListener('keydown', function(e) {
+  if (e.target.classList.contains('star') && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault();
+    e.target.click();
+  }
+});
 
 async function saveReview(tradeId, idx) {
   const statusEl = document.getElementById('save-status-' + idx);
@@ -2198,10 +2195,15 @@ async function saveReview(tradeId, idx) {
 let countdown = 30;
 
 async function refreshAll() {
+  const cdEl = document.getElementById('refresh-countdown');
+  cdEl.style.opacity = '0.4';
+  cdEl.textContent = '...';
   const tasks = [updateStatus(), updateToday(), updateSignals(), updateHistory()];
   if (activeTab === 'journal') tasks.push(updateJournal());
   await Promise.all(tasks);
   countdown = 30;
+  cdEl.style.opacity = '1';
+  cdEl.textContent = countdown;
 }
 
 setInterval(() => {
@@ -2210,10 +2212,10 @@ setInterval(() => {
   if (countdown <= 0) refreshAll();
 }, 1000);
 
-// Clock
+// Clock — show Eastern Time
 setInterval(() => {
   const now = new Date();
-  document.getElementById('clock').textContent = now.toLocaleTimeString('en-US', {hour12: false});
+  document.getElementById('clock').textContent = now.toLocaleTimeString('en-US', {hour12: false, timeZone: 'America/New_York'}) + ' ET';
 }, 1000);
 
 // Panel load stagger
