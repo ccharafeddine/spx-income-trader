@@ -6,37 +6,54 @@ CREATE TABLE IF NOT EXISTS trades (
     exit_time TIMESTAMP,
     direction TEXT NOT NULL,
     status TEXT NOT NULL,
-    
+
+    -- Strategy identification
+    strategy_type TEXT DEFAULT 'daily_income',  -- daily_income, tag_n_turn, bnb, orb
+
     -- Spread details
     short_strike REAL NOT NULL,
     long_strike REAL NOT NULL,
     spread_width REAL NOT NULL,
     credit_received REAL NOT NULL,
-    
+
     -- Entry details
     entry_price REAL NOT NULL,
     entry_order_id TEXT,
     underlying_price_at_entry REAL,
     setup_bar_time TIMESTAMP,
-    
+
+    -- Entry context
+    spx_at_entry REAL,
+    vix_at_entry REAL,
+    day_open REAL,
+    gap_pct REAL,
+    intraday_move_at_entry REAL,
+
     -- Exit details
     exit_price REAL,
     exit_order_id TEXT,
     exit_reason TEXT,
-    
+    spx_at_exit REAL,
+    profit_captured_pct REAL,
+    time_in_trade_minutes INTEGER,
+
+    -- Market conditions
+    day_type TEXT,  -- trending_up, trending_down, choppy, flat
+    daily_move_pct REAL,
+
     -- P&L
     pnl REAL,
     pnl_percent REAL,
     max_profit REAL,
     max_risk REAL,
-    
+
     -- Position details
     quantity INTEGER NOT NULL,
     expiration TIMESTAMP NOT NULL,
-    
+
     -- Notes
     notes TEXT,
-    
+
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -706,6 +706,95 @@ header::after {
 }
 .journal-card.expanded .journal-card-body { display: block; }
 
+/* Strategy tags in journal cards */
+.strategy-tag {
+  font-size: 9px;
+  font-weight: bold;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-right: 8px;
+}
+.strategy-tag.daily-income, .strategy-tag.daily {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--green);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.strategy-tag.tag-n-turn, .strategy-tag.tnt {
+  background: rgba(6, 182, 212, 0.15);
+  color: var(--cyan);
+  border: 1px solid rgba(6, 182, 212, 0.3);
+}
+.strategy-tag.bnb {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--amber);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+.strategy-tag.orb {
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+/* Strategy breakdown section */
+.strategy-breakdown {
+  padding: 12px 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+.breakdown-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+.breakdown-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+@media (max-width: 900px) {
+  .breakdown-grid { grid-template-columns: repeat(2, 1fr); }
+}
+.breakdown-item {
+  padding: 10px;
+  background: rgba(0,0,0,0.2);
+  border-radius: 4px;
+  border-left: 3px solid var(--border);
+}
+.breakdown-item.daily-income { border-left-color: var(--green); }
+.breakdown-item.tag-n-turn { border-left-color: var(--cyan); }
+.breakdown-item.bnb { border-left-color: var(--amber); }
+.breakdown-item.orb { border-left-color: #a78bfa; }
+.breakdown-item .strat-name {
+  font-size: 11px;
+  font-weight: bold;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.breakdown-item .strat-stats {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+}
+.breakdown-item .stat {
+  display: flex;
+  flex-direction: column;
+}
+.breakdown-item .stat-label {
+  color: var(--text-dim);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+.breakdown-item .stat-value {
+  color: #fff;
+  font-family: var(--font-mono);
+}
+
 /* Journal card sections */
 .journal-section {
   margin-top: 14px;
@@ -1114,6 +1203,12 @@ header::after {
       <div class="agg-stat"><div class="val" id="j-capture">--</div><div class="lbl">Avg Capture</div></div>
     </div>
 
+    <!-- Strategy Breakdown -->
+    <div class="strategy-breakdown" id="strategy-breakdown">
+      <div class="breakdown-title">By Strategy</div>
+      <div class="breakdown-grid" id="strategy-breakdown-grid"></div>
+    </div>
+
     <!-- Filters -->
     <div class="journal-filters">
       <div class="filter-group">
@@ -1123,6 +1218,16 @@ header::after {
           <option value="30" selected>30 days</option>
           <option value="90">90 days</option>
           <option value="365">1 year</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Strategy:</label>
+        <select id="j-filter-strategy" onchange="updateJournal()">
+          <option value="">All</option>
+          <option value="daily_income">Daily Income</option>
+          <option value="tag_n_turn">Tag 'n Turn</option>
+          <option value="bnb">B&B</option>
+          <option value="orb">ORB</option>
         </select>
       </div>
       <div class="filter-group">
@@ -1143,10 +1248,21 @@ header::after {
         </select>
       </div>
       <div class="filter-group">
+        <label>Day Type:</label>
+        <select id="j-filter-daytype" onchange="updateJournal()">
+          <option value="">All</option>
+          <option value="trending_up">Trending Up</option>
+          <option value="trending_down">Trending Down</option>
+          <option value="flat">Flat</option>
+          <option value="choppy">Choppy</option>
+        </select>
+      </div>
+      <div class="filter-group">
         <input type="checkbox" id="j-filter-flagged" onchange="updateJournal()">
         <label for="j-filter-flagged" style="cursor:pointer">Flagged only</label>
       </div>
       <div class="spacer"></div>
+      <button class="btn-sm" onclick="exportJournal()">Export CSV</button>
       <button class="btn-sm" id="expand-all-btn" onclick="expandAllCards()">Expand All</button>
     </div>
 
@@ -2137,17 +2253,24 @@ function switchTab(tabId) {
 // ---------------------------------------------------------------
 async function updateJournal() {
   const days = document.getElementById('j-filter-days').value;
+  const strategy = document.getElementById('j-filter-strategy').value;
   const dir = document.getElementById('j-filter-dir').value;
   const outcome = document.getElementById('j-filter-outcome').value;
+  const dayType = document.getElementById('j-filter-daytype').value;
   const flagged = document.getElementById('j-filter-flagged').checked;
 
   let url = '/api/journal?days=' + days;
+  if (strategy) url += '&strategy=' + strategy;
   if (dir) url += '&direction=' + dir;
   if (outcome) url += '&outcome=' + outcome;
+  if (dayType) url += '&day_type=' + dayType;
   if (flagged) url += '&flagged=true';
 
   const d = await fetchJSON(url);
   if (!d) return;
+
+  // Store data for export
+  window.journalData = d;
 
   // Update stats bar
   const s = d.stats || {};
@@ -2160,6 +2283,9 @@ async function updateJournal() {
   pnlEl.className = 'val ' + colorClass(s.total_pnl);
   document.getElementById('j-duration').textContent = s.avg_duration_hours != null ? s.avg_duration_hours + 'h' : '--';
   document.getElementById('j-capture').textContent = s.avg_pct_max_profit != null ? s.avg_pct_max_profit + '%' : '--';
+
+  // Update strategy breakdown
+  updateStrategyBreakdown(d.strategy_breakdown);
 
   // Render trade cards
   const container = document.getElementById('journal-cards');
@@ -2180,12 +2306,23 @@ async function updateJournal() {
     const flagHtml = e.flag ? '<span class="flag-badge low-credit" title="' + (e.flag_note || '') + '">' + e.flag + '</span>' : '';
     const flaggedClass = e.flag ? ' flagged' : '';
 
+    // Strategy tag
+    const stratType = e.strategy_type || 'daily_income';
+    const stratNames = {
+      'daily_income': 'DAILY',
+      'tag_n_turn': 'TNT',
+      'bnb': 'B&B',
+      'orb': 'ORB'
+    };
+    const stratClass = stratType.replace('_', '-');
+
     html += '<div class="journal-card' + flaggedClass + '" id="jcard-' + idx + '">';
 
     // Header (collapsed view)
     html += '<div class="journal-card-header" onclick="toggleCard(' + idx + ')">';
     html += '<span class="arrow">&#9654;</span>';
     html += '<span class="date">' + dt + '</span>';
+    html += '<span class="strategy-tag ' + stratClass + '">' + (stratNames[stratType] || stratType) + '</span>';
     html += '<span class="dir ' + (e.direction_raw === 'bearish' ? 'dir-bear' : 'dir-bull') + '">' + e.direction + '</span>';
     html += '<span class="strikes">' + (e.short_strike || '--') + '/' + (e.long_strike || '--') + '</span>';
     html += '<span class="qty">' + (e.quantity || 1) + 'x</span>';
@@ -2363,6 +2500,79 @@ function expandAllCards() {
   });
   const btn = document.getElementById('expand-all-btn');
   if (btn) btn.textContent = allExpanded ? 'Expand All' : 'Collapse All';
+}
+
+function updateStrategyBreakdown(breakdown) {
+  const grid = document.getElementById('strategy-breakdown-grid');
+  if (!grid || !breakdown) return;
+
+  const strategies = ['daily_income', 'tag_n_turn', 'bnb', 'orb'];
+  const names = {
+    'daily_income': 'Daily Income',
+    'tag_n_turn': "Tag 'n Turn",
+    'bnb': 'B&B',
+    'orb': 'ORB'
+  };
+
+  let html = '';
+  strategies.forEach(strat => {
+    const data = breakdown[strat] || { count: 0, wins: 0, win_rate: 0, total_pnl: 0 };
+    const stratClass = strat.replace('_', '-');
+    const pnlClass = data.total_pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+
+    html += '<div class="breakdown-item ' + stratClass + '">';
+    html += '<div class="strat-name">' + names[strat] + '</div>';
+    html += '<div class="strat-stats">';
+    html += '<div class="stat"><span class="stat-label">Trades</span><span class="stat-value">' + data.count + '</span></div>';
+    html += '<div class="stat"><span class="stat-label">Win%</span><span class="stat-value">' + data.win_rate.toFixed(0) + '%</span></div>';
+    html += '<div class="stat"><span class="stat-label">P&L</span><span class="stat-value ' + pnlClass + '">' + fmt$(data.total_pnl) + '</span></div>';
+    html += '</div></div>';
+  });
+
+  grid.innerHTML = html;
+}
+
+function exportJournal() {
+  if (!window.journalData || !window.journalData.journal) {
+    alert('No journal data to export');
+    return;
+  }
+
+  const trades = window.journalData.journal;
+  const columns = [
+    'entry_time', 'strategy_type', 'direction', 'short_strike', 'long_strike',
+    'quantity', 'credit_received', 'max_profit_total', 'max_risk_total',
+    'spx_at_entry', 'spx_at_exit', 'vix_at_entry', 'day_open', 'gap_pct',
+    'exit_time', 'exit_reason', 'pnl', 'profit_captured_pct', 'time_in_trade_minutes',
+    'day_type', 'daily_move_pct', 'flag', 'notes'
+  ];
+
+  // CSV header
+  let csv = columns.join(',') + '\\n';
+
+  // CSV rows
+  trades.forEach(t => {
+    const row = columns.map(col => {
+      let val = t[col];
+      if (col === 'exit_reason' && t.exit_analysis) val = t.exit_analysis.exit_reason;
+      if (col === 'pnl' && t.exit_analysis) val = t.exit_analysis.pnl;
+      if (val === null || val === undefined) val = '';
+      if (typeof val === 'string' && (val.includes(',') || val.includes('\\n'))) val = '"' + val.replace(/"/g, '""') + '"';
+      return val;
+    });
+    csv += row.join(',') + '\\n';
+  });
+
+  // Download
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'trade_journal_' + new Date().toISOString().split('T')[0] + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // Track ratings per card index

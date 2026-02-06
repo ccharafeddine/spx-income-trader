@@ -29,10 +29,10 @@ class DatabaseManager:
     def _init_db(self):
         """Initialize database schema"""
         schema_file = Path(__file__).parent / 'schema.sql'
-        
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Read and execute schema
             if schema_file.exists():
                 with open(schema_file, 'r') as f:
@@ -56,29 +56,81 @@ class DatabaseManager:
                         notes TEXT
                     );
                 """)
-            
+
             conn.commit()
-    
-    def save_trade(self, trade):
-        """Save or update trade in database"""
+
+        # Run migrations for new columns
+        self._run_migrations()
+
+    def _run_migrations(self):
+        """Run migrations to add new columns if they don't exist"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
+            # Check existing columns
+            cursor.execute("PRAGMA table_info(trades)")
+            existing_columns = {row[1] for row in cursor.fetchall()}
+
+            # New columns to add
+            new_columns = [
+                ('strategy_type', "TEXT DEFAULT 'daily_income'"),
+                ('spx_at_entry', 'REAL'),
+                ('vix_at_entry', 'REAL'),
+                ('day_open', 'REAL'),
+                ('gap_pct', 'REAL'),
+                ('intraday_move_at_entry', 'REAL'),
+                ('spx_at_exit', 'REAL'),
+                ('profit_captured_pct', 'REAL'),
+                ('time_in_trade_minutes', 'INTEGER'),
+                ('day_type', 'TEXT'),
+                ('daily_move_pct', 'REAL'),
+            ]
+
+            for col_name, col_type in new_columns:
+                if col_name not in existing_columns:
+                    try:
+                        cursor.execute(f"ALTER TABLE trades ADD COLUMN {col_name} {col_type}")
+                        logger.info(f"Added column {col_name} to trades table")
+                    except Exception as e:
+                        logger.debug(f"Column {col_name} may already exist: {e}")
+
+            # Create indexes if not exist
+            try:
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_strategy_type ON trades(strategy_type)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_day_type ON trades(day_type)")
+            except Exception:
+                pass
+
+            conn.commit()
+    
+    def save_trade(self, trade, context: Optional[Dict] = None):
+        """Save or update trade in database with optional context"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Get context values or None
+            ctx = context or {}
+
             cursor.execute("""
                 INSERT OR REPLACE INTO trades (
                     id, entry_time, exit_time, direction, status,
+                    strategy_type,
                     short_strike, long_strike, spread_width, credit_received,
                     entry_price, entry_order_id, underlying_price_at_entry,
+                    spx_at_entry, vix_at_entry, day_open, gap_pct, intraday_move_at_entry,
                     exit_price, exit_order_id, exit_reason,
+                    spx_at_exit, profit_captured_pct, time_in_trade_minutes,
+                    day_type, daily_move_pct,
                     pnl, pnl_percent, max_profit, max_risk,
-                    quantity, expiration, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    quantity, expiration, notes, setup_bar_time
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 trade.id,
                 trade.entry_time,
                 trade.exit_time,
                 trade.spread.direction.value,
                 trade.status.value,
+                ctx.get('strategy_type', 'daily_income'),
                 trade.spread.short_leg.strike,
                 trade.spread.long_leg.strike,
                 trade.spread.spread_width,
@@ -86,20 +138,54 @@ class DatabaseManager:
                 trade.entry_price,
                 trade.entry_order_id,
                 trade.spread.underlying_price_at_entry,
+                ctx.get('spx_at_entry'),
+                ctx.get('vix_at_entry'),
+                ctx.get('day_open'),
+                ctx.get('gap_pct'),
+                ctx.get('intraday_move_at_entry'),
                 trade.exit_price,
                 trade.exit_order_id,
                 trade.exit_reason,
+                ctx.get('spx_at_exit'),
+                ctx.get('profit_captured_pct'),
+                ctx.get('time_in_trade_minutes'),
+                ctx.get('day_type'),
+                ctx.get('daily_move_pct'),
                 trade.pnl,
                 trade.pnl_percent,
                 trade.spread.max_profit,
                 trade.spread.max_risk,
                 trade.quantity,
                 trade.spread.expiration,
-                trade.notes
+                trade.notes,
+                trade.setup_bar.timestamp if hasattr(trade, 'setup_bar') and trade.setup_bar else None,
             ))
-            
+
             conn.commit()
             logger.debug(f"Trade {trade.id} saved to database")
+
+    def update_trade_exit_context(self, trade_id: str, exit_context: Dict):
+        """Update trade with exit context after closing"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE trades SET
+                    spx_at_exit = ?,
+                    profit_captured_pct = ?,
+                    time_in_trade_minutes = ?,
+                    day_type = ?,
+                    daily_move_pct = ?
+                WHERE id = ?
+            """, (
+                exit_context.get('spx_at_exit'),
+                exit_context.get('profit_captured_pct'),
+                exit_context.get('time_in_trade_minutes'),
+                exit_context.get('day_type'),
+                exit_context.get('daily_move_pct'),
+                trade_id,
+            ))
+            conn.commit()
+            logger.debug(f"Trade {trade_id} exit context updated")
     
     def get_open_trades(self) -> List[Dict]:
         """Get all open trades"""

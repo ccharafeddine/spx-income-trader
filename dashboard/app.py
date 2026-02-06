@@ -860,6 +860,9 @@ def api_journal():
     direction_filter = request.args.get('direction', '')
     outcome_filter = request.args.get('outcome', '')
     flagged_only = request.args.get('flagged', '') == 'true'
+    strategy_filter = request.args.get('strategy', '')
+    day_type_filter = request.args.get('day_type', '')
+    exit_reason_filter = request.args.get('exit_reason', '')
 
     cutoff = (date.today() - timedelta(days=days)).isoformat()
 
@@ -949,6 +952,9 @@ def api_journal():
         dir_raw = (trade.get('direction') or '').lower()
         dir_display = 'CALL CREDIT' if dir_raw == 'bearish' else 'PUT CREDIT' if dir_raw == 'bullish' else dir_raw.upper()
 
+        # Get strategy type (default to daily_income for legacy trades)
+        strategy_type = trade.get('strategy_type') or 'daily_income'
+
         entry = {
             'id': trade.get('id'),
             'entry_time': trade.get('entry_time'),
@@ -956,6 +962,7 @@ def api_journal():
             'direction': dir_display,
             'direction_raw': dir_raw,
             'status': trade.get('status'),
+            'strategy_type': strategy_type,
             'short_strike': trade.get('short_strike'),
             'long_strike': trade.get('long_strike'),
             'spread_width': spread_width,
@@ -976,6 +983,17 @@ def api_journal():
             'flag': trade.get('flag'),
             'flag_note': trade.get('flag_note'),
             'notes': trade.get('notes'),
+            # Enhanced context fields
+            'spx_at_entry': trade.get('spx_at_entry') or trade.get('underlying_price_at_entry'),
+            'spx_at_exit': trade.get('spx_at_exit'),
+            'vix_at_entry': trade.get('vix_at_entry'),
+            'day_open': trade.get('day_open'),
+            'gap_pct': trade.get('gap_pct'),
+            'intraday_move_at_entry': trade.get('intraday_move_at_entry'),
+            'profit_captured_pct': trade.get('profit_captured_pct'),
+            'time_in_trade_minutes': trade.get('time_in_trade_minutes'),
+            'day_type': trade.get('day_type'),
+            'daily_move_pct': trade.get('daily_move_pct'),
         }
 
         # Apply filters
@@ -989,6 +1007,12 @@ def api_journal():
             if outcome_filter == 'open' and exit_analysis['outcome'] != 'open':
                 continue
         if flagged_only and not trade.get('flag'):
+            continue
+        if strategy_filter and strategy_type != strategy_filter:
+            continue
+        if day_type_filter and trade.get('day_type') != day_type_filter:
+            continue
+        if exit_reason_filter and exit_analysis.get('exit_reason') != exit_reason_filter:
             continue
 
         journal_entries.append(entry)
@@ -1030,6 +1054,19 @@ def api_journal():
         'most_common_exit_reason': most_common_exit,
     }
 
+    # Strategy breakdown stats
+    strategy_breakdown = {}
+    for strat_type in ['daily_income', 'tag_n_turn', 'bnb', 'orb']:
+        strat_trades = [e for e in valid if e.get('strategy_type') == strat_type]
+        strat_wins = [e for e in strat_trades if e['exit_analysis']['outcome'] == 'win']
+        strat_pnl = sum((e['exit_analysis']['pnl'] or 0) for e in strat_trades)
+        strategy_breakdown[strat_type] = {
+            'count': len(strat_trades),
+            'wins': len(strat_wins),
+            'win_rate': round(len(strat_wins) / len(strat_trades) * 100, 1) if strat_trades else 0,
+            'total_pnl': round(strat_pnl, 2),
+        }
+
     # Calculate portfolio loss limit from percentage
     account_size = portfolio.get('account_size', 50000)
     max_daily_loss_pct = portfolio.get('max_daily_loss_pct', 2.0)
@@ -1052,6 +1089,7 @@ def api_journal():
         'journal': journal_entries,
         'stats': stats,
         'strategy_params': strategy_params,
+        'strategy_breakdown': strategy_breakdown,
     })
 
 
