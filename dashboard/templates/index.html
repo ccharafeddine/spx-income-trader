@@ -239,6 +239,82 @@ header::after {
 .params-grid .status-label { font-size: 11px; }
 .params-grid .status-value { font-size: 11px; }
 
+/* SPX price with label */
+.spx-price-container {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 8px 0 2px;
+}
+.spx-label {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--cyan);
+  letter-spacing: 1px;
+}
+
+/* Strategy status grid */
+.strategy-status-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.strat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+}
+.strat-name {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.strat-state {
+  font-size: 10px;
+  font-weight: bold;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  background: rgba(107,114,128,0.2);
+  color: var(--text-dim);
+}
+.strat-state.watching { background: rgba(6,182,212,0.15); color: var(--cyan); }
+.strat-state.idle { background: rgba(107,114,128,0.2); color: var(--text-dim); }
+.strat-state.active, .strat-state.position { background: var(--green-dim); color: var(--green); }
+.strat-state.pending { background: rgba(245,158,11,0.15); color: var(--amber); }
+.strat-state.signal { background: rgba(245,158,11,0.15); color: var(--amber); }
+.strat-state.disabled { opacity: 0.5; }
+.strat-state.blocked { background: rgba(239,68,68,0.15); color: var(--red); }
+
+/* Instrument badge in header */
+.instrument-badge {
+  font-size: 10px;
+  color: var(--text-dim);
+  background: rgba(255,255,255,0.05);
+  padding: 3px 10px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-left: 12px;
+}
+
+/* Chart ticker badge */
+.chart-panel { position: relative; }
+.chart-ticker-badge {
+  position: absolute;
+  top: 40px;
+  left: 12px;
+  font-size: 11px;
+  font-weight: bold;
+  color: var(--cyan);
+  background: rgba(6, 182, 212, 0.1);
+  padding: 2px 8px;
+  border-radius: 3px;
+  letter-spacing: 1px;
+  z-index: 10;
+}
+
 /* Chart panel */
 .chart-panel { min-height: 440px; box-shadow: inset 0 0 30px rgba(6, 182, 212, 0.03); overflow: visible; }
 .chart-container { width: 100%; height: 400px; overflow: visible; }
@@ -873,7 +949,7 @@ header::after {
   <div class="account-bar" id="account-bar">
     <div class="acct-item">
       <div class="val big" id="acct-equity">$50,000.00</div>
-      <div class="lbl">Total Equity</div>
+      <div class="lbl">Total Equity<span class="instrument-badge">Trading: SPX 0DTE</span></div>
     </div>
     <div class="acct-divider"></div>
     <div class="acct-item">
@@ -941,17 +1017,35 @@ header::after {
           <span class="status-value" id="heartbeat">--</span>
         </div>
         <div id="spx-block">
-          <div class="spx-price" id="spx-price">--</div>
+          <div class="spx-price-container">
+            <span class="spx-label">SPX</span>
+            <span class="spx-price" id="spx-price">--</span>
+          </div>
           <div class="spx-change" id="spx-change">--</div>
         </div>
         <div class="params-grid" id="params-grid"></div>
-        <!-- Tag 'n Turn Status -->
-        <div id="tnt-status" style="display:none; margin-top:12px; padding-top:8px; border-top:1px solid var(--border);">
-          <div class="status-row">
-            <span class="status-label">Tag 'n Turn</span>
-            <span class="status-value" id="tnt-state" style="font-size:11px;">--</span>
+        <!-- Strategy Statuses -->
+        <div style="margin-top:12px; padding-top:8px; border-top:1px solid var(--border);">
+          <div style="font-size:11px; font-weight:bold; color:var(--text-dim); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">Strategies</div>
+          <div class="strategy-status-grid">
+            <div class="strat-row">
+              <span class="strat-name">Daily Income</span>
+              <span class="strat-state idle" id="strat-daily-income">Idle</span>
+            </div>
+            <div class="strat-row">
+              <span class="strat-name">Tag 'n Turn</span>
+              <span class="strat-state idle" id="strat-tnt">IDLE</span>
+            </div>
+            <div class="strat-row">
+              <span class="strat-name">B&B</span>
+              <span class="strat-state idle" id="strat-bnb">--</span>
+            </div>
+            <div class="strat-row">
+              <span class="strat-name">ORB</span>
+              <span class="strat-state idle" id="strat-orb">--</span>
+            </div>
           </div>
-          <div id="tnt-details" style="font-size:11px; color:var(--text-dim); margin-top:4px;"></div>
+          <div id="tnt-details" style="font-size:10px; color:var(--text-dim); margin-top:6px;"></div>
         </div>
       </div>
 
@@ -972,7 +1066,8 @@ header::after {
 
     <!-- RIGHT COLUMN: Chart -->
     <div class="panel chart-panel">
-      <div class="panel-title">Today's Activity</div>
+      <div class="panel-title">SPX · Today's Activity</div>
+      <div class="chart-ticker-badge">SPX 0DTE</div>
       <div class="chart-container" id="candle-chart"></div>
       <div class="today-stats">
         <div class="today-stat"><span class="label">Signals:</span><span class="value" id="today-signals">0</span></div>
@@ -1207,6 +1302,121 @@ function fmtTime(secs) {
   return h + 'h ' + m + 'm';
 }
 
+// Helper functions for time windows (ET timezone)
+function isInMorningWindow() {
+  const now = new Date();
+  // Convert to ET (rough approximation, adjust for DST if needed)
+  const utcHour = now.getUTCHours();
+  const etHour = (utcHour - 5 + 24) % 24;  // EST offset
+  const mins = now.getUTCMinutes();
+  const time = etHour * 60 + mins;
+  // 9:30 AM to 11:30 AM ET
+  return time >= 570 && time <= 690;
+}
+
+function isPreORB() {
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  const etHour = (utcHour - 5 + 24) % 24;
+  const mins = now.getUTCMinutes();
+  const time = etHour * 60 + mins;
+  // 9:30 to 10:00 AM ET
+  return time >= 570 && time < 600;
+}
+
+function updateStrategyStatuses(data) {
+  // Daily Income status
+  const dailyEl = document.getElementById('strat-daily-income');
+  if (dailyEl) {
+    if (data.portfolio && data.portfolio.trades_today && data.portfolio.trades_today.daily_income > 0) {
+      dailyEl.textContent = 'Done (' + data.portfolio.trades_today.daily_income + ')';
+      dailyEl.className = 'strat-state active';
+    } else if (data.pending_setup) {
+      dailyEl.textContent = 'Pending';
+      dailyEl.className = 'strat-state pending';
+    } else if (data.market && data.market.is_open && isInMorningWindow()) {
+      dailyEl.textContent = 'Watching';
+      dailyEl.className = 'strat-state watching';
+    } else if (data.market && data.market.is_open) {
+      dailyEl.textContent = 'Window Closed';
+      dailyEl.className = 'strat-state idle';
+    } else {
+      dailyEl.textContent = 'Idle';
+      dailyEl.className = 'strat-state idle';
+    }
+  }
+
+  // Tag 'n Turn status
+  const tntEl = document.getElementById('strat-tnt');
+  if (tntEl && data.tag_n_turn) {
+    const tnt = data.tag_n_turn;
+    if (!tnt.enabled) {
+      tntEl.textContent = 'Disabled';
+      tntEl.className = 'strat-state disabled';
+    } else {
+      let state = tnt.state || 'IDLE';
+      tntEl.textContent = state.replace('_', ' ');
+      tntEl.className = 'strat-state ' + (
+        tnt.active_position ? 'position' :
+        state === 'AWAITING_BREAKOUT' ? 'pending' :
+        state === 'TAG_DETECTED' || state === 'PULSE_CONFIRMED' ? 'watching' :
+        'idle'
+      );
+    }
+  }
+
+  // B&B status
+  const bnbEl = document.getElementById('strat-bnb');
+  if (bnbEl) {
+    if (data.bnb && data.bnb.enabled !== false) {
+      const bnb = data.bnb;
+      if (bnb.active_signal) {
+        bnbEl.textContent = 'Signal ' + (bnb.active_signal.direction || '').toUpperCase();
+        bnbEl.className = 'strat-state signal';
+      } else if (bnb.pending_signal) {
+        bnbEl.textContent = 'Pending';
+        bnbEl.className = 'strat-state pending';
+      } else if (bnb.in_window) {
+        bnbEl.textContent = 'Scanning';
+        bnbEl.className = 'strat-state watching';
+      } else {
+        bnbEl.textContent = 'Idle';
+        bnbEl.className = 'strat-state idle';
+      }
+    } else {
+      bnbEl.textContent = 'Disabled';
+      bnbEl.className = 'strat-state disabled';
+    }
+  }
+
+  // ORB status
+  const orbEl = document.getElementById('strat-orb');
+  if (orbEl) {
+    if (data.orb && data.orb.enabled !== false) {
+      const orb = data.orb;
+      if (orb.position_open) {
+        orbEl.textContent = 'Position';
+        orbEl.className = 'strat-state position';
+      } else if (orb.triggered_today) {
+        orbEl.textContent = 'Triggered';
+        orbEl.className = 'strat-state active';
+      } else if (orb.opening_range) {
+        orbEl.textContent = 'Range Set';
+        orbEl.className = 'strat-state watching';
+      } else if (data.market && data.market.is_open && isPreORB()) {
+        orbEl.textContent = 'Building';
+        orbEl.className = 'strat-state watching';
+      } else {
+        orbEl.textContent = 'Idle';
+        orbEl.className = 'strat-state idle';
+      }
+    } else {
+      orbEl.textContent = 'Disabled';
+      orbEl.className = 'strat-state disabled';
+    }
+  }
+}
+
 // ---------------------------------------------------------------
 // Update functions
 // ---------------------------------------------------------------
@@ -1300,23 +1510,13 @@ async function updateStatus() {
       '<span class="status-label">Contracts</span><span class="status-value">' + p.contracts + '</span>';
   }
 
-  // Tag 'n Turn Status
-  const tntEl = document.getElementById('tnt-status');
-  const tntStateEl = document.getElementById('tnt-state');
+  // Strategy Statuses
+  updateStrategyStatuses(d);
+
+  // Tag 'n Turn details
   const tntDetailsEl = document.getElementById('tnt-details');
   if (d.tag_n_turn && d.tag_n_turn.enabled) {
-    tntEl.style.display = 'block';
     const tnt = d.tag_n_turn;
-    const stateColors = {
-      'IDLE': 'var(--text-dim)',
-      'TAG_DETECTED': 'var(--amber)',
-      'PULSE_CONFIRMED': 'var(--amber)',
-      'AWAITING_BREAKOUT': 'var(--cyan)',
-      'POSITION_OPEN': 'var(--green)'
-    };
-    tntStateEl.textContent = tnt.state || 'IDLE';
-    tntStateEl.style.color = stateColors[tnt.state] || 'var(--text-dim)';
-
     let details = '';
     if (tnt.tag_info) {
       details = 'Tag: ' + (tnt.tag_info.band || '').toUpperCase() + ' band, watching ' + (tnt.tag_info.reversal_direction || '');
@@ -1333,7 +1533,7 @@ async function updateStatus() {
     }
     tntDetailsEl.textContent = details;
   } else {
-    tntEl.style.display = 'none';
+    tntDetailsEl.textContent = '';
   }
 
   // Today's Summary (after market close)
