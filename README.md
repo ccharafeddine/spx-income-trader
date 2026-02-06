@@ -1,137 +1,238 @@
 # SPX Income Trading System
 
-Automated 0-DTE SPX credit spread trading system implementing Phil Newton's **Production Line Trading** strategy. Detects pulse bar setups on 30-minute charts, confirms entries on breakout, filters with Bollinger Band directional bias, and manages positions with profit targets and a 1pm trend-based management check.
+Automated 0-DTE and swing SPX options trading system implementing strategies from Phil Newton's **Production Line Trading**. Runs four parallel strategies coordinated by a portfolio risk manager: Daily Income (core 0DTE), Tag 'n Turn (swing), B&B (overnight signals), and ORB (opening range breakout).
 
 ## Strategy Overview
 
-The system sells ATM credit spreads on SPX index options that expire the same day (0-DTE). It uses intraday price action on 30-minute bars to identify high-probability setups and manages risk through defined spread widths, daily trade limits, and systematic exit rules.
+The system trades SPX index options using intraday price action on 30-minute bars. It coordinates multiple strategies through a Portfolio Manager that enforces position limits, daily risk caps, and a circuit breaker.
 
 ### Architecture
 
 ```
 Market Data (Yahoo Finance / E*TRADE)
-  → BarBuilder (30-min bar aggregation from ticks)
-    → PulseBarDetector (10% threshold close-in-range check)
-      → BollingerFilter (directional bias gate)
-        → Pending Setup (stored, waiting for breakout)
-          → Breakout Confirmation (price > bar high or < bar low)
-            → Spread Construction (ATM $5-wide credit spread)
-              → Credit Quality Check + Order Execution
-                → PositionManager (P&L tracking, exit logic)
-                  → 1pm Management Check / 80% Profit Target / Expiration
+  -> BarBuilder (30-min bar aggregation)
+     -> Four Parallel Strategies:
+        1. Daily Income (0DTE credit spreads, morning pulse bars)
+        2. Tag 'n Turn (3-7 DTE swing trades, BB reversals)
+        3. B&B (overnight signals for next-day entry)
+        4. ORB (opening range breakout)
+     -> PortfolioManager (coordinates all strategies)
+        -> Position limits (max 3 total, max 2 0DTE)
+        -> Daily risk tracking (5% max at risk)
+        -> Circuit breaker (2% realized loss limit)
+     -> Order Execution -> Position Tracking -> Exit Management
 ```
 
-## Implemented Features
+## Implemented Strategies
 
-### Core Trading Logic
-- **30-minute bar building** from live tick data via Yahoo Finance
-- **Pulse bar detection**: Bar where close is in the extreme 10% of its range (top 10% = bullish, bottom 10% = bearish). Calculated as `((close - low) / (high - low)) * 100`
-- **Two-phase entry**: Pulse bar creates a *pending setup* (not an immediate trade). Entry triggers only when the next price breaks the setup bar's high (bullish) or low (bearish)
-- **ATM $5-wide credit spreads**: Bullish pulse = put credit spread, bearish pulse = call credit spread. Strikes rounded to nearest $5
-- **$1.00 minimum credit floor**: Spreads below this threshold are rejected
-- **80% profit target**: Exits when current profit reaches 80% of max spread profit
-- **Daily limits**: Max 1 trade per day, $1,000 max daily loss
-- **Morning setup window**: 9:30-11:30 AM ET. Pending setups expire if no breakout by window close
+### 1. Daily Income Strategy (Core 0DTE)
 
-### 1pm In-Trade Management (p.19-20)
-At 1pm ET, evaluates whether the day is trending (`|SPX move from entry| >= $15`) and whether the move is favorable to the position direction. Runs once per trade.
+The primary strategy: sells ATM credit spreads on SPX that expire the same day.
 
-| Condition | AGGRESSIVE | MODERATE | CONSERVATIVE |
-|-----------|-----------|----------|--------------|
-| Trending (any direction) | Hold | Hold | Hold |
+**Entry Signals:**
+- **Pulse Bar Detection**: Bar where close is in extreme 10% of range
+  - Bullish: `((close - low) / (high - low)) >= 90%`
+  - Bearish: `((close - low) / (high - low)) <= 10%`
+- **Breakout Confirmation**: Price breaks pulse bar high (bullish) or low (bearish)
+- **Setup Window**: 9:30 AM - 11:30 AM ET
+
+**Position Structure:**
+- Bullish pulse -> Put credit spread (sell put, buy lower put)
+- Bearish pulse -> Call credit spread (sell call, buy higher call)
+- $5-wide spreads, ATM strikes rounded to nearest $5
+- Minimum $1.00 credit required
+
+**Exit Rules:**
+- 80% profit target
+- 1pm trend management check
+- Expiration at close
+
+**1pm Management Modes:**
+
+| Day Type | AGGRESSIVE | MODERATE | CONSERVATIVE |
+|----------|-----------|----------|--------------|
+| Trending (>$15 move) | Hold | Hold | Hold |
 | Non-trending + favorable | Hold | Hold | Close early |
 | Non-trending + unfavorable | Hold | Close early | Close early |
 
-Default mode: **MODERATE**
+### 2. Tag 'n Turn Strategy (Swing)
 
-### Credit Quality Classification (p.20)
-Each trade entry classifies credit received against expected benchmarks by moneyness:
-- OTM: $2.40-$2.60
-- ATM: $2.50-$2.80
-- ITM: $2.80-$3.00
+Multi-day swing strategy using Bollinger Band mean reversion (p.30-33).
 
-Classification (GOOD / ACCEPTABLE / BELOW_EXPECTED) and a simulated-pricing warning flag (`< $1.50`) are logged per trade and stored in signal data.
+**Entry Signals:**
+1. Price tags upper or lower Bollinger Band (50-period, 2 std)
+2. Pulse bar forms in **reversal** direction (opposite to band tagged)
+3. Next bar breaks pulse bar high/low (confirmation)
 
-### Bollinger Band Filter — Tag 'n Turn (p.30-33)
-50-period Bollinger Bands on 30-minute bars (non-standard setting from the book). Establishes directional bias:
-- Price tags lower band -> bullish bias
-- Price tags upper band -> bearish bias
-- Bias persists until the opposite band is tagged
+**State Machine:**
+```
+IDLE -> TAG_DETECTED -> PULSE_CONFIRMED -> AWAITING_BREAKOUT -> POSITION_OPEN -> IDLE
+```
 
-Pulse bar setups are **blocked** if they conflict with the current bias. If no bias is established (insufficient data or no recent tag), all setups are allowed. Seeded with 10 days of historical data from yfinance at startup.
+**Position Structure:**
+- 3-7 DTE credit spreads or directional options
+- $10-wide spreads for swing trades
+- Smaller size (2 contracts default) for multi-day risk
 
-Configurable: can be disabled via `filters.bollinger_enabled: false`.
+**Exit Rules:**
+- Target: Opposite Bollinger Band
+- Stop: Close beyond entry band
+- Max hold: 7 days
 
-### Afternoon Setup Window — Bed & Breakfast (p.23-26)
-Optional second setup window in the last 30 minutes of trading (15:00-15:30 ET). Uses the same pulse bar logic, breakout confirmation, and filters as the morning window. Pending setups from this window expire at 15:30 ET.
+### 3. B&B Strategy (Bed & Breakfast)
 
-**Disabled by default.** Enable via `timing.afternoon_enabled: true`.
+Overnight signal strategy detecting end-of-day setups for next-morning entry (p.23-26).
 
-### Web Dashboard
-Flask-based single-page dashboard at `http://127.0.0.1:5000` with four tabs:
+**Signal Detection (15:00-16:00 ET):**
+- Pulse bar in final hour of trading
+- Signal stored overnight with direction and trigger price
 
-- **Overview**: Bot status with heartbeat staleness detection, SPX price, account summary, strategy parameters, market status with next-bar countdown
-- **Today**: Live 30-min candlestick chart with pulse bar highlighting, bar building progress, today's signals and trades, open position status (SAFE/WARNING/DANGER distance to short strike)
-- **History**: Daily stats, trade-level history with cumulative P&L, win rate, average win/loss
-- **Trade Journal**: Per-trade analysis cards with:
-  - Entry checklist (pulse detected, threshold met, window, credit minimum, limits, position clear)
-  - Pulse bar OHLC details and close position %
-  - Market context (SPX at entry, SPX open, VIX level)
-  - Strike analysis (rationale, credit vs expected range, distance to short)
-  - Exit analysis (reason, duration, % of max profit)
-  - Editable post-trade review: 1-5 star rating, "what would I do differently", notes, news catalyst (persisted in SQLite)
+**Next-Day Entry (09:30 ET):**
+- If signal still valid, enter at market open
+- Just Breakfast mode: Roll into daily income if first bar confirms direction
 
-### Dry-Run Mode
-Uses real SPX/VIX prices from Yahoo Finance with a simulated options chain (Black-Scholes approximation using live VIX for implied volatility). No real orders placed. All signals logged to `logs/dry_run_signals.json` with full metadata: pulse bar OHLC, VIX at signal, setup bar time, breakout time, credit quality.
+**Configuration:**
+- `aggressive_roll: true` - Enable Just Breakfast rolling
+- Window: 15:00-16:00 ET for signal detection
 
-### Security
-- Dashboard defaults to localhost-only (`127.0.0.1`), overridable via `DASHBOARD_HOST` env var
-- `.gitignore` covers `.env`, `tokens/`, `*.db`, `*.pdf`, signal logs
-- PID lockfile prevents duplicate bot instances
+### 4. ORB Strategy (Opening Range Breakout)
+
+First-bar breakout strategy with relaxed thresholds (p.22).
+
+**Entry Signals:**
+- First 30-min bar establishes opening range
+- Breakout above high or below low triggers entry
+- Threshold: 10-40% (more flexible than strict pulse bar)
+
+**Position Structure:**
+- 0DTE credit spreads
+- Separate from daily income trade limit
+
+## Portfolio Risk Manager
+
+Coordinates all strategies to prevent over-allocation:
+
+**Position Limits:**
+- Max 3 total positions across all strategies
+- Max 2 same-day (0DTE) positions
+- Strategy priority: B&B > Daily Income > ORB > Tag 'n Turn
+
+**Risk Controls:**
+- Max 5% of account at risk at any time
+- Circuit breaker: 2% realized daily loss stops new entries
+- Dollar limits scale with account size ($50k @ 2% = $1000 max loss)
+
+**Daily Reset:**
+- Clears daily P&L and risk tracking at market open
+- Removes expired 0DTE positions
+- Keeps swing positions (Tag 'n Turn)
 
 ## Configuration
 
-All strategy parameters live in `config/strategy_params.yaml`:
+All parameters in `config/strategy_params.yaml`:
 
 ```yaml
+# Portfolio-wide settings
+portfolio:
+  account_size: 50000.0        # Account size for risk calculations
+  max_total_positions: 3       # Max concurrent positions
+  max_0dte_positions: 2        # Max same-day positions
+  max_daily_risk_pct: 5.0      # Max % at risk
+  max_daily_loss_pct: 2.0      # Circuit breaker (realized loss)
+  priority:                    # Entry priority when slots limited
+    - bnb
+    - daily_income
+    - orb
+    - tag_n_turn
+
+# Daily Income Strategy
 strategy:
-  pulse_threshold: 10.0        # % threshold for pulse bar detection
-  spread_width: 5.0            # Credit spread width ($)
+  pulse_threshold: 10.0        # % threshold for pulse bar
+  spread_width: 5.0            # Spread width ($)
   profit_target_pct: 80.0      # Exit at 80% of max profit
-  max_daily_trades: 1          # Max trades per day
+  max_daily_trades: 1          # Max daily income trades
   contracts_per_trade: 5       # Contracts per entry
-
-risk:
-  max_daily_loss: 1000         # Stop trading if down $1000/day
-  max_account_risk_pct: 2.0    # Max risk per trade (% of account)
-
-execution:
-  min_credit: 1.00             # Hard floor — reject spreads below $1.00
-  max_slippage: 0.10           # Max slippage tolerance ($)
 
 timing:
   morning_start: "09:30"       # Setup window start (ET)
   morning_end: "11:30"         # Setup window end (ET)
-  afternoon_enabled: false     # Bed & Breakfast window (p.23-26)
-  afternoon_start: "15:00"     # Afternoon window start
-  afternoon_end: "15:30"       # Afternoon window end
 
 monitoring:
   enable_1pm_check: true       # 1pm trend management
-  trending_threshold: 15.0     # $ move threshold for trending day
-  management_mode: "MODERATE"  # AGGRESSIVE / MODERATE / CONSERVATIVE
+  trending_threshold: 15.0     # $ move for trending day
+  management_mode: "MODERATE"  # AGGRESSIVE/MODERATE/CONSERVATIVE
 
 filters:
-  bollinger_enabled: true      # Tag 'n Turn BB filter (p.30-33)
-  bollinger_period: 50         # BB period (30-min bars)
-  bollinger_std: 2.0           # BB standard deviations
+  bollinger_enabled: true      # BB filter for daily income
+  bollinger_period: 50
+  bollinger_std: 2.0
+  extreme_move_override_pct: 1.5  # Override BB on big moves
+
+# Tag 'n Turn Strategy
+tag_n_turn:
+  enabled: true
+  bb_period: 50
+  bb_std: 2.0
+  pulse_threshold: 10.0
+  max_hold_days: 7
+  use_credit_spreads: true
+  contracts_per_trade: 2
+  spread_width: 10.0
+  min_credit: 2.00
+  min_dte: 3
+  max_dte: 7
+
+# B&B Strategy
+bnb:
+  enabled: true
+  pulse_threshold: 10.0
+  contracts_per_trade: 3
+  aggressive_roll: true        # Just Breakfast mode
+
+# ORB Strategy
+orb:
+  enabled: true
+  min_threshold: 10.0
+  max_threshold: 40.0
+  contracts_per_trade: 3
+  separate_daily_limit: true
 ```
 
 Environment variables (`.env`):
 - `TRADING_MODE`: `paper` or `live`
-- `ETRADE_CONSUMER_KEY`, `ETRADE_CONSUMER_SECRET`: E\*TRADE API credentials
-- `ETRADE_SANDBOX`: `true` for sandbox, `false` for production
-- `DASHBOARD_HOST`, `DASHBOARD_PORT`: Dashboard bind address and port
+- `ETRADE_CONSUMER_KEY`, `ETRADE_CONSUMER_SECRET`: E*TRADE API credentials
+- `DASHBOARD_HOST`, `DASHBOARD_PORT`: Dashboard bind address/port
+
+## Web Dashboard
+
+Flask-based dashboard at `http://127.0.0.1:5000`:
+
+### Overview Tab
+- **Bot Status**: Running state, heartbeat with market-aware staleness
+- **SPX Price**: Real-time price with tick flash animation
+- **Strategy Status Panel**: Live state of all 4 strategies
+  - Daily Income: Idle / Watching / Pending / Done
+  - Tag 'n Turn: IDLE / TAG_DETECTED / PULSE_CONFIRMED / AWAITING_BREAKOUT / POSITION
+  - B&B: Idle / Scanning / Signal / Pending
+  - ORB: Idle / Building / Range Set / Triggered / Position
+- **Account Summary**: Equity, cash, unrealized/realized P&L
+
+### Today Tab
+- Live 30-min candlestick chart with pulse bar highlighting
+- Bar building progress and countdown
+- Today's signals and trades
+- Open position zone visualization (SAFE/WARNING/DANGER)
+
+### Trade Journal Tab
+- **Strategy Breakdown**: Stats per strategy (trades, win rate, P&L)
+- **Advanced Filters**: Strategy, direction, outcome, day type
+- **Trade Cards**: Expandable with full context
+  - Strategy tag (DAILY, TNT, B&B, ORB)
+  - Entry context (SPX, VIX, gap, intraday move)
+  - Exit analysis (reason, duration, capture %)
+  - Market conditions (day type, daily move)
+  - Editable notes and ratings
+- **CSV Export**: Download all trade data
 
 ## Running
 
@@ -139,92 +240,100 @@ Environment variables (`.env`):
 # Install dependencies
 pip install -r requirements.txt
 
-# Copy and configure environment
+# Configure environment
 cp .env.example .env
+# Edit .env with your settings
 
-# Start in dry-run mode (real market data, simulated execution)
+# Start bot in dry-run mode (real data, simulated execution)
 python -m src.main --dry-run --no-confirm
 
-# Start the web dashboard
-python -m dashboard.app
+# Start web dashboard
+cd dashboard && python app.py
 
-# Paper trading (simulated data + execution)
-python -m src.main --mode paper
+# Or run both (separate terminals)
+python -m src.main --dry-run --no-confirm &
+python -m dashboard.app &
 
-# View bot logs
+# View logs
 tail -f logs/trading.log
 ```
 
-Flags:
-- `--dry-run`: Real Yahoo Finance data, simulated options chain, no orders placed
-- `--no-confirm`: Skip interactive trade confirmation prompts (for unattended runs)
-- `--mode paper|live`: Select broker mode
-- `--log-level DEBUG|INFO|WARNING|ERROR`: Override log verbosity
+**Command-line flags:**
+- `--dry-run`: Real Yahoo data, simulated options chain, no orders
+- `--no-confirm`: Skip interactive prompts (for unattended runs)
+- `--mode paper|live`: Broker mode selection
+- `--log-level DEBUG|INFO|WARNING|ERROR`: Log verbosity
 
 ## Project Structure
 
 ```
 config/
-  settings.py                 # Environment config, paths, credentials
-  strategy_params.yaml        # Strategy parameters
+  settings.py                 # Environment config, paths
+  strategy_params.yaml        # All strategy parameters
+
 src/
-  main.py                     # TradingBot orchestrator and main loop
+  main.py                     # TradingBot orchestrator
   brokers/
     base.py                   # Abstract BrokerInterface
-    dry_run_broker.py          # Real data + simulated execution
-    paper_trader.py            # Simulated data + execution with slippage
-    etrade_broker.py           # E*TRADE live trading integration
-    etrade_auth.py             # E*TRADE OAuth2 authentication
+    dry_run_broker.py         # Real data + simulated execution
+    paper_trader.py           # Simulated everything
+    etrade_broker.py          # E*TRADE live trading
   core/
-    strategy.py               # SPXIncomeStrategy (setup eval, exits, 1pm mgmt)
-    pulse_detector.py          # PulseBarDetector (10% bar threshold)
-    bar_builder.py             # 30-min bar aggregation from ticks
-    bollinger_filter.py        # Tag 'n Turn BB directional bias filter
-    position_manager.py        # Trade lifecycle, P&L, credit quality
+    strategy.py               # Daily Income strategy
+    pulse_detector.py         # Pulse bar detection
+    bar_builder.py            # 30-min bar aggregation
+    bollinger_filter.py       # BB filter and bias tracking
+    tag_n_turn.py             # Tag 'n Turn swing strategy
+    bnb_strategy.py           # B&B overnight signals
+    orb_strategy.py           # Opening Range Breakout
+    portfolio_manager.py      # Multi-strategy coordination
+    position_manager.py       # Trade lifecycle, P&L
   models/
-    bar.py                     # Bar dataclass (OHLC, range, close %)
-    spread.py                  # CreditSpread, OptionLeg, TradeDirection
-    trade.py                   # Trade, TradeStatus
+    bar.py                    # Bar dataclass
+    spread.py                 # CreditSpread, OptionLeg
+    trade.py                  # Trade, TradeStatus
   data/
-    yahoo_finance.py           # Real-time SPX/VIX quotes (60s cache)
-    market_data.py             # Market data feed wrapper
-  utils/
-    logging.py                 # Log configuration
-    notifications.py           # Email/SMS notifications
+    yahoo_finance.py          # Real-time SPX/VIX quotes
+    market_data.py            # Market data wrapper
+
 database/
   schema.sql                  # SQLite schema
-  db_manager.py               # Database CRUD
+  db_manager.py               # Database operations
+  migrations/                 # Schema migrations
+
 dashboard/
-  app.py                      # Flask dashboard (7 API endpoints)
-  templates/index.html        # Single-page dark-themed UI
-scripts/
-  run_dry_run.py              # Convenience launcher
-  run_dashboard.py            # Dashboard launcher
-  health_check.py             # Bot health monitoring
+  app.py                      # Flask app (REST API)
+  templates/index.html        # Single-page UI
+
+logs/
+  trading.log                 # Main log file
+  dry_run_signals.json        # Signal history (dry-run)
 ```
 
 ## Database
 
-SQLite with four tables:
-- **trades**: Full trade lifecycle (entry/exit, strikes, P&L, setup bar time, breakout time)
-- **daily_stats**: Aggregated daily performance (wins, losses, total P&L)
-- **system_events**: Bot events log (starts, stops, 1pm management decisions)
-- **journal_notes**: Persistent trade review annotations (star ratings, notes)
+SQLite with tables:
+- **trades**: Full trade records with strategy context
+  - Entry: strategy_type, spx_at_entry, vix, gap, intraday_move
+  - Exit: spx_at_exit, profit_captured_pct, time_in_trade, day_type
+- **daily_stats**: Aggregated daily performance
+- **system_events**: Bot events log
+- **journal_notes**: Trade review annotations
+
+Auto-migration adds new columns to existing databases on startup.
 
 ## Broker Modes
 
 | Mode | Market Data | Options Chain | Execution | Use Case |
 |------|------------|---------------|-----------|----------|
-| Dry Run | Real (Yahoo Finance) | Simulated (BS approx from live VIX) | Simulated | Validate strategy with real prices |
-| Paper | Simulated (random walk) | Simulated (simplified) | Simulated + slippage | Test without market dependency |
-| E\*TRADE | Real (E\*TRADE API) | Real | Live orders | Production trading |
+| Dry Run | Real (Yahoo) | Simulated (BS) | Simulated | Validate with real prices |
+| Paper | Simulated | Simulated | Simulated | Test without market |
+| E*TRADE | Real | Real | Live orders | Production trading |
 
-## Planned / Not Yet Implemented
+## Risk Disclaimer
 
-- **Backtesting engine**: Replay historical data through the strategy
-- **ORB30 filter**: Opening Range Breakout on first 30-min bar as additional directional filter
-- **Just Breakfast system**: Morning-only variant with tighter exit rules
-- **Unit/integration tests**: No test suite currently exists
-- **Live E\*TRADE execution**: Broker interface is wired but not production-tested
-- **Multi-day position tracking**: Currently assumes all positions are 0-DTE
-- **SMS/email notifications**: Utility module exists but not fully integrated
+This software is for educational purposes. Trading options involves substantial risk of loss. Past performance does not guarantee future results. Use at your own risk.
+
+## License
+
+MIT License - See LICENSE file for details.
