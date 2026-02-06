@@ -1,6 +1,6 @@
 # SPX Income Trading System
 
-Automated 0-DTE and swing SPX options trading system implementing strategies from Phil Newton's **Production Line Trading**. Runs four parallel strategies coordinated by a portfolio risk manager: Daily Income (core 0DTE), Tag 'n Turn (swing), B&B (overnight signals), and ORB (opening range breakout).
+Automated 0-DTE and swing SPX options trading system implementing four parallel strategies coordinated by a portfolio risk manager: Daily Income (core 0DTE), Tag 'n Turn (swing), B&B (overnight signals), and ORB (opening range breakout).
 
 ## Strategy Overview
 
