@@ -85,7 +85,7 @@ filters:
 # Tag 'n Turn - Weekly Swing Strategy (Production Line Trading p.30-33)
 # Separate from daily income strategy - can run in parallel
 tag_n_turn:
-  enabled: false  # Start disabled, enable when ready to test
+  enabled: true  # Start disabled, enable when ready to test
 
   # Bollinger Band parameters (50-period, 2 std on 30-min bars)
   bb_period: 50
