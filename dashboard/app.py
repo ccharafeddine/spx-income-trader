@@ -46,6 +46,7 @@ def check_bot_status():
     """Check if the trading bot process is running via its lockfile.
 
     Includes heartbeat-based staleness detection as secondary check.
+    Uses different thresholds for market open vs closed hours.
     """
     if not LOCKFILE.exists():
         return {'running': False, 'pid': None, 'status': 'stopped'}
@@ -77,12 +78,25 @@ def check_bot_status():
         return {'running': False, 'pid': pid, 'status': 'stale'}
 
     # Process is alive — check heartbeat freshness as secondary signal
+    # Use different thresholds based on market hours
     heartbeat_warning = None
     try:
+        now_et = datetime.now(ET)
+        market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+        is_market_hours = (now_et.weekday() < 5 and market_open <= now_et <= market_close)
+
+        # Thresholds: stricter during market hours, lenient when closed
+        if is_market_hours:
+            warning_threshold = 300   # 5 minutes
+            stale_threshold = 600     # 10 minutes
+        else:
+            warning_threshold = 900   # 15 minutes
+            stale_threshold = 1800    # 30 minutes
+
         log_data = parse_todays_log()
         if log_data.get('last_heartbeat'):
             hb_time_str = log_data['last_heartbeat']['time']
-            now_et = datetime.now(ET)
             hb_time = now_et.replace(
                 hour=int(hb_time_str[:2]),
                 minute=int(hb_time_str[3:5]),
@@ -90,7 +104,14 @@ def check_bot_status():
                 microsecond=0
             )
             secs = (now_et - hb_time).total_seconds()
-            if secs > 900:  # 15 minutes
+
+            # Handle edge case: heartbeat from previous day (negative or very large diff)
+            # If heartbeat appears to be in the future or >12 hours old, ignore it
+            if secs < 0 or secs > 43200:
+                pass  # Don't warn, likely a date boundary issue
+            elif secs > stale_threshold:
+                heartbeat_warning = f'Last heartbeat {int(secs // 60)}m ago (stale)'
+            elif secs > warning_threshold:
                 heartbeat_warning = f'Last heartbeat {int(secs // 60)}m ago'
     except Exception:
         pass
