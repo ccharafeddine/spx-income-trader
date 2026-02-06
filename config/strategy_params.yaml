@@ -81,3 +81,35 @@ filters:
   # E.g., if SPX is down >1.5% from open, allow bearish setups even if BB bias is bullish.
   # Set to 0 to disable this override.
   extreme_move_override_pct: 1.5
+
+# Tag 'n Turn - Weekly Swing Strategy (Production Line Trading p.30-33)
+# Separate from daily income strategy - can run in parallel
+tag_n_turn:
+  enabled: false  # Start disabled, enable when ready to test
+
+  # Bollinger Band parameters (50-period, 2 std on 30-min bars)
+  bb_period: 50
+  bb_std: 2.0
+
+  # Pulse bar threshold for reversal detection
+  pulse_threshold: 10.0
+
+  # Maximum holding period (days)
+  max_hold_days: 7
+
+  # Position type: credit spreads vs directional options
+  use_credit_spreads: true
+
+  # Position sizing for swings (separate from daily)
+  contracts_per_trade: 2  # Smaller size for multi-day risk
+
+  # For credit spreads (when use_credit_spreads: true)
+  spread_width: 10.0  # Wider spreads for multi-day
+  min_credit: 2.00
+
+  # For directional options (when use_credit_spreads: false)
+  delta_target: 0.70  # ITM options for directional plays
+
+  # DTE range for swing trades
+  min_dte: 3
+  max_dte: 7

@@ -34,6 +34,7 @@ from src.core.strategy import SPXIncomeStrategy
 from src.core.position_manager import PositionManager
 from src.core.bar_builder import BarBuilder
 from src.core.bollinger_filter import BollingerFilter
+from src.core.tag_n_turn import TagNTurnStrategy
 from src.data.market_data import MarketDataFeed
 from database.db_manager import DatabaseManager
 from src.utils.notifications import NotificationManager
@@ -104,6 +105,16 @@ class TradingBot:
         else:
             logger.info("Afternoon window (Bed & Breakfast): disabled")
 
+        # Tag 'n Turn swing strategy (separate parallel strategy)
+        tnt_cfg = STRATEGY_PARAMS.get('tag_n_turn', {})
+        self.tag_n_turn_enabled = tnt_cfg.get('enabled', False)
+        if self.tag_n_turn_enabled:
+            self.tag_n_turn = TagNTurnStrategy(tnt_cfg)
+            logger.info("Tag 'n Turn swing strategy: ENABLED")
+        else:
+            self.tag_n_turn = None
+            logger.info("Tag 'n Turn swing strategy: disabled")
+
         logger.info("TradingBot initialized")
     
     def start(self):
@@ -148,6 +159,18 @@ class TradingBot:
                 logger.warning(f"Bollinger filter seed failed (will build from live data): {e}")
         else:
             logger.info("Bollinger filter disabled by config")
+
+        # Seed Tag 'n Turn BB filter
+        if self.tag_n_turn_enabled and self.tag_n_turn:
+            try:
+                tnt_bars = self.tag_n_turn.seed_historical()
+                tnt_status = self.tag_n_turn.get_status()
+                logger.info(
+                    f"Tag 'n Turn: {tnt_bars} bars loaded, "
+                    f"state={tnt_status['state']}"
+                )
+            except Exception as e:
+                logger.warning(f"Tag 'n Turn seed failed: {e}")
 
         try:
             self._run_main_loop()
@@ -413,12 +436,45 @@ class TradingBot:
                     self._execute_setup(setup_bar, current_price, direction, breakout_time=current_time)
                     return
 
+            # --- Check Tag 'n Turn entry signals (runs in parallel with daily strategy) ---
+            if self.tag_n_turn_enabled and self.tag_n_turn:
+                tnt_signal = self.tag_n_turn.check_entry_signal(current_price)
+                if tnt_signal:
+                    logger.info(
+                        f"TAG 'N TURN SIGNAL: {tnt_signal['direction'].value.upper()} "
+                        f"entry @ ${current_price:,.2f}, "
+                        f"target=${tnt_signal['target_price']:,.2f}"
+                    )
+                    # TODO: Execute Tag 'n Turn trade when live trading is implemented
+                    # For now, just log the signal (multi-day positions need special handling)
+                    self.db.log_event("tag_n_turn_signal", "Tag 'n Turn entry signal", {
+                        "direction": tnt_signal['direction'].value,
+                        "entry_price": current_price,
+                        "target_price": tnt_signal['target_price'],
+                        "stop_price": tnt_signal['stop_price'],
+                    })
+
+                # Check exit conditions for open Tag 'n Turn positions
+                tnt_exit = self.tag_n_turn.check_exit_conditions(current_price)
+                if tnt_exit:
+                    logger.info(
+                        f"TAG 'N TURN EXIT: {tnt_exit['reason']} @ ${current_price:,.2f}"
+                    )
+                    self.db.log_event("tag_n_turn_exit", "Tag 'n Turn exit signal", {
+                        "reason": tnt_exit['reason'],
+                        "exit_price": current_price,
+                    })
+
             # --- If bar just completed, check for new pulse bar setup ---
             if bar:
                 logger.info(f"New 30-min bar completed: {bar}")
 
                 # Feed bar to Bollinger filter
                 self.bollinger.add_bar(bar)
+
+                # Feed bar to Tag 'n Turn strategy (if enabled)
+                if self.tag_n_turn_enabled and self.tag_n_turn:
+                    self.tag_n_turn.on_bar_complete(bar)
 
                 # Check if we already have an open position
                 if self.position_manager.has_open_position():
@@ -429,20 +485,9 @@ class TradingBot:
                 direction = self.strategy.evaluate_setup(bar, current_price)
 
                 if direction:
-                    # Check Bollinger alignment before storing setup
-                    if self.bollinger_enabled:
-                        bb_aligned, bb_reason = self.bollinger.check_alignment(direction, current_price)
-                        logger.info(f"Bollinger check: {bb_reason}")
-
-                        if not bb_aligned:
-                            logger.info(
-                                f"SETUP REJECTED by Bollinger filter: "
-                                f"{direction.value.upper()} pulse bar at "
-                                f"{bar.timestamp.strftime('%H:%M')} blocked"
-                            )
-                            return
-
                     # Pulse bar detected — store as pending setup, DON'T enter yet
+                    # NOTE: BB filter removed from daily strategy (per plan).
+                    # Tag 'n Turn uses BB for its own reversal detection.
                     trigger_price = bar.high if direction.value == 'bullish' else bar.low
                     above_below = 'above' if direction.value == 'bullish' else 'below'
 

@@ -945,6 +945,14 @@ header::after {
           <div class="spx-change" id="spx-change">--</div>
         </div>
         <div class="params-grid" id="params-grid"></div>
+        <!-- Tag 'n Turn Status -->
+        <div id="tnt-status" style="display:none; margin-top:12px; padding-top:8px; border-top:1px solid var(--border);">
+          <div class="status-row">
+            <span class="status-label">Tag 'n Turn</span>
+            <span class="status-value" id="tnt-state" style="font-size:11px;">--</span>
+          </div>
+          <div id="tnt-details" style="font-size:11px; color:var(--text-dim); margin-top:4px;"></div>
+        </div>
       </div>
 
       <!-- POSITION TRACKER -->
@@ -1290,6 +1298,42 @@ async function updateStatus() {
       '<span class="status-label">Target</span><span class="status-value">' + p.profit_target_pct + '%</span>' +
       '<span class="status-label">Max/Day</span><span class="status-value">' + p.max_daily_trades + '</span>' +
       '<span class="status-label">Contracts</span><span class="status-value">' + p.contracts + '</span>';
+  }
+
+  // Tag 'n Turn Status
+  const tntEl = document.getElementById('tnt-status');
+  const tntStateEl = document.getElementById('tnt-state');
+  const tntDetailsEl = document.getElementById('tnt-details');
+  if (d.tag_n_turn && d.tag_n_turn.enabled) {
+    tntEl.style.display = 'block';
+    const tnt = d.tag_n_turn;
+    const stateColors = {
+      'IDLE': 'var(--text-dim)',
+      'TAG_DETECTED': 'var(--amber)',
+      'PULSE_CONFIRMED': 'var(--amber)',
+      'AWAITING_BREAKOUT': 'var(--cyan)',
+      'POSITION_OPEN': 'var(--green)'
+    };
+    tntStateEl.textContent = tnt.state || 'IDLE';
+    tntStateEl.style.color = stateColors[tnt.state] || 'var(--text-dim)';
+
+    let details = '';
+    if (tnt.tag_info) {
+      details = 'Tag: ' + (tnt.tag_info.band || '').toUpperCase() + ' band, watching ' + (tnt.tag_info.reversal_direction || '');
+    }
+    if (tnt.awaiting_breakout) {
+      const ab = tnt.awaiting_breakout;
+      const dir = ab.direction || '';
+      const level = ab.breakout_level ? '$' + ab.breakout_level.toFixed(2) : '--';
+      details = dir + ' entry ' + (dir === 'BULL' ? 'above' : 'below') + ' ' + level;
+    }
+    if (tnt.active_position) {
+      const ap = tnt.active_position;
+      details = ap.direction + ' @ $' + (ap.entry_price || 0).toFixed(2) + ', target $' + (ap.target_price || 0).toFixed(2);
+    }
+    tntDetailsEl.textContent = details;
+  } else {
+    tntEl.style.display = 'none';
   }
 
   // Today's Summary (after market close)

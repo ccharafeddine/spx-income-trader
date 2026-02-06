@@ -551,6 +551,29 @@ def api_status():
         'contracts': strat.get('contracts_per_trade', 5),
     }
 
+    # Tag 'n Turn status (read from persistence file if enabled)
+    tnt_cfg = STRATEGY_PARAMS.get('tag_n_turn', {})
+    tag_n_turn_status = {'enabled': tnt_cfg.get('enabled', False)}
+    if tnt_cfg.get('enabled', False):
+        try:
+            tnt_path = BASE_DIR / 'database' / 'tag_n_turn_positions.json'
+            if tnt_path.exists():
+                import json
+                with open(tnt_path, 'r') as f:
+                    tnt_data = json.load(f)
+                tag_n_turn_status = {
+                    'enabled': True,
+                    'state': tnt_data.get('state', 'IDLE'),
+                    'tag_info': tnt_data.get('tag_info'),
+                    'awaiting_breakout': {
+                        'direction': tnt_data.get('pulse_info', {}).get('direction', '').upper() if tnt_data.get('pulse_info') else None,
+                        'breakout_level': tnt_data.get('breakout_level'),
+                    } if tnt_data.get('state') == 'AWAITING_BREAKOUT' else None,
+                    'active_position': tnt_data.get('active_position'),
+                }
+        except Exception:
+            pass
+
     return jsonify({
         'bot': bot,
         'mode': mode,
@@ -564,6 +587,7 @@ def api_status():
         'strategy': params_summary,
         'account': account,
         'today_summary': today_summary,
+        'tag_n_turn': tag_n_turn_status,
     })
 
 
