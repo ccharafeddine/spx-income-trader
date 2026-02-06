@@ -253,23 +253,147 @@ header::after {
   letter-spacing: 1px;
 }
 
-/* Strategy status grid */
+/* Strategy status grid with LED lights */
 .strategy-status-grid {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   margin-top: 8px;
 }
 .strat-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 3px 0;
+  padding: 4px 0;
 }
 .strat-name {
   font-size: 11px;
   color: var(--text-dim);
 }
+
+/* LED Light */
+.status-light {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+.status-light .led {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #374151;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.3);
+  transition: all 0.3s ease;
+}
+
+/* LED States */
+
+/* IDLE (Red) - Strategy enabled but not active */
+.status-light[data-state="idle"] .led {
+  background: radial-gradient(circle at 30% 30%, #f87171, #dc2626);
+  box-shadow:
+    0 0 4px #dc2626,
+    0 0 8px rgba(220, 38, 38, 0.4),
+    inset 0 -2px 4px rgba(0,0,0,0.2);
+}
+
+/* DISABLED (Dim/Off) */
+.status-light[data-state="disabled"] .led {
+  background: #1f2937;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.4);
+  opacity: 0.5;
+}
+
+/* WATCHING/PENDING (Yellow) - Signal detected, waiting for trigger */
+.status-light[data-state="watching"] .led,
+.status-light[data-state="pending"] .led,
+.status-light[data-state="signal"] .led {
+  background: radial-gradient(circle at 30% 30%, #fcd34d, #f59e0b);
+  box-shadow:
+    0 0 4px #f59e0b,
+    0 0 8px rgba(245, 158, 11, 0.5),
+    inset 0 -2px 4px rgba(0,0,0,0.2);
+  animation: pulse-yellow 1.5s ease-in-out infinite;
+}
+
+/* ACTIVE/POSITION (Green) - Position open */
+.status-light[data-state="active"] .led,
+.status-light[data-state="position"] .led {
+  background: radial-gradient(circle at 30% 30%, #4ade80, #16a34a);
+  box-shadow:
+    0 0 6px #16a34a,
+    0 0 12px rgba(22, 163, 74, 0.5),
+    inset 0 -2px 4px rgba(0,0,0,0.2);
+  animation: pulse-green-led 2s ease-in-out infinite;
+}
+
+/* Pulse animations for LEDs */
+@keyframes pulse-yellow {
+  0%, 100% {
+    box-shadow:
+      0 0 4px #f59e0b,
+      0 0 8px rgba(245, 158, 11, 0.5),
+      inset 0 -2px 4px rgba(0,0,0,0.2);
+  }
+  50% {
+    box-shadow:
+      0 0 6px #f59e0b,
+      0 0 14px rgba(245, 158, 11, 0.7),
+      inset 0 -2px 4px rgba(0,0,0,0.2);
+  }
+}
+
+@keyframes pulse-green-led {
+  0%, 100% {
+    box-shadow:
+      0 0 6px #16a34a,
+      0 0 12px rgba(22, 163, 74, 0.5),
+      inset 0 -2px 4px rgba(0,0,0,0.2);
+  }
+  50% {
+    box-shadow:
+      0 0 8px #16a34a,
+      0 0 18px rgba(22, 163, 74, 0.7),
+      inset 0 -2px 4px rgba(0,0,0,0.2);
+  }
+}
+
+/* State label next to LED */
+.status-light .state-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+  min-width: 60px;
+  text-align: right;
+}
+
+/* LED Legend */
+.light-legend {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  color: var(--text-dim);
+}
+.led-mini {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.led-mini.red { background: #dc2626; box-shadow: 0 0 3px #dc2626; }
+.led-mini.yellow { background: #f59e0b; box-shadow: 0 0 3px #f59e0b; }
+.led-mini.green { background: #16a34a; box-shadow: 0 0 3px #16a34a; }
+
+/* Keep old strat-state classes for backwards compatibility */
 .strat-state {
   font-size: 10px;
   font-weight: bold;
@@ -1012,6 +1136,250 @@ header::after {
   .trade-details-grid { grid-template-columns: 1fr 1fr; }
   .pulse-bar-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* Settings panel */
+.settings-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 380px;
+  height: 100vh;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  box-shadow: -4px 0 20px rgba(0,0,0,0.3);
+  z-index: 1000;
+  overflow-y: auto;
+  transform: translateX(100%);
+  transition: transform 0.3s ease;
+}
+.settings-panel.open {
+  transform: translateX(0);
+}
+.settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 10;
+}
+.settings-header h3 {
+  margin: 0;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text);
+}
+.close-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 24px;
+  cursor: pointer;
+  line-height: 1;
+}
+.close-btn:hover { color: var(--text); }
+
+.settings-content {
+  padding: 16px 20px;
+}
+.settings-section {
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-section:last-child {
+  border-bottom: none;
+}
+.section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--cyan);
+  margin-bottom: 12px;
+  font-weight: bold;
+}
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+}
+.setting-row label {
+  font-size: 13px;
+  color: var(--text);
+}
+.setting-row select,
+.setting-row input[type="number"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+.setting-row select { width: 180px; }
+.setting-row input[type="number"] { width: 60px; text-align: center; }
+
+.setting-description {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 8px 12px;
+  background: rgba(0,0,0,0.2);
+  border-radius: 4px;
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
+/* Toggle switch */
+.switch {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  display: inline-block;
+}
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .slider-toggle {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--border);
+  border-radius: 24px;
+  transition: 0.3s;
+}
+.switch .slider-toggle:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: 0.3s;
+}
+.switch input:checked + .slider-toggle {
+  background: var(--green);
+}
+.switch input:checked + .slider-toggle:before {
+  transform: translateX(20px);
+}
+
+/* Slider with value */
+.slider-with-value {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.slider-with-value input[type="range"] {
+  width: 120px;
+  accent-color: var(--cyan);
+}
+.slider-with-value span {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--cyan);
+  min-width: 35px;
+}
+
+/* Settings buttons */
+.settings-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+.btn-primary, .btn-secondary {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-family: var(--font-ui);
+}
+.btn-primary {
+  background: var(--cyan);
+  color: #000;
+}
+.btn-primary:hover { background: #22d3ee; }
+.btn-secondary {
+  background: var(--border);
+  color: var(--text);
+}
+.btn-secondary:hover { background: #374151; }
+
+/* Header settings button */
+.header-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+.header-btn:hover {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+.header-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Toast notifications */
+.toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--green);
+  padding: 12px 20px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--text);
+  opacity: 0;
+  transform: translateY(20px);
+  transition: all 0.3s ease;
+  z-index: 1001;
+}
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+.toast.error {
+  border-left-color: var(--red);
+}
+
+/* Settings panel overlay */
+.settings-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.5);
+  z-index: 999;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.3s ease;
+}
+.settings-overlay.visible {
+  opacity: 1;
+  visibility: visible;
+}
 </style>
 </head>
 <body>
@@ -1026,11 +1394,165 @@ header::after {
     <span class="mode-badge" id="mode-badge">--</span>
   </div>
   <div class="header-right">
+    <button class="header-btn" id="settings-toggle" onclick="toggleSettings()" title="Settings" aria-label="Open settings panel">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+    </button>
     <button id="mute-btn" onclick="toggleMute()" title="Toggle sounds" aria-label="Toggle sound notifications">&#x1F50A;</button>
     <span>Next refresh: <span id="refresh-countdown">30</span>s</span>
     <span id="clock">--:--:--</span>
   </div>
 </header>
+
+<!-- Settings Overlay -->
+<div class="settings-overlay" id="settings-overlay" onclick="toggleSettings()"></div>
+
+<!-- Settings Panel -->
+<div class="settings-panel" id="settings-panel">
+  <div class="settings-header">
+    <h3>Trading Settings</h3>
+    <button class="close-btn" onclick="toggleSettings()" aria-label="Close settings">&times;</button>
+  </div>
+
+  <div class="settings-content">
+    <!-- Strategy Toggles -->
+    <div class="settings-section">
+      <div class="section-title">Strategies</div>
+      <div class="setting-row">
+        <label>Daily Income</label>
+        <label class="switch">
+          <input type="checkbox" id="set-daily-income" onchange="updateSetting('daily_income.enabled', this.checked)">
+          <span class="slider-toggle"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <label>Tag 'n Turn</label>
+        <label class="switch">
+          <input type="checkbox" id="set-tnt" onchange="updateSetting('tag_n_turn.enabled', this.checked)">
+          <span class="slider-toggle"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <label>B&B</label>
+        <label class="switch">
+          <input type="checkbox" id="set-bnb" onchange="updateSetting('bnb.enabled', this.checked)">
+          <span class="slider-toggle"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <label>ORB</label>
+        <label class="switch">
+          <input type="checkbox" id="set-orb" onchange="updateSetting('orb.enabled', this.checked)">
+          <span class="slider-toggle"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- 1pm Management -->
+    <div class="settings-section">
+      <div class="section-title">1pm Management</div>
+      <div class="setting-row">
+        <label>Enable 1pm Check</label>
+        <label class="switch">
+          <input type="checkbox" id="set-1pm-enabled" onchange="updateSetting('monitoring.enable_1pm_check', this.checked)">
+          <span class="slider-toggle"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <label>Auto-Close</label>
+        <label class="switch">
+          <input type="checkbox" id="set-1pm-auto" onchange="updateSetting('monitoring.auto_1pm_close', this.checked)">
+          <span class="slider-toggle"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <label>Trending Threshold</label>
+        <div class="slider-with-value">
+          <input type="range" id="set-trending-threshold" min="10" max="25" step="1" value="15"
+                 oninput="document.getElementById('trending-threshold-val').textContent = '$' + this.value"
+                 onchange="updateSetting('monitoring.trending_threshold', parseFloat(this.value))">
+          <span id="trending-threshold-val">$15</span>
+        </div>
+      </div>
+      <div class="setting-description">
+        1pm check evaluates positions based on market conditions.
+        Trending day (&gt;threshold): hold to expiry.
+        Non-trending: close based on P&L.
+      </div>
+    </div>
+
+    <!-- Position Sizing -->
+    <div class="settings-section">
+      <div class="section-title">Position Sizing</div>
+      <div class="setting-row">
+        <label>Daily Contracts</label>
+        <input type="number" id="set-daily-contracts" min="1" max="10" value="5"
+               onchange="updateSetting('strategy.contracts_per_trade', parseInt(this.value))">
+      </div>
+      <div class="setting-row">
+        <label>Swing Contracts</label>
+        <input type="number" id="set-tnt-contracts" min="1" max="10" value="2"
+               onchange="updateSetting('tag_n_turn.contracts_per_trade', parseInt(this.value))">
+      </div>
+    </div>
+
+    <!-- Risk Controls -->
+    <div class="settings-section">
+      <div class="section-title">Risk Controls</div>
+      <div class="setting-row">
+        <label>Max Daily Loss</label>
+        <div class="slider-with-value">
+          <input type="range" id="set-max-loss" min="1" max="5" step="0.5" value="2"
+                 oninput="document.getElementById('max-loss-val').textContent = this.value + '%'"
+                 onchange="updateSetting('portfolio.max_daily_loss_pct', parseFloat(this.value))">
+          <span id="max-loss-val">2%</span>
+        </div>
+      </div>
+      <div class="setting-row">
+        <label>Max Positions</label>
+        <div class="slider-with-value">
+          <input type="range" id="set-max-pos" min="1" max="5" step="1" value="3"
+                 oninput="document.getElementById('max-pos-val').textContent = this.value"
+                 onchange="updateSetting('portfolio.max_total_positions', parseInt(this.value))">
+          <span id="max-pos-val">3</span>
+        </div>
+      </div>
+      <div class="setting-row">
+        <label>Profit Target</label>
+        <div class="slider-with-value">
+          <input type="range" id="set-profit-target" min="50" max="95" step="5" value="80"
+                 oninput="document.getElementById('profit-target-val').textContent = this.value + '%'"
+                 onchange="updateSetting('strategy.profit_target_pct', parseFloat(this.value))">
+          <span id="profit-target-val">80%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- B&B Options -->
+    <div class="settings-section">
+      <div class="section-title">B&B Options</div>
+      <div class="setting-row">
+        <label>Aggressive Roll</label>
+        <label class="switch">
+          <input type="checkbox" id="set-bnb-roll"
+                 onchange="updateSetting('bnb.aggressive_roll', this.checked)">
+          <span class="slider-toggle"></span>
+        </label>
+      </div>
+      <div class="setting-description">
+        If first bar confirms B&B direction, roll into daily income trade instead of exiting at 10:00
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="settings-actions">
+      <button class="btn-secondary" onclick="resetToDefaults()">Reset Defaults</button>
+      <button class="btn-primary" onclick="saveSettings()">Save & Apply</button>
+    </div>
+  </div>
+</div>
 
 <div class="main-content">
 
@@ -1113,26 +1635,43 @@ header::after {
           <div class="spx-change" id="spx-change">--</div>
         </div>
         <div class="params-grid" id="params-grid"></div>
-        <!-- Strategy Statuses -->
+        <!-- Strategy Statuses with LED Lights -->
         <div style="margin-top:12px; padding-top:8px; border-top:1px solid var(--border);">
           <div style="font-size:11px; font-weight:bold; color:var(--text-dim); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">Strategies</div>
           <div class="strategy-status-grid">
             <div class="strat-row">
               <span class="strat-name">Daily Income</span>
-              <span class="strat-state idle" id="strat-daily-income">Idle</span>
+              <div class="status-light" id="light-daily-income" data-state="idle">
+                <span class="state-label" id="label-daily-income">Idle</span>
+                <span class="led"></span>
+              </div>
             </div>
             <div class="strat-row">
               <span class="strat-name">Tag 'n Turn</span>
-              <span class="strat-state idle" id="strat-tnt">IDLE</span>
+              <div class="status-light" id="light-tnt" data-state="idle">
+                <span class="state-label" id="label-tnt">Idle</span>
+                <span class="led"></span>
+              </div>
             </div>
             <div class="strat-row">
               <span class="strat-name">B&B</span>
-              <span class="strat-state idle" id="strat-bnb">--</span>
+              <div class="status-light" id="light-bnb" data-state="idle">
+                <span class="state-label" id="label-bnb">Idle</span>
+                <span class="led"></span>
+              </div>
             </div>
             <div class="strat-row">
               <span class="strat-name">ORB</span>
-              <span class="strat-state idle" id="strat-orb">--</span>
+              <div class="status-light" id="light-orb" data-state="idle">
+                <span class="state-label" id="label-orb">Idle</span>
+                <span class="led"></span>
+              </div>
             </div>
+          </div>
+          <div class="light-legend">
+            <span class="legend-item"><span class="led-mini red"></span> Idle</span>
+            <span class="legend-item"><span class="led-mini yellow"></span> Watching</span>
+            <span class="legend-item"><span class="led-mini green"></span> Active</span>
           </div>
           <div id="tnt-details" style="font-size:10px; color:var(--text-dim); margin-top:6px;"></div>
         </div>
@@ -1440,95 +1979,102 @@ function isPreORB() {
   return time >= 570 && time < 600;
 }
 
+function setLightState(lightEl, labelEl, state, labelText) {
+  if (lightEl) {
+    lightEl.setAttribute('data-state', state);
+  }
+  if (labelEl) {
+    labelEl.textContent = labelText;
+  }
+}
+
 function updateStrategyStatuses(data) {
   // Daily Income status
-  const dailyEl = document.getElementById('strat-daily-income');
-  if (dailyEl) {
-    if (data.portfolio && data.portfolio.trades_today && data.portfolio.trades_today.daily_income > 0) {
-      dailyEl.textContent = 'Done (' + data.portfolio.trades_today.daily_income + ')';
-      dailyEl.className = 'strat-state active';
+  const dailyLight = document.getElementById('light-daily-income');
+  const dailyLabel = document.getElementById('label-daily-income');
+  if (dailyLight) {
+    // Check if there's an open position for daily income
+    const hasPosition = data.account?.positions?.some(p => p.strategy_type === 'daily_income' || !p.strategy_type);
+    if (hasPosition) {
+      setLightState(dailyLight, dailyLabel, 'active', 'Position');
+    } else if (data.portfolio && data.portfolio.trades_today && data.portfolio.trades_today.daily_income > 0) {
+      setLightState(dailyLight, dailyLabel, 'active', 'Done');
     } else if (data.pending_setup) {
-      dailyEl.textContent = 'Pending';
-      dailyEl.className = 'strat-state pending';
+      setLightState(dailyLight, dailyLabel, 'pending', 'Pending');
     } else if (data.market && data.market.is_open && isInMorningWindow()) {
-      dailyEl.textContent = 'Watching';
-      dailyEl.className = 'strat-state watching';
+      setLightState(dailyLight, dailyLabel, 'watching', 'Watching');
     } else if (data.market && data.market.is_open) {
-      dailyEl.textContent = 'Window Closed';
-      dailyEl.className = 'strat-state idle';
+      setLightState(dailyLight, dailyLabel, 'idle', 'Window Closed');
     } else {
-      dailyEl.textContent = 'Idle';
-      dailyEl.className = 'strat-state idle';
+      setLightState(dailyLight, dailyLabel, 'idle', 'Idle');
     }
   }
 
   // Tag 'n Turn status
-  const tntEl = document.getElementById('strat-tnt');
-  if (tntEl && data.tag_n_turn) {
-    const tnt = data.tag_n_turn;
-    if (!tnt.enabled) {
-      tntEl.textContent = 'Disabled';
-      tntEl.className = 'strat-state disabled';
+  const tntLight = document.getElementById('light-tnt');
+  const tntLabel = document.getElementById('label-tnt');
+  if (tntLight) {
+    if (data.tag_n_turn) {
+      const tnt = data.tag_n_turn;
+      if (!tnt.enabled) {
+        setLightState(tntLight, tntLabel, 'disabled', 'Off');
+      } else if (tnt.active_position) {
+        setLightState(tntLight, tntLabel, 'active', 'Position');
+      } else if (tnt.state === 'AWAITING_BREAKOUT') {
+        setLightState(tntLight, tntLabel, 'pending', 'Breakout');
+      } else if (tnt.state === 'TAG_DETECTED' || tnt.state === 'PULSE_CONFIRMED') {
+        setLightState(tntLight, tntLabel, 'watching', 'Watching');
+      } else {
+        setLightState(tntLight, tntLabel, 'idle', 'Idle');
+      }
     } else {
-      let state = tnt.state || 'IDLE';
-      tntEl.textContent = state.replace('_', ' ');
-      tntEl.className = 'strat-state ' + (
-        tnt.active_position ? 'position' :
-        state === 'AWAITING_BREAKOUT' ? 'pending' :
-        state === 'TAG_DETECTED' || state === 'PULSE_CONFIRMED' ? 'watching' :
-        'idle'
-      );
+      setLightState(tntLight, tntLabel, 'disabled', 'Off');
     }
   }
 
   // B&B status
-  const bnbEl = document.getElementById('strat-bnb');
-  if (bnbEl) {
+  const bnbLight = document.getElementById('light-bnb');
+  const bnbLabel = document.getElementById('label-bnb');
+  if (bnbLight) {
     if (data.bnb && data.bnb.enabled !== false) {
       const bnb = data.bnb;
-      if (bnb.active_signal) {
-        bnbEl.textContent = 'Signal ' + (bnb.active_signal.direction || '').toUpperCase();
-        bnbEl.className = 'strat-state signal';
+      const hasPosition = data.account?.positions?.some(p => p.strategy_type === 'bnb');
+      if (hasPosition) {
+        setLightState(bnbLight, bnbLabel, 'active', 'Position');
+      } else if (bnb.active_signal) {
+        setLightState(bnbLight, bnbLabel, 'signal', 'Signal');
       } else if (bnb.pending_signal) {
-        bnbEl.textContent = 'Pending';
-        bnbEl.className = 'strat-state pending';
+        setLightState(bnbLight, bnbLabel, 'pending', 'Pending');
       } else if (bnb.in_window) {
-        bnbEl.textContent = 'Scanning';
-        bnbEl.className = 'strat-state watching';
+        setLightState(bnbLight, bnbLabel, 'watching', 'Scanning');
       } else {
-        bnbEl.textContent = 'Idle';
-        bnbEl.className = 'strat-state idle';
+        setLightState(bnbLight, bnbLabel, 'idle', 'Idle');
       }
     } else {
-      bnbEl.textContent = 'Disabled';
-      bnbEl.className = 'strat-state disabled';
+      setLightState(bnbLight, bnbLabel, 'disabled', 'Off');
     }
   }
 
   // ORB status
-  const orbEl = document.getElementById('strat-orb');
-  if (orbEl) {
+  const orbLight = document.getElementById('light-orb');
+  const orbLabel = document.getElementById('label-orb');
+  if (orbLight) {
     if (data.orb && data.orb.enabled !== false) {
       const orb = data.orb;
-      if (orb.position_open) {
-        orbEl.textContent = 'Position';
-        orbEl.className = 'strat-state position';
+      const hasPosition = data.account?.positions?.some(p => p.strategy_type === 'orb');
+      if (hasPosition || orb.position_open) {
+        setLightState(orbLight, orbLabel, 'active', 'Position');
       } else if (orb.triggered_today) {
-        orbEl.textContent = 'Triggered';
-        orbEl.className = 'strat-state active';
+        setLightState(orbLight, orbLabel, 'active', 'Triggered');
       } else if (orb.opening_range) {
-        orbEl.textContent = 'Range Set';
-        orbEl.className = 'strat-state watching';
+        setLightState(orbLight, orbLabel, 'pending', 'Range Set');
       } else if (data.market && data.market.is_open && isPreORB()) {
-        orbEl.textContent = 'Building';
-        orbEl.className = 'strat-state watching';
+        setLightState(orbLight, orbLabel, 'watching', 'Building');
       } else {
-        orbEl.textContent = 'Idle';
-        orbEl.className = 'strat-state idle';
+        setLightState(orbLight, orbLabel, 'idle', 'Idle');
       }
     } else {
-      orbEl.textContent = 'Disabled';
-      orbEl.className = 'strat-state disabled';
+      setLightState(orbLight, orbLabel, 'disabled', 'Off');
     }
   }
 }
@@ -2682,6 +3228,146 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Initial load
 refreshAll().then(() => { initialLoad = false; });
+
+// ---------------------------------------------------------------
+// Settings Panel
+// ---------------------------------------------------------------
+let currentSettings = {};
+let pendingChanges = {};
+
+function toggleSettings() {
+  const panel = document.getElementById('settings-panel');
+  const overlay = document.getElementById('settings-overlay');
+  const isOpen = panel.classList.contains('open');
+
+  if (isOpen) {
+    panel.classList.remove('open');
+    overlay.classList.remove('visible');
+  } else {
+    panel.classList.add('open');
+    overlay.classList.add('visible');
+    loadCurrentSettings();
+  }
+}
+
+async function loadCurrentSettings() {
+  const data = await fetchJSON('/api/settings');
+  if (!data) return;
+
+  currentSettings = data;
+
+  // Strategy toggles
+  const dailyEnabled = data.daily_income?.enabled ?? data.strategy?.enabled ?? true;
+  document.getElementById('set-daily-income').checked = dailyEnabled;
+  document.getElementById('set-tnt').checked = data.tag_n_turn?.enabled ?? false;
+  document.getElementById('set-bnb').checked = data.bnb?.enabled ?? false;
+  document.getElementById('set-orb').checked = data.orb?.enabled ?? false;
+
+  // 1pm Management
+  const monitoring = data.monitoring || {};
+  document.getElementById('set-1pm-enabled').checked = monitoring.enable_1pm_check ?? true;
+  document.getElementById('set-1pm-auto').checked = monitoring.auto_1pm_close ?? true;
+  const trendingThreshold = monitoring.trending_threshold ?? 15;
+  document.getElementById('set-trending-threshold').value = trendingThreshold;
+  document.getElementById('trending-threshold-val').textContent = '$' + trendingThreshold;
+
+  // Position sizing
+  document.getElementById('set-daily-contracts').value = data.strategy?.contracts_per_trade ?? 5;
+  document.getElementById('set-tnt-contracts').value = data.tag_n_turn?.contracts_per_trade ?? 2;
+
+  // Risk controls
+  const maxLoss = data.portfolio?.max_daily_loss_pct ?? 2;
+  document.getElementById('set-max-loss').value = maxLoss;
+  document.getElementById('max-loss-val').textContent = maxLoss + '%';
+
+  const maxPos = data.portfolio?.max_total_positions ?? 3;
+  document.getElementById('set-max-pos').value = maxPos;
+  document.getElementById('max-pos-val').textContent = maxPos;
+
+  const profitTarget = data.strategy?.profit_target_pct ?? 80;
+  document.getElementById('set-profit-target').value = profitTarget;
+  document.getElementById('profit-target-val').textContent = profitTarget + '%';
+
+  // B&B options
+  document.getElementById('set-bnb-roll').checked = data.bnb?.aggressive_roll ?? true;
+
+  pendingChanges = {};
+}
+
+function updateSetting(path, value) {
+  pendingChanges[path] = value;
+  console.log('Pending change:', path, '=', value);
+}
+
+async function saveSettings() {
+  if (Object.keys(pendingChanges).length === 0) {
+    showToast('No changes to save', 'info');
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pendingChanges)
+    });
+
+    const result = await response.json();
+    if (response.ok && result.success) {
+      showToast('Settings saved successfully');
+      pendingChanges = {};
+      loadCurrentSettings();
+    } else {
+      showToast('Error: ' + (result.error || 'Unknown error'), 'error');
+    }
+  } catch (err) {
+    showToast('Failed to save settings: ' + err.message, 'error');
+  }
+}
+
+async function resetToDefaults() {
+  if (!confirm('Reset all settings to defaults? This will clear any runtime overrides.')) return;
+
+  try {
+    const response = await fetch('/api/settings/reset', { method: 'POST' });
+    const result = await response.json();
+    if (result.success) {
+      showToast('Settings reset to defaults');
+      pendingChanges = {};
+      loadCurrentSettings();
+    } else {
+      showToast('Error resetting: ' + (result.error || 'Unknown'), 'error');
+    }
+  } catch (err) {
+    showToast('Failed to reset: ' + err.message, 'error');
+  }
+}
+
+function showToast(message, type = 'success') {
+  const existing = document.querySelector('.toast');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.className = 'toast ' + type;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+
+  setTimeout(() => toast.classList.add('show'), 10);
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+
+// Close settings panel with Escape key
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    const panel = document.getElementById('settings-panel');
+    if (panel && panel.classList.contains('open')) {
+      toggleSettings();
+    }
+  }
+});
 </script>
 </body>
 </html>

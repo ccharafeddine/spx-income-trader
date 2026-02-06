@@ -22,6 +22,9 @@ portfolio:
 # ============================================
 # DAILY INCOME STRATEGY (Core)
 # ============================================
+daily_income:
+  enabled: true  # Master toggle for daily income strategy
+
 strategy:
   # Pulse bar detection threshold (% of bar range)
   pulse_threshold: 10.0
@@ -81,18 +84,19 @@ execution:
 monitoring:
   # Position check interval (seconds)
   check_interval: 60
-  
-  # Enable 1pm trend check
-  enable_1pm_check: true
-  
-  # Minimum move for trending day ($)
-  trending_threshold: 15.0
 
-  # 1pm management mode (Production Line Trading p.19-20):
-  #   AGGRESSIVE    - Always run to expiration (ignores 1pm check)
-  #   MODERATE      - Close early on non-trending + unfavorable only
-  #   CONSERVATIVE  - Close early on any non-trending day
-  management_mode: "MODERATE"
+  # Enable 1pm trend check (Production Line Trading p.19-20)
+  # At 1pm ET, evaluates positions based on market conditions:
+  #   - Trending day (>threshold move): Hold to expiration
+  #   - Non-trending + favorable: Close at 40%+ profit
+  #   - Non-trending + unfavorable: Close if losing >10%
+  enable_1pm_check: true
+
+  # Auto-close based on rules, or just log recommendation
+  auto_1pm_close: true
+
+  # Dollar move threshold to classify as "trending" day
+  trending_threshold: 15.0
 
 filters:
   # Bollinger Band directional bias filter (Tag 'n Turn, p.30-33)

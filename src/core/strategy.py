@@ -51,17 +51,17 @@ class SPXIncomeStrategy:
             "ITM": (2.80, 3.00)
         }
 
-        # 1pm in-trade management settings
+        # 1pm in-trade management settings (fully automated based on market conditions)
         monitoring = STRATEGY_PARAMS.get('monitoring', {})
         self.enable_1pm_check = monitoring.get('enable_1pm_check', True)
+        self.auto_1pm_close = monitoring.get('auto_1pm_close', True)
         self.trending_threshold = monitoring.get('trending_threshold', 15.0)
-        self.management_mode = monitoring.get('management_mode', 'MODERATE').upper()
 
         logger.info(f"SPXIncomeStrategy initialized: "
                    f"pulse={pulse_threshold}%, spread=${spread_width}, "
                    f"target={profit_target_pct}%, min_credit=${self.min_credit:.2f}")
         logger.info(f"1pm management: enabled={self.enable_1pm_check}, "
-                   f"mode={self.management_mode}, "
+                   f"auto_close={self.auto_1pm_close}, "
                    f"trending_threshold=${self.trending_threshold}")
     
     def evaluate_setup(
@@ -268,13 +268,18 @@ class SPXIncomeStrategy:
         """
         1pm ET in-trade management check per Production Line Trading strategy (p.19-20).
 
-        At 1pm, evaluates whether day is trending (|move| > threshold) or not,
-        and whether the move is favorable to our position direction.
+        Fully automated based on market conditions (not trader preference).
 
-        Decision matrix by management_mode:
-        - Trending (any): always run to expiration (all modes)
-        - Non-trending favorable: CONSERVATIVE closes, others hold
-        - Non-trending unfavorable: MODERATE and CONSERVATIVE close, AGGRESSIVE holds
+        At 1pm, evaluates:
+        1. Is the day trending? (|move| >= threshold, typically $15)
+        2. Is the move favorable to our position direction?
+        3. What is our current P&L position?
+
+        Decision rules:
+        - RULE 1: Trending day (any direction) -> HOLD to expiration
+        - RULE 2: Non-trending + favorable + profitable (>40%) -> Close for gain
+        - RULE 3: Non-trending + unfavorable + losing (>10% loss) -> Close to limit loss
+        - Otherwise: HOLD
 
         Returns (should_close, reason, assessment_dict)
         """
@@ -305,6 +310,13 @@ class SPXIncomeStrategy:
 
         is_trending = abs_move >= self.trending_threshold
 
+        # Calculate current P&L percentage
+        credit = trade.spread.credit_received or 0
+        qty = trade.quantity or 1
+        max_profit = credit * 100 * qty
+        current_pnl = getattr(trade, 'unrealized_pnl', None) or 0
+        pnl_pct = (current_pnl / max_profit * 100) if max_profit > 0 else 0
+
         assessment = {
             'entry_price': round(entry_price, 2),
             'current_price': round(current_price, 2),
@@ -313,52 +325,74 @@ class SPXIncomeStrategy:
             'is_trending': is_trending,
             'is_favorable': favorable,
             'direction': direction.value,
-            'management_mode': self.management_mode,
+            'pnl_pct': round(pnl_pct, 1),
+            'auto_1pm_close': self.auto_1pm_close,
             'trending_threshold': self.trending_threshold,
         }
 
         should_close = False
         reason = ""
 
+        # RULE 1: Trending day - always hold to expiration
         if is_trending:
+            trend_dir = "UP" if move > 0 else "DOWN"
             fav_str = 'FAVORABLE' if favorable else 'UNFAVORABLE'
             reason = (
-                f"1PM CHECK: TRENDING {fav_str} "
-                f"(SPX moved ${move:+.2f}, >{self.trending_threshold} threshold). "
-                f"Action: RUN TO EXPIRATION"
+                f"1PM CHECK: TRENDING {trend_dir} {fav_str} "
+                f"(SPX moved ${move:+.2f}, >${self.trending_threshold} threshold). "
+                f"Action: HOLD TO EXPIRATION"
             )
         else:
+            # Non-trending day - evaluate based on P&L
             if favorable:
-                if self.management_mode == 'CONSERVATIVE':
-                    should_close = True
-                    reason = (
-                        f"1PM CHECK: NON-TRENDING FAVORABLE "
-                        f"(SPX moved ${move:+.2f}). "
-                        f"Mode: CONSERVATIVE — closing early for partial gain"
-                    )
+                # Non-trending but position is profitable
+                if pnl_pct >= 40:
+                    # Sitting at 40%+ profit with no momentum - close for gain
+                    if self.auto_1pm_close:
+                        should_close = True
+                        reason = (
+                            f"1PM CHECK: NON-TRENDING FAVORABLE "
+                            f"(SPX moved ${move:+.2f}, P&L {pnl_pct:.1f}%). "
+                            f"Action: CLOSE for {pnl_pct:.1f}% profit (no momentum to reach target)"
+                        )
+                    else:
+                        reason = (
+                            f"1PM CHECK: NON-TRENDING FAVORABLE "
+                            f"(SPX moved ${move:+.2f}, P&L {pnl_pct:.1f}%). "
+                            f"Recommendation: Close for partial gain (auto_close=off)"
+                        )
                 else:
                     reason = (
                         f"1PM CHECK: NON-TRENDING FAVORABLE "
-                        f"(SPX moved ${move:+.2f}). "
-                        f"Mode: {self.management_mode} — holding"
+                        f"(SPX moved ${move:+.2f}, P&L {pnl_pct:.1f}%). "
+                        f"Action: HOLD - profit not yet at 40% threshold"
                     )
             else:
-                if self.management_mode in ('MODERATE', 'CONSERVATIVE'):
-                    should_close = True
-                    reason = (
-                        f"1PM CHECK: NON-TRENDING UNFAVORABLE "
-                        f"(SPX moved ${move:+.2f}). "
-                        f"Mode: {self.management_mode} — closing early (+10bp edge)"
-                    )
+                # Non-trending and unfavorable - position moving against us
+                if pnl_pct < -10:
+                    # Losing more than 10% - close to limit loss
+                    if self.auto_1pm_close:
+                        should_close = True
+                        reason = (
+                            f"1PM CHECK: NON-TRENDING UNFAVORABLE "
+                            f"(SPX moved ${move:+.2f}, P&L {pnl_pct:.1f}%). "
+                            f"Action: CLOSE to limit loss"
+                        )
+                    else:
+                        reason = (
+                            f"1PM CHECK: NON-TRENDING UNFAVORABLE "
+                            f"(SPX moved ${move:+.2f}, P&L {pnl_pct:.1f}%). "
+                            f"Recommendation: Close to limit loss (auto_close=off)"
+                        )
                 else:
                     reason = (
                         f"1PM CHECK: NON-TRENDING UNFAVORABLE "
-                        f"(SPX moved ${move:+.2f}). "
-                        f"Mode: AGGRESSIVE — holding"
+                        f"(SPX moved ${move:+.2f}, P&L {pnl_pct:.1f}%). "
+                        f"Action: HOLD - loss still manageable"
                     )
 
         logger.info(reason)
-        assessment['decision'] = 'CLOSE_EARLY' if should_close else 'RUN_TO_EXPIRATION'
+        assessment['decision'] = 'CLOSE_EARLY' if should_close else 'HOLD'
         assessment['reason'] = reason
 
         return should_close, reason, assessment

@@ -11,6 +11,7 @@ import re
 import json
 import sqlite3
 import ctypes
+import yaml
 from pathlib import Path
 from datetime import datetime, date, timedelta
 from flask import Flask, render_template, jsonify, request
@@ -18,6 +19,11 @@ from flask import Flask, render_template, jsonify, request
 # Project root setup
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+# Settings files
+SETTINGS_FILE = PROJECT_ROOT / 'config' / 'strategy_params.yaml'
+RUNTIME_SETTINGS_FILE = PROJECT_ROOT / 'database' / 'runtime_settings.json'
+SETTINGS_CHANGED_FILE = PROJECT_ROOT / 'database' / '.settings_changed'
 
 from config.settings import (
     BASE_DIR, DATABASE_PATH, LOG_FILE,
@@ -1588,6 +1594,112 @@ def api_events():
     except Exception:
         pass
     return jsonify({'events': events})
+
+
+# ---------------------------------------------------------------------------
+# Settings API
+# ---------------------------------------------------------------------------
+
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Deep merge overlay into base dict."""
+    result = base.copy()
+    for key, value in overlay.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _load_settings() -> dict:
+    """Load settings from YAML, overlaid with runtime overrides."""
+    # Load base settings from YAML
+    settings = {}
+    if SETTINGS_FILE.exists():
+        with open(SETTINGS_FILE, 'r') as f:
+            settings = yaml.safe_load(f) or {}
+
+    # Apply runtime overrides if they exist
+    if RUNTIME_SETTINGS_FILE.exists():
+        try:
+            overrides = json.loads(RUNTIME_SETTINGS_FILE.read_text())
+            settings = _deep_merge(settings, overrides)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return settings
+
+
+def _save_runtime_settings(changes: dict) -> bool:
+    """Save runtime setting changes (doesn't modify YAML)."""
+    # Load existing overrides
+    overrides = {}
+    if RUNTIME_SETTINGS_FILE.exists():
+        try:
+            overrides = json.loads(RUNTIME_SETTINGS_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Apply new changes using dot notation paths
+    for path, value in changes.items():
+        keys = path.split('.')
+        current = overrides
+        for key in keys[:-1]:
+            current = current.setdefault(key, {})
+        current[keys[-1]] = value
+
+    # Ensure directory exists
+    RUNTIME_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    # Save
+    RUNTIME_SETTINGS_FILE.write_text(json.dumps(overrides, indent=2))
+
+    # Notify bot to reload settings
+    _notify_bot_settings_changed()
+
+    return True
+
+
+def _notify_bot_settings_changed():
+    """Touch a file that the bot watches for settings reload."""
+    try:
+        SETTINGS_CHANGED_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS_CHANGED_FILE.touch()
+    except OSError:
+        pass
+
+
+@app.route('/api/settings', methods=['GET'])
+def api_get_settings():
+    """Get current settings (YAML + runtime overrides)."""
+    settings = _load_settings()
+    return jsonify(settings)
+
+
+@app.route('/api/settings', methods=['POST'])
+def api_update_settings():
+    """Update settings at runtime."""
+    changes = request.json
+    if not changes:
+        return jsonify({'success': False, 'error': 'No changes provided'})
+
+    try:
+        _save_runtime_settings(changes)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/settings/reset', methods=['POST'])
+def api_reset_settings():
+    """Reset to YAML defaults by clearing runtime overrides."""
+    try:
+        if RUNTIME_SETTINGS_FILE.exists():
+            RUNTIME_SETTINGS_FILE.unlink()
+        _notify_bot_settings_changed()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 
 # ---------------------------------------------------------------------------

@@ -191,7 +191,7 @@ class PositionManager:
                             f"1PM DETAILS: Entry=${a['entry_price']}, "
                             f"Now=${a['current_price']}, Move=${a['move']:+.2f}, "
                             f"Trending={a['is_trending']}, Favorable={a['is_favorable']}, "
-                            f"Mode={a['management_mode']}, Decision={a['decision']}"
+                            f"P&L={a.get('pnl_pct', 0):.1f}%, Decision={a['decision']}"
                         )
                         try:
                             self.db.log_event("1pm_management", reason, a)
