@@ -113,3 +113,35 @@ tag_n_turn:
   # DTE range for swing trades
   min_dte: 3
   max_dte: 7
+
+# B&B (Bed & Breakfast) Strategy - Production Line Trading p.23-25
+# Includes Just Breakfast (p.26)
+# Detects end-of-day pulse setups for next-day morning entry
+bnb:
+  enabled: false  # Enable when ready to test
+
+  # Pulse bar detection threshold
+  pulse_threshold: 10.0
+
+  # Position sizing
+  contracts_per_trade: 3
+
+  # Just Breakfast settings
+  # If first bar of next day confirms signal direction, roll into daily setup
+  aggressive_roll: true
+
+# ORB (Opening Range Breakout) Strategy - Production Line Trading p.22
+# Uses first 30-min bar range with relaxed thresholds
+# Good for set-and-forget trading
+orb:
+  enabled: false  # Enable when ready to test
+
+  # Threshold range (more flexible than strict 10%)
+  min_threshold: 10.0  # Strong signal threshold
+  max_threshold: 40.0  # Relaxed signal threshold
+
+  # Position sizing
+  contracts_per_trade: 3
+
+  # ORB trades don't count against daily income limit
+  separate_daily_limit: true

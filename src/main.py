@@ -35,6 +35,8 @@ from src.core.position_manager import PositionManager
 from src.core.bar_builder import BarBuilder
 from src.core.bollinger_filter import BollingerFilter
 from src.core.tag_n_turn import TagNTurnStrategy
+from src.core.bnb_strategy import BnBStrategy
+from src.core.orb_strategy import ORBStrategy
 from src.data.market_data import MarketDataFeed
 from database.db_manager import DatabaseManager
 from src.utils.notifications import NotificationManager
@@ -114,6 +116,26 @@ class TradingBot:
         else:
             self.tag_n_turn = None
             logger.info("Tag 'n Turn swing strategy: disabled")
+
+        # B&B (Bed & Breakfast) strategy - overnight signals
+        bnb_cfg = STRATEGY_PARAMS.get('bnb', {})
+        self.bnb_enabled = bnb_cfg.get('enabled', False)
+        if self.bnb_enabled:
+            self.bnb_strategy = BnBStrategy(bnb_cfg)
+            logger.info("B&B strategy: ENABLED")
+        else:
+            self.bnb_strategy = None
+            logger.info("B&B strategy: disabled")
+
+        # ORB (Opening Range Breakout) strategy
+        orb_cfg = STRATEGY_PARAMS.get('orb', {})
+        self.orb_enabled = orb_cfg.get('enabled', False)
+        if self.orb_enabled:
+            self.orb_strategy = ORBStrategy(orb_cfg)
+            logger.info("ORB strategy: ENABLED")
+        else:
+            self.orb_strategy = None
+            logger.info("ORB strategy: disabled")
 
         logger.info("TradingBot initialized")
     
@@ -207,6 +229,12 @@ class TradingBot:
                     self.daily_pnl = 0.0
                     self.pending_setup = None
                     self.bollinger.day_open = None  # Reset for new day, will set at market open
+
+                    # Reset parallel strategies for new day
+                    if self.orb_enabled and self.orb_strategy:
+                        self.orb_strategy.reset_daily()
+                    if self.bnb_enabled and self.bnb_strategy:
+                        self.bnb_strategy.on_day_start()  # Activate overnight signal
 
                 # Heartbeat logging every 5 minutes
                 if (current_time - last_heartbeat).total_seconds() >= 300:
@@ -465,6 +493,26 @@ class TradingBot:
                         "exit_price": current_price,
                     })
 
+            # --- Check ORB breakout signals ---
+            if self.orb_enabled and self.orb_strategy:
+                orb_signal = self.orb_strategy.check_breakout(current_price)
+                if orb_signal:
+                    logger.info(
+                        f"ORB SIGNAL: {orb_signal['direction'].upper()} "
+                        f"entry @ ${current_price:,.2f} ({orb_signal['trigger']})"
+                    )
+                    self.db.log_event("orb_signal", "ORB breakout signal", orb_signal)
+
+            # --- Check B&B entry signals (morning entry from overnight signal) ---
+            if self.bnb_enabled and self.bnb_strategy:
+                bnb_signal = self.bnb_strategy.check_entry_signal(current_price, current_time)
+                if bnb_signal:
+                    logger.info(
+                        f"B&B ENTRY SIGNAL: {bnb_signal['direction'].upper()} "
+                        f"@ ${current_price:,.2f} (from {bnb_signal['signal_date']})"
+                    )
+                    self.db.log_event("bnb_signal", "B&B entry signal", bnb_signal)
+
             # --- If bar just completed, check for new pulse bar setup ---
             if bar:
                 logger.info(f"New 30-min bar completed: {bar}")
@@ -475,6 +523,18 @@ class TradingBot:
                 # Feed bar to Tag 'n Turn strategy (if enabled)
                 if self.tag_n_turn_enabled and self.tag_n_turn:
                     self.tag_n_turn.on_bar_complete(bar)
+
+                # ORB: Set opening range on first bar (10:00 completion)
+                if self.orb_enabled and self.orb_strategy:
+                    if bar.timestamp.time() == time(10, 0):
+                        self.orb_strategy.set_opening_range(bar)
+
+                # B&B: Process bar for end-of-day signals (15:00-16:00)
+                if self.bnb_enabled and self.bnb_strategy:
+                    bnb_action = self.bnb_strategy.on_bar_complete(bar, current_price)
+                    if bnb_action:
+                        logger.info(f"B&B ACTION: {bnb_action}")
+                        self.db.log_event("bnb_action", "B&B strategy action", bnb_action)
 
                 # Check if we already have an open position
                 if self.position_manager.has_open_position():

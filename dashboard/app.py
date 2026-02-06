@@ -595,6 +595,44 @@ def api_status():
         except Exception:
             pass
 
+    # B&B status (read from persistence file if enabled)
+    bnb_cfg = STRATEGY_PARAMS.get('bnb', {})
+    bnb_status = {'enabled': bnb_cfg.get('enabled', False)}
+    if bnb_cfg.get('enabled', False):
+        try:
+            bnb_path = BASE_DIR / 'database' / 'bnb_signals.json'
+            if bnb_path.exists():
+                import json
+                with open(bnb_path, 'r') as f:
+                    bnb_data = json.load(f)
+                bnb_status = {
+                    'enabled': True,
+                    'pending_signal': bnb_data.get('pending_signal'),
+                    'active_signal': bnb_data.get('active_signal'),
+                    'position_open': bnb_data.get('position_open', False),
+                }
+        except Exception:
+            pass
+
+    # ORB status (read from persistence file if enabled)
+    orb_cfg = STRATEGY_PARAMS.get('orb', {})
+    orb_status = {'enabled': orb_cfg.get('enabled', False)}
+    if orb_cfg.get('enabled', False):
+        try:
+            orb_path = BASE_DIR / 'database' / 'orb_state.json'
+            if orb_path.exists():
+                import json
+                with open(orb_path, 'r') as f:
+                    orb_data = json.load(f)
+                orb_status = {
+                    'enabled': True,
+                    'opening_range': orb_data.get('opening_range'),
+                    'triggered_today': orb_data.get('triggered_today', False),
+                    'position_open': orb_data.get('position_open', False),
+                }
+        except Exception:
+            pass
+
     return jsonify({
         'bot': bot,
         'mode': mode,
@@ -609,6 +647,8 @@ def api_status():
         'account': account,
         'today_summary': today_summary,
         'tag_n_turn': tag_n_turn_status,
+        'bnb': bnb_status,
+        'orb': orb_status,
     })
 
 
