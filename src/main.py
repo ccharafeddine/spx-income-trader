@@ -69,9 +69,11 @@ class TradingBot:
         self.bar_builder = BarBuilder(interval_minutes=30)
         filters_cfg = STRATEGY_PARAMS.get('filters', {})
         self.bollinger_enabled = filters_cfg.get('bollinger_enabled', True)
+        self.extreme_move_override_pct = filters_cfg.get('extreme_move_override_pct', 1.5)
         self.bollinger = BollingerFilter(
             period=filters_cfg.get('bollinger_period', 50),
             num_std=filters_cfg.get('bollinger_std', 2.0),
+            extreme_move_pct=self.extreme_move_override_pct,
         )
         self.market_data = MarketDataFeed(broker)
         
@@ -181,6 +183,7 @@ class TradingBot:
                     self.trades_today = 0
                     self.daily_pnl = 0.0
                     self.pending_setup = None
+                    self.bollinger.day_open = None  # Reset for new day, will set at market open
 
                 # Heartbeat logging every 5 minutes
                 if (current_time - last_heartbeat).total_seconds() >= 300:
@@ -357,6 +360,10 @@ class TradingBot:
 
             logger.debug(f"SPX price: ${current_price:,.2f}")
 
+            # Set day open price for extreme move override (first price of the day)
+            if self.bollinger.day_open is None and current_price > 0:
+                self.bollinger.set_day_open(current_price)
+
             # Update bar builder
             current_time = datetime.now(self.tz)
             bar = self.bar_builder.add_price(current_time, current_price)
@@ -424,7 +431,7 @@ class TradingBot:
                 if direction:
                     # Check Bollinger alignment before storing setup
                     if self.bollinger_enabled:
-                        bb_aligned, bb_reason = self.bollinger.check_alignment(direction)
+                        bb_aligned, bb_reason = self.bollinger.check_alignment(direction, current_price)
                         logger.info(f"Bollinger check: {bb_reason}")
 
                         if not bb_aligned:

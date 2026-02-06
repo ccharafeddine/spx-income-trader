@@ -75,3 +75,9 @@ filters:
   bollinger_enabled: true
   bollinger_period: 50
   bollinger_std: 2.0
+
+  # Extreme move override: when intraday move exceeds this %, allow setups
+  # in the direction of that move regardless of BB bias.
+  # E.g., if SPX is down >1.5% from open, allow bearish setups even if BB bias is bullish.
+  # Set to 0 to disable this override.
+  extreme_move_override_pct: 1.5

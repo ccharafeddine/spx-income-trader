@@ -30,15 +30,17 @@ class BollingerFilter:
     Bias persists until the opposite band is tagged.
     """
 
-    def __init__(self, period: int = 50, num_std: float = 2.0):
+    def __init__(self, period: int = 50, num_std: float = 2.0, extreme_move_pct: float = 1.5):
         self.period = period
         self.num_std = num_std
+        self.extreme_move_pct = extreme_move_pct
         self.closes: list[float] = []
         self.current_bias: Optional[str] = None  # None, 'bullish', 'bearish'
         self.last_tag_info: Optional[dict] = None
         self.bands: Optional[dict] = None
+        self.day_open: Optional[float] = None  # Set by main.py at market open
 
-        logger.info(f"BollingerFilter initialized: period={period}, std={num_std}")
+        logger.info(f"BollingerFilter initialized: period={period}, std={num_std}, extreme_move_override={extreme_move_pct}%")
 
     def add_bar(self, bar) -> None:
         """
@@ -129,12 +131,42 @@ class BollingerFilter:
             'lower': lower,
         }
 
-    def check_alignment(self, direction: TradeDirection) -> Tuple[bool, str]:
+    def check_alignment(self, direction: TradeDirection, current_price: Optional[float] = None) -> Tuple[bool, str]:
         """
         Check if a trade direction aligns with the current Bollinger bias.
 
+        Args:
+            direction: The trade direction to check (BULLISH/BEARISH)
+            current_price: Current SPX price for extreme move override check
+
         Returns (allowed, reason).
         """
+        # Check for extreme move override first
+        if self.extreme_move_pct > 0 and self.day_open and current_price:
+            intraday_move_pct = (current_price - self.day_open) / self.day_open * 100
+
+            # Big down day: allow bearish setups
+            if intraday_move_pct <= -self.extreme_move_pct and direction.value == 'bearish':
+                logger.info(
+                    f"BB FILTER OVERRIDDEN: {intraday_move_pct:.2f}% intraday move "
+                    f"(threshold: -{self.extreme_move_pct}%) allows BEARISH setup"
+                )
+                return True, (
+                    f"Extreme move override: {intraday_move_pct:.2f}% down day "
+                    f"allows bearish setup (BB bias: {self.current_bias or 'none'})"
+                )
+
+            # Big up day: allow bullish setups
+            if intraday_move_pct >= self.extreme_move_pct and direction.value == 'bullish':
+                logger.info(
+                    f"BB FILTER OVERRIDDEN: +{intraday_move_pct:.2f}% intraday move "
+                    f"(threshold: +{self.extreme_move_pct}%) allows BULLISH setup"
+                )
+                return True, (
+                    f"Extreme move override: +{intraday_move_pct:.2f}% up day "
+                    f"allows bullish setup (BB bias: {self.current_bias or 'none'})"
+                )
+
         if self.current_bias is None:
             return True, "No Bollinger bias established — trade allowed"
 
@@ -234,6 +266,11 @@ class BollingerFilter:
         """Whether we have enough bars to calculate bands."""
         return len(self.closes) >= self.period
 
+    def set_day_open(self, price: float) -> None:
+        """Set the day's opening price for extreme move override calculation."""
+        self.day_open = price
+        logger.info(f"Day open price set: ${price:,.2f}")
+
     def get_status(self) -> dict:
         """Return current filter status for dashboard/logging."""
         bands_rounded = None
@@ -250,4 +287,6 @@ class BollingerFilter:
             'current_bias': self.current_bias,
             'bands': bands_rounded,
             'last_tag_info': self.last_tag_info,
+            'day_open': round(self.day_open, 2) if self.day_open else None,
+            'extreme_move_pct': self.extreme_move_pct,
         }
