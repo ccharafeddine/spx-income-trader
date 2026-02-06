@@ -277,3 +277,52 @@ class DatabaseManager:
             columns = [desc[0] for desc in cursor.description]
             
             return dict(zip(columns, row)) if row else {}
+
+    def get_strategy_stats(self, strategy_type: str, days: int = 90) -> Dict:
+        """
+        Get performance statistics for a specific strategy.
+        Used for Kelly position sizing calculations.
+
+        Args:
+            strategy_type: Strategy identifier (e.g., 'daily_income', 'tag_n_turn')
+            days: Number of days to look back (default 90)
+
+        Returns:
+            Dict with win_rate, avg_win, avg_loss, total_trades
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
+                    AVG(CASE WHEN pnl > 0 THEN pnl END) as avg_win,
+                    AVG(CASE WHEN pnl < 0 THEN pnl END) as avg_loss
+                FROM trades
+                WHERE status = 'closed'
+                AND strategy_type = ?
+                AND entry_time >= datetime('now', '-' || ? || ' days')
+            """, (strategy_type, days))
+
+            row = cursor.fetchone()
+            if not row or row[0] == 0:
+                return {
+                    'total_trades': 0,
+                    'win_rate': 0.5,
+                    'avg_win': 0.0,
+                    'avg_loss': 0.0,
+                }
+
+            total_trades = row[0] or 0
+            winning_trades = row[1] or 0
+            avg_win = row[2] or 0.0
+            avg_loss = row[3] or 0.0
+
+            win_rate = winning_trades / total_trades if total_trades > 0 else 0.5
+
+            return {
+                'total_trades': total_trades,
+                'win_rate': win_rate,
+                'avg_win': avg_win,
+                'avg_loss': avg_loss,
+            }

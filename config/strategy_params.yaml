@@ -12,6 +12,16 @@ portfolio:
   # At $100k: 2% = $2000 max loss
   # Scales automatically with account growth
 
+  # Dynamic Position Sizing
+  position_sizing:
+    method: "percent_risk"     # "percent_risk", "fixed_contracts", or "kelly"
+    risk_per_trade_pct: 2.0    # Risk 2% of account per trade
+    min_contracts: 1           # Never less than 1 contract
+    max_contracts: 20          # Cap regardless of account size
+    # percent_risk: Sizes position to risk X% of account
+    # fixed_contracts: Uses contracts_per_trade from strategy config
+    # kelly: Optimal sizing based on historical win rate (needs 10+ trades)
+
   # Strategy priority (highest priority enters first if slots limited)
   priority:
     - bnb            # Honor overnight signals first

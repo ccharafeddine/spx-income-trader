@@ -140,6 +140,7 @@ class TradingBot:
 
         # Portfolio Manager (coordinates all strategies)
         portfolio_cfg = STRATEGY_PARAMS.get('portfolio', {})
+        sizing_cfg = portfolio_cfg.get('position_sizing', {})
         self.portfolio = PortfolioManager(
             account_size=portfolio_cfg.get('account_size', 50000.0),
             max_total_positions=portfolio_cfg.get('max_total_positions', 3),
@@ -147,6 +148,11 @@ class TradingBot:
             max_daily_risk_pct=portfolio_cfg.get('max_daily_risk_pct', 5.0),
             max_daily_loss_pct=portfolio_cfg.get('max_daily_loss_pct', 2.0),
             strategy_priority=portfolio_cfg.get('priority'),
+            # Position sizing parameters
+            sizing_method=sizing_cfg.get('method', 'percent_risk'),
+            risk_per_trade_pct=sizing_cfg.get('risk_per_trade_pct', 2.0),
+            min_contracts=sizing_cfg.get('min_contracts', 1),
+            max_contracts=sizing_cfg.get('max_contracts', 20),
         )
 
         logger.info("TradingBot initialized")
@@ -640,8 +646,15 @@ class TradingBot:
                 logger.info("Trade cancelled by user")
                 return
 
-            # Place order
-            quantity = STRATEGY_PARAMS['strategy']['contracts_per_trade']
+            # Calculate position size dynamically based on account and risk
+            # max_risk per contract = spread width (max loss if spread goes to max loss)
+            max_risk_per_contract = spread.max_risk
+            fixed_fallback = STRATEGY_PARAMS['strategy'].get('contracts_per_trade', 5)
+            quantity = self.portfolio.calculate_position_size(
+                strategy=StrategyType.DAILY_INCOME,
+                max_risk_per_contract=max_risk_per_contract,
+                fixed_contracts=fixed_fallback,
+            )
             trade = self.position_manager.enter_trade(
                 spread,
                 setup_bar,
