@@ -1,6 +1,6 @@
 # SPX Income Trading System
 
-Automated 0-DTE and swing SPX options trading system implementing four parallel strategies coordinated by a portfolio risk manager: Daily Income (core 0DTE), Tag 'n Turn (swing), B&B (overnight signals), and ORB (Opening Range Breakout).
+Automated 0-DTE and swing SPX options trading system implementing four parallel strategies coordinated by a portfolio risk manager: Daily Income (Core 0-DTE), Tag 'n Turn (Swing), B&B (Overnight Signals), and ORB (Opening Range Breakout).
 
 ## Strategy Overview
 
