@@ -1,16 +1,37 @@
+# ============================================
+# PORTFOLIO-WIDE SETTINGS
+# Coordinates all parallel strategies
+# ============================================
+portfolio:
+  account_size: 50000.0        # Starting account size for risk calculations
+  max_total_positions: 3       # Max concurrent positions (all strategies)
+  max_0dte_positions: 2        # Max same-day expiration positions
+  max_daily_risk_pct: 5.0      # Max % of account at risk per day
+  max_daily_loss: 1000.0       # Circuit breaker: stop trading if daily loss exceeds this
+
+  # Strategy priority (highest priority enters first if slots limited)
+  priority:
+    - bnb            # Honor overnight signals first
+    - daily_income   # Core strategy
+    - orb            # Secondary 0DTE
+    - tag_n_turn     # Swing, can wait
+
+# ============================================
+# DAILY INCOME STRATEGY (Core)
+# ============================================
 strategy:
   # Pulse bar detection threshold (% of bar range)
   pulse_threshold: 10.0
-  
+
   # Credit spread width in dollars
   spread_width: 5.0
-  
+
   # Profit target as % of max profit
   profit_target_pct: 80.0
-  
+
   # Maximum number of trades per day
   max_daily_trades: 1
-  
+
   # Number of contracts per trade
   contracts_per_trade: 5
 
@@ -118,7 +139,7 @@ tag_n_turn:
 # Includes Just Breakfast (p.26)
 # Detects end-of-day pulse setups for next-day morning entry
 bnb:
-  enabled: false  # Enable when ready to test
+  enabled: true  # Enable when ready to test
 
   # Pulse bar detection threshold
   pulse_threshold: 10.0
@@ -134,7 +155,7 @@ bnb:
 # Uses first 30-min bar range with relaxed thresholds
 # Good for set-and-forget trading
 orb:
-  enabled: false  # Enable when ready to test
+  enabled: true  # Enable when ready to test
 
   # Threshold range (more flexible than strict 10%)
   min_threshold: 10.0  # Strong signal threshold

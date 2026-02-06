@@ -37,6 +37,7 @@ from src.core.bollinger_filter import BollingerFilter
 from src.core.tag_n_turn import TagNTurnStrategy
 from src.core.bnb_strategy import BnBStrategy
 from src.core.orb_strategy import ORBStrategy
+from src.core.portfolio_manager import PortfolioManager, StrategyType
 from src.data.market_data import MarketDataFeed
 from database.db_manager import DatabaseManager
 from src.utils.notifications import NotificationManager
@@ -137,6 +138,17 @@ class TradingBot:
             self.orb_strategy = None
             logger.info("ORB strategy: disabled")
 
+        # Portfolio Manager (coordinates all strategies)
+        portfolio_cfg = STRATEGY_PARAMS.get('portfolio', {})
+        self.portfolio = PortfolioManager(
+            account_size=portfolio_cfg.get('account_size', 50000.0),
+            max_total_positions=portfolio_cfg.get('max_total_positions', 3),
+            max_0dte_positions=portfolio_cfg.get('max_0dte_positions', 2),
+            max_daily_risk_pct=portfolio_cfg.get('max_daily_risk_pct', 5.0),
+            max_daily_loss=portfolio_cfg.get('max_daily_loss', 1000.0),
+            strategy_priority=portfolio_cfg.get('priority'),
+        )
+
         logger.info("TradingBot initialized")
     
     def start(self):
@@ -231,6 +243,7 @@ class TradingBot:
                     self.bollinger.day_open = None  # Reset for new day, will set at market open
 
                     # Reset parallel strategies for new day
+                    self.portfolio.reset_daily()
                     if self.orb_enabled and self.orb_strategy:
                         self.orb_strategy.reset_daily()
                     if self.bnb_enabled and self.bnb_strategy:

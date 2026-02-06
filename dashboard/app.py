@@ -633,6 +633,31 @@ def api_status():
         except Exception:
             pass
 
+    # Portfolio status (read from persistence file)
+    portfolio_status = None
+    try:
+        portfolio_path = BASE_DIR / 'database' / 'portfolio_state.json'
+        if portfolio_path.exists():
+            import json
+            with open(portfolio_path, 'r') as f:
+                port_data = json.load(f)
+            portfolio_cfg = STRATEGY_PARAMS.get('portfolio', {})
+            max_daily_risk = portfolio_cfg.get('account_size', 50000) * (portfolio_cfg.get('max_daily_risk_pct', 5.0) / 100)
+            portfolio_status = {
+                'active_positions': len(port_data.get('active_positions', {})),
+                'max_total_positions': portfolio_cfg.get('max_total_positions', 3),
+                '0dte_positions': sum(1 for p in port_data.get('active_positions', {}).values() if p.get('is_0dte', True)),
+                'max_0dte_positions': portfolio_cfg.get('max_0dte_positions', 2),
+                'daily_risk_used': port_data.get('daily_risk_used', 0),
+                'max_daily_risk': max_daily_risk,
+                'daily_pnl': port_data.get('daily_pnl', 0),
+                'max_daily_loss': portfolio_cfg.get('max_daily_loss', 1000),
+                'circuit_breaker': port_data.get('circuit_breaker_triggered', False),
+                'trades_today': port_data.get('trades_today', {}),
+            }
+    except Exception:
+        pass
+
     return jsonify({
         'bot': bot,
         'mode': mode,
@@ -649,6 +674,7 @@ def api_status():
         'tag_n_turn': tag_n_turn_status,
         'bnb': bnb_status,
         'orb': orb_status,
+        'portfolio': portfolio_status,
     })
 
 
