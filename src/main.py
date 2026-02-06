@@ -145,7 +145,7 @@ class TradingBot:
             max_total_positions=portfolio_cfg.get('max_total_positions', 3),
             max_0dte_positions=portfolio_cfg.get('max_0dte_positions', 2),
             max_daily_risk_pct=portfolio_cfg.get('max_daily_risk_pct', 5.0),
-            max_daily_loss=portfolio_cfg.get('max_daily_loss', 1000.0),
+            max_daily_loss_pct=portfolio_cfg.get('max_daily_loss_pct', 2.0),
             strategy_priority=portfolio_cfg.get('priority'),
         )
 

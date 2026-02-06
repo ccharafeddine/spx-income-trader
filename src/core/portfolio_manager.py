@@ -3,6 +3,23 @@ Portfolio Risk Manager
 
 Coordinates all parallel strategies to prevent over-allocation
 and manage total account risk across Daily Income, Tag 'n Turn, B&B, and ORB.
+
+NOTE ON CIRCUIT BREAKER DESIGN:
+
+The circuit breaker triggers on REALIZED losses only, not unrealized.
+
+For 0DTE credit spreads, intraday drawdown doesn't necessarily mean
+the trade will lose. Price can move against you mid-day but if it
+comes back by expiration, you still profit. Cutting positions based
+on unrealized P&L would lock in losses unnecessarily.
+
+The circuit breaker's purpose is to prevent compounding losses by
+stopping NEW entries after you've already realized losses today.
+This prevents "revenge trading" or doubling down after a bad trade.
+
+The percentage-based limit scales with account size:
+- $50k account at 2% = $1000 max daily loss
+- $100k account at 2% = $2000 max daily loss
 """
 
 import json
@@ -65,7 +82,7 @@ class PortfolioManager:
         max_total_positions: int = 3,
         max_0dte_positions: int = 2,
         max_daily_risk_pct: float = 5.0,
-        max_daily_loss: float = 1000.0,
+        max_daily_loss_pct: float = 2.0,
         strategy_priority: Optional[List[str]] = None,
         persistence_path: Optional[Path] = None,
     ):
@@ -73,7 +90,10 @@ class PortfolioManager:
         self.max_total_positions = max_total_positions
         self.max_0dte_positions = max_0dte_positions
         self.max_daily_risk_pct = max_daily_risk_pct
-        self.max_daily_loss = max_daily_loss
+        self.max_daily_loss_pct = max_daily_loss_pct
+
+        # Calculate actual dollar limit from percentage
+        self.max_daily_loss = self.account_size * (self.max_daily_loss_pct / 100)
 
         # Priority order (index 0 = highest priority)
         default_priority = [
@@ -87,9 +107,9 @@ class PortfolioManager:
         else:
             self.strategy_priority = default_priority
 
-        # State
+        # State - tracks REALIZED P&L only (not unrealized)
         self.active_positions: Dict[str, PositionSlot] = {}
-        self.daily_pnl: float = 0.0
+        self.daily_realized_pnl: float = 0.0
         self.daily_risk_used: float = 0.0
         self.trades_today: Dict[str, int] = {s.value: 0 for s in StrategyType}
         self.circuit_breaker_triggered: bool = False
@@ -108,7 +128,7 @@ class PortfolioManager:
             f"max_positions={max_total_positions}, "
             f"max_0dte={max_0dte_positions}, "
             f"max_risk={max_daily_risk_pct}%, "
-            f"max_loss=${max_daily_loss}"
+            f"max_loss={max_daily_loss_pct}% (${self.max_daily_loss:.0f})"
         )
 
     def _load_state(self):
@@ -142,7 +162,7 @@ class PortfolioManager:
         try:
             data = {
                 'active_positions': {k: v.to_dict() for k, v in self.active_positions.items()},
-                'daily_pnl': self.daily_pnl,
+                'daily_realized_pnl': self.daily_realized_pnl,
                 'daily_risk_used': self.daily_risk_used,
                 'trades_today': self.trades_today,
                 'circuit_breaker_triggered': self.circuit_breaker_triggered,
@@ -176,17 +196,17 @@ class PortfolioManager:
 
         # Circuit breaker check
         if self.circuit_breaker_triggered:
-            return False, "Circuit breaker active - max daily loss reached"
+            return False, "Circuit breaker active - max daily realized loss reached"
 
-        # Check daily loss limit
-        if self.daily_pnl <= -self.max_daily_loss:
+        # Check daily loss limit (REALIZED losses only)
+        if self.daily_realized_pnl <= -self.max_daily_loss:
             self.circuit_breaker_triggered = True
             logger.warning(
-                f"CIRCUIT BREAKER: Daily loss ${abs(self.daily_pnl):.2f} "
-                f"exceeds limit ${self.max_daily_loss}"
+                f"CIRCUIT BREAKER: Realized loss ${abs(self.daily_realized_pnl):.2f} "
+                f"exceeds {self.max_daily_loss_pct}% limit (${self.max_daily_loss:.0f})"
             )
             self._save_state()
-            return False, f"Daily loss limit (${self.max_daily_loss}) reached"
+            return False, f"Daily realized loss limit ({self.max_daily_loss_pct}%) reached"
 
         # Check total position count
         if len(self.active_positions) >= self.max_total_positions:
@@ -245,9 +265,12 @@ class PortfolioManager:
         self._save_state()
         return True
 
-    def close_position(self, position_id: str, pnl: float) -> bool:
+    def close_position(self, position_id: str, realized_pnl: float) -> bool:
         """
-        Close a position and update P&L tracking.
+        Close a position and update REALIZED P&L tracking.
+
+        The circuit breaker only triggers on realized losses, not unrealized.
+        This prevents cutting positions that might recover by EOD.
 
         Returns True if position was found and closed.
         """
@@ -256,28 +279,37 @@ class PortfolioManager:
             return False
 
         pos = self.active_positions.pop(position_id)
-        self.daily_pnl += pnl
+        self.daily_realized_pnl += realized_pnl
 
         logger.info(
             f"Portfolio: Closed {pos.strategy.value} position {position_id}, "
-            f"P&L=${pnl:.2f}, daily_pnl=${self.daily_pnl:.2f}"
+            f"Realized P&L=${realized_pnl:.2f}, "
+            f"Daily realized=${self.daily_realized_pnl:.2f}"
         )
 
-        # Check if loss triggers circuit breaker
-        if self.daily_pnl <= -self.max_daily_loss:
+        # Circuit breaker on REALIZED losses only
+        if self.daily_realized_pnl <= -self.max_daily_loss:
             self.circuit_breaker_triggered = True
-            logger.warning(f"CIRCUIT BREAKER TRIGGERED: Daily P&L ${self.daily_pnl:.2f}")
+            logger.warning(
+                f"CIRCUIT BREAKER TRIGGERED: "
+                f"Realized loss ${abs(self.daily_realized_pnl):.2f} "
+                f"exceeds {self.max_daily_loss_pct}% limit (${self.max_daily_loss:.0f})"
+            )
 
         self._save_state()
         return True
 
-    def update_daily_pnl(self, pnl_change: float):
-        """Update daily P&L from external source (position manager)"""
-        self.daily_pnl += pnl_change
+    def update_realized_pnl(self, pnl_change: float):
+        """Update realized P&L from external source (position manager)"""
+        self.daily_realized_pnl += pnl_change
 
-        if self.daily_pnl <= -self.max_daily_loss and not self.circuit_breaker_triggered:
+        if self.daily_realized_pnl <= -self.max_daily_loss and not self.circuit_breaker_triggered:
             self.circuit_breaker_triggered = True
-            logger.warning(f"CIRCUIT BREAKER TRIGGERED: Daily P&L ${self.daily_pnl:.2f}")
+            logger.warning(
+                f"CIRCUIT BREAKER TRIGGERED: "
+                f"Realized loss ${abs(self.daily_realized_pnl):.2f} "
+                f"exceeds {self.max_daily_loss_pct}% limit (${self.max_daily_loss:.0f})"
+            )
 
         self._save_state()
 
@@ -301,12 +333,12 @@ class PortfolioManager:
         """
         Reset daily counters at market open.
 
-        - Clears daily P&L and risk tracking
+        - Clears daily realized P&L and risk tracking
         - Removes expired 0DTE positions (they should already be closed)
         - Keeps swing positions (Tag 'n Turn)
         - Resets circuit breaker
         """
-        self.daily_pnl = 0.0
+        self.daily_realized_pnl = 0.0
         self.daily_risk_used = 0.0
         self.trades_today = {s.value: 0 for s in StrategyType}
         self.circuit_breaker_triggered = False
@@ -339,9 +371,19 @@ class PortfolioManager:
             'swing_positions': self.get_swing_count(),
             'daily_risk_used': round(self.daily_risk_used, 2),
             'max_daily_risk': round(max_daily_risk, 2),
-            'daily_pnl': round(self.daily_pnl, 2),
-            'max_daily_loss': self.max_daily_loss,
+            'daily_realized_pnl': round(self.daily_realized_pnl, 2),
+            'max_daily_loss_pct': self.max_daily_loss_pct,
+            'max_daily_loss_dollars': round(self.max_daily_loss, 2),
             'circuit_breaker': self.circuit_breaker_triggered,
             'trades_today': self.trades_today.copy(),
             'positions': {k: v.to_dict() for k, v in self.active_positions.items()},
         }
+
+    def update_account_size(self, new_size: float):
+        """Update account size and recalculate dollar limits"""
+        self.account_size = new_size
+        self.max_daily_loss = self.account_size * (self.max_daily_loss_pct / 100)
+        logger.info(
+            f"Account size updated to ${new_size:.2f}, "
+            f"max_daily_loss now ${self.max_daily_loss:.0f}"
+        )

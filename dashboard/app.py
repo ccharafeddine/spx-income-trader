@@ -642,7 +642,10 @@ def api_status():
             with open(portfolio_path, 'r') as f:
                 port_data = json.load(f)
             portfolio_cfg = STRATEGY_PARAMS.get('portfolio', {})
-            max_daily_risk = portfolio_cfg.get('account_size', 50000) * (portfolio_cfg.get('max_daily_risk_pct', 5.0) / 100)
+            account_size = portfolio_cfg.get('account_size', 50000)
+            max_daily_risk = account_size * (portfolio_cfg.get('max_daily_risk_pct', 5.0) / 100)
+            max_daily_loss_pct = portfolio_cfg.get('max_daily_loss_pct', 2.0)
+            max_daily_loss_dollars = account_size * (max_daily_loss_pct / 100)
             portfolio_status = {
                 'active_positions': len(port_data.get('active_positions', {})),
                 'max_total_positions': portfolio_cfg.get('max_total_positions', 3),
@@ -650,8 +653,9 @@ def api_status():
                 'max_0dte_positions': portfolio_cfg.get('max_0dte_positions', 2),
                 'daily_risk_used': port_data.get('daily_risk_used', 0),
                 'max_daily_risk': max_daily_risk,
-                'daily_pnl': port_data.get('daily_pnl', 0),
-                'max_daily_loss': portfolio_cfg.get('max_daily_loss', 1000),
+                'daily_realized_pnl': port_data.get('daily_realized_pnl', port_data.get('daily_pnl', 0)),
+                'max_daily_loss_pct': max_daily_loss_pct,
+                'max_daily_loss_dollars': max_daily_loss_dollars,
                 'circuit_breaker': port_data.get('circuit_breaker_triggered', False),
                 'trades_today': port_data.get('trades_today', {}),
             }
@@ -897,6 +901,7 @@ def api_journal():
     strat = STRATEGY_PARAMS.get('strategy', {})
     timing = STRATEGY_PARAMS.get('timing', {})
     risk = STRATEGY_PARAMS.get('risk', {})
+    portfolio = STRATEGY_PARAMS.get('portfolio', {})
 
     journal_entries = []
     total_duration_hours = 0
@@ -910,7 +915,7 @@ def api_journal():
         signal = _correlate_trade_with_signal(trade, all_signals)
 
         # Build entry reasons
-        entry_reasons = _reconstruct_entry_reasons(trade, signal, strat, timing, risk)
+        entry_reasons = _reconstruct_entry_reasons(trade, signal, strat, timing, risk, portfolio)
 
         # Exit analysis
         exit_analysis = _compute_exit_analysis(trade)
@@ -1025,6 +1030,11 @@ def api_journal():
         'most_common_exit_reason': most_common_exit,
     }
 
+    # Calculate portfolio loss limit from percentage
+    account_size = portfolio.get('account_size', 50000)
+    max_daily_loss_pct = portfolio.get('max_daily_loss_pct', 2.0)
+    max_daily_loss_dollars = account_size * (max_daily_loss_pct / 100)
+
     strategy_params = {
         'pulse_threshold': strat.get('pulse_threshold', 10),
         'spread_width': strat.get('spread_width', 5),
@@ -1034,7 +1044,8 @@ def api_journal():
         'min_credit': MIN_CREDIT_THRESHOLD,
         'morning_start': timing.get('morning_start', '09:30'),
         'morning_end': timing.get('morning_end', '11:30'),
-        'max_daily_loss': risk.get('max_daily_loss', 1000),
+        'max_daily_loss_pct': max_daily_loss_pct,
+        'max_daily_loss_dollars': max_daily_loss_dollars,
     }
 
     return jsonify({
@@ -1111,7 +1122,7 @@ def _correlate_trade_with_signal(trade, signals):
     return None
 
 
-def _reconstruct_entry_reasons(trade, signal, strat, timing, risk):
+def _reconstruct_entry_reasons(trade, signal, strat, timing, risk, portfolio):
     """Build a list of entry reason checkboxes for a trade."""
     reasons = []
 
@@ -1178,12 +1189,15 @@ def _reconstruct_entry_reasons(trade, signal, strat, timing, risk):
         'detail': f'Limit: {strat.get("max_daily_trades", 1)} per day',
     })
 
-    # 6. Daily loss limit
+    # 6. Daily loss limit (portfolio-level, percentage-based)
+    account_size = portfolio.get('account_size', 50000)
+    loss_pct = portfolio.get('max_daily_loss_pct', 2.0)
+    loss_dollars = account_size * (loss_pct / 100)
     reasons.append({
         'id': 'daily_loss_limit',
-        'label': f'Daily loss < ${risk.get("max_daily_loss", 1000):,} limit',
+        'label': f'Daily loss < {loss_pct}% (${loss_dollars:,.0f}) limit',
         'met': True,  # Trade exists, so loss limit wasn't breached
-        'detail': f'Max daily loss: ${risk.get("max_daily_loss", 1000):,}',
+        'detail': f'Circuit breaker: {loss_pct}% of ${account_size:,.0f} = ${loss_dollars:,.0f}',
     })
 
     # 7. No existing open position

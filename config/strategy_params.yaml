@@ -6,8 +6,11 @@ portfolio:
   account_size: 50000.0        # Starting account size for risk calculations
   max_total_positions: 3       # Max concurrent positions (all strategies)
   max_0dte_positions: 2        # Max same-day expiration positions
-  max_daily_risk_pct: 5.0      # Max % of account at risk per day
-  max_daily_loss: 1000.0       # Circuit breaker: stop trading if daily loss exceeds this
+  max_daily_risk_pct: 5.0      # Max % of account at risk at any time
+  max_daily_loss_pct: 2.0      # Circuit breaker at 2% REALIZED loss
+  # At $50k: 2% = $1000 max loss
+  # At $100k: 2% = $2000 max loss
+  # Scales automatically with account growth
 
   # Strategy priority (highest priority enters first if slots limited)
   priority:
