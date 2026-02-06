@@ -423,34 +423,137 @@ header::after {
   margin-left: 12px;
 }
 
-/* Chart ticker badge */
-.chart-panel { position: relative; }
-.chart-ticker-badge {
+/* Chart panel */
+.chart-panel { position: relative; min-height: 440px; box-shadow: inset 0 0 30px rgba(6, 182, 212, 0.03); overflow: visible; }
+.chart-container { position: relative; width: 100%; height: 400px; overflow: visible; }
+
+/* Chart watermark (SPX behind candlesticks) */
+.chart-watermark {
   position: absolute;
-  top: 40px;
-  left: 12px;
-  font-size: 11px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 120px;
   font-weight: bold;
-  color: var(--cyan);
-  background: rgba(6, 182, 212, 0.1);
-  padding: 2px 8px;
-  border-radius: 3px;
-  letter-spacing: 1px;
-  z-index: 10;
+  color: rgba(255, 255, 255, 0.03);
+  letter-spacing: 20px;
+  pointer-events: none;
+  z-index: 1;
+  user-select: none;
+}
+#candle-chart {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 400px;
 }
 
-/* Chart panel */
-.chart-panel { min-height: 440px; box-shadow: inset 0 0 30px rgba(6, 182, 212, 0.03); overflow: visible; }
-.chart-container { width: 100%; height: 400px; overflow: visible; }
-.today-stats {
+/* Chart footer with price and stats */
+.chart-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: linear-gradient(180deg, rgba(17,24,39,0.5) 0%, var(--panel) 100%);
+  border-top: 1px solid var(--border);
+  margin-top: -1px;
+}
+
+/* SPX Price Section (left) */
+.spx-price-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.spx-main-price {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.spx-ticker {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--cyan);
+  letter-spacing: 2px;
+}
+.footer-spx-price {
+  font-size: 28px;
+  font-weight: bold;
+  color: #fff;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: -1px;
+}
+.footer-spx-change {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+}
+.footer-spx-change.positive { color: var(--green); }
+.footer-spx-change.negative { color: var(--red); }
+.footer-spx-change .change-arrow { font-size: 10px; }
+.footer-spx-change .change-pct { opacity: 0.8; }
+
+/* Metrics Section (center) */
+.spx-metrics {
   display: flex;
   gap: 24px;
-  margin-top: 10px;
-  font-size: 12px;
 }
-.today-stat { display: flex; gap: 6px; }
-.today-stat .label { color: var(--text-dim); }
-.today-stat .value { color: #fff; font-weight: bold; }
+.metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.metric-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+.metric-value {
+  font-size: 13px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text);
+}
+
+/* Trading Stats Section (right) */
+.trading-stats {
+  display: flex;
+  gap: 20px;
+}
+.trading-stats .stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 50px;
+}
+.trading-stats .stat-value {
+  font-size: 16px;
+  font-weight: bold;
+  font-family: 'JetBrains Mono', monospace;
+  color: #fff;
+}
+.trading-stats .stat-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+.trading-stats .stat-value.pnl-pos { color: var(--green); }
+.trading-stats .stat-value.pnl-neg { color: var(--red); }
+
+/* Building indicator */
+.building-stat .stat-value {
+  animation: pulse-text 1.5s ease-in-out infinite;
+}
+@keyframes pulse-text {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
 
 /* Position tracker */
 .position-card {
@@ -1095,8 +1198,8 @@ header::after {
 
 /* Micro-animations */
 .panel, .account-bar, .tab-bar, .summary-panel, .journal-stats-bar, .journal-filters {
-  opacity: 0;
-  transform: translateY(8px);
+  opacity: 1;
+  transform: translateY(0);
 }
 .panel.loaded, .account-bar.loaded, .tab-bar.loaded, .summary-panel.loaded, .journal-stats-bar.loaded, .journal-filters.loaded {
   opacity: 1;
@@ -1560,7 +1663,7 @@ header::after {
   <div class="account-bar" id="account-bar">
     <div class="acct-item">
       <div class="val big" id="acct-equity">$50,000.00</div>
-      <div class="lbl">Total Equity<span class="instrument-badge">Trading: SPX 0DTE</span></div>
+      <div class="lbl">Total Equity</div>
     </div>
     <div class="acct-divider"></div>
     <div class="acct-item">
@@ -1627,14 +1730,10 @@ header::after {
           <span class="status-label">Heartbeat</span>
           <span class="status-value" id="heartbeat">--</span>
         </div>
-        <div id="spx-block">
-          <div class="spx-price-container">
-            <span class="spx-label">SPX</span>
-            <span class="spx-price" id="spx-price">--</span>
-          </div>
-          <div class="spx-change" id="spx-change">--</div>
+        <div style="margin-top:10px; padding-top:8px; border-top:1px solid var(--border);">
+          <div style="font-size:11px; font-weight:bold; color:var(--text-dim); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">Parameters</div>
+          <div class="params-grid" id="params-grid"></div>
         </div>
-        <div class="params-grid" id="params-grid"></div>
         <!-- Strategy Statuses with LED Lights -->
         <div style="margin-top:12px; padding-top:8px; border-top:1px solid var(--border);">
           <div style="font-size:11px; font-weight:bold; color:var(--text-dim); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">Strategies</div>
@@ -1694,14 +1793,62 @@ header::after {
 
     <!-- RIGHT COLUMN: Chart -->
     <div class="panel chart-panel">
-      <div class="panel-title">SPX · Today's Activity</div>
-      <div class="chart-ticker-badge">SPX 0DTE</div>
-      <div class="chart-container" id="candle-chart"></div>
-      <div class="today-stats">
-        <div class="today-stat"><span class="label">Signals:</span><span class="value" id="today-signals">0</span></div>
-        <div class="today-stat"><span class="label">Trades:</span><span class="value" id="today-trades">0</span></div>
-        <div class="today-stat"><span class="label">P&L:</span><span class="value" id="today-pnl">$0</span></div>
-        <div class="today-stat"><span class="label">Building:</span><span class="value" id="building-bar">--</span></div>
+      <div class="panel-title">Today's Activity</div>
+      <div class="chart-container">
+        <div class="chart-watermark">SPX</div>
+        <div id="candle-chart"></div>
+      </div>
+      <div class="chart-footer">
+        <!-- Left: SPX Price Display -->
+        <div class="spx-price-section">
+          <div class="spx-main-price">
+            <span class="spx-ticker">SPX</span>
+            <span class="footer-spx-price" id="footer-spx-price">--</span>
+          </div>
+          <div class="footer-spx-change" id="footer-spx-change">
+            <span class="change-arrow">--</span>
+            <span class="change-value">--</span>
+            <span class="change-pct"></span>
+          </div>
+        </div>
+        <!-- Center: Key Metrics -->
+        <div class="spx-metrics">
+          <div class="metric">
+            <span class="metric-label">Open</span>
+            <span class="metric-value" id="footer-open">--</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">High</span>
+            <span class="metric-value" id="footer-high">--</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Low</span>
+            <span class="metric-value" id="footer-low">--</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Prev Close</span>
+            <span class="metric-value" id="footer-prev-close">--</span>
+          </div>
+        </div>
+        <!-- Right: Trading Stats -->
+        <div class="trading-stats">
+          <div class="stat">
+            <span class="stat-value" id="footer-signals">0</span>
+            <span class="stat-label">Signals</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value" id="footer-trades">0</span>
+            <span class="stat-label">Trades</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value" id="footer-pnl">$0.00</span>
+            <span class="stat-label">P&L</span>
+          </div>
+          <div class="stat building-stat" id="footer-building" style="display:none;">
+            <span class="stat-value">--</span>
+            <span class="stat-label">Building</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -2136,28 +2283,30 @@ async function updateStatus() {
     hb.textContent = 'No heartbeat';
   }
 
-  // SPX
-  const price = document.getElementById('spx-price');
-  const change = document.getElementById('spx-change');
+  // SPX Price (now in chart footer)
+  const footerPrice = document.getElementById('footer-spx-price');
+  const footerChange = document.getElementById('footer-spx-change');
   if (d.spx.price) {
     const newPrice = Number(d.spx.price);
-    price.textContent = newPrice.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    footerPrice.textContent = newPrice.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
     // Flash on price change
     if (prevSpxPrice !== null && newPrice !== prevSpxPrice) {
-      price.classList.remove('spx-flash-up', 'spx-flash-down');
-      void price.offsetWidth; // force reflow
-      price.classList.add(newPrice > prevSpxPrice ? 'spx-flash-up' : 'spx-flash-down');
+      footerPrice.classList.remove('spx-flash-up', 'spx-flash-down');
+      void footerPrice.offsetWidth; // force reflow
+      footerPrice.classList.add(newPrice > prevSpxPrice ? 'spx-flash-up' : 'spx-flash-down');
     }
     prevSpxPrice = newPrice;
     const ch = d.spx.change || 0;
     const cp = d.spx.change_pct || 0;
-    const arrow = ch >= 0 ? '\u25B2 ' : '\u25BC ';
+    const arrow = ch >= 0 ? '\u25B2' : '\u25BC';
     const sign = ch >= 0 ? '+' : '';
-    change.textContent = arrow + sign + ch.toFixed(2) + ' (' + sign + cp.toFixed(2) + '%)';
-    change.className = 'spx-change ' + (ch >= 0 ? 'color-pos' : 'color-neg');
+    footerChange.innerHTML = '<span class="change-arrow">' + arrow + '</span>' +
+      '<span class="change-value">' + sign + ch.toFixed(2) + '</span>' +
+      '<span class="change-pct">(' + sign + cp.toFixed(2) + '%)</span>';
+    footerChange.className = 'footer-spx-change ' + (ch >= 0 ? 'positive' : 'negative');
   } else {
-    price.textContent = '--';
-    change.textContent = '--';
+    footerPrice.textContent = '--';
+    footerChange.innerHTML = '<span class="change-arrow">--</span><span class="change-value">--</span><span class="change-pct"></span>';
   }
 
   // Params
@@ -2314,23 +2463,38 @@ async function updateToday() {
   if (!d) return;
   latestTodayData = d;
 
-  // Stats
-  document.getElementById('today-signals').textContent = (d.signals || []).length;
-  document.getElementById('today-trades').textContent = (d.trades || []).length;
-  const pnlEl = document.getElementById('today-pnl');
+  // Stats (in chart footer)
+  document.getElementById('footer-signals').textContent = (d.signals || []).length;
+  document.getElementById('footer-trades').textContent = (d.trades || []).length;
+  const pnlEl = document.getElementById('footer-pnl');
   pnlEl.textContent = fmt$(d.today_pnl);
-  pnlEl.className = 'value ' + pnlClass(d.today_pnl);
+  pnlEl.className = 'stat-value ' + (d.today_pnl >= 0 ? 'pnl-pos' : 'pnl-neg');
 
   // Building bar
-  const bb = document.getElementById('building-bar');
+  const buildingEl = document.getElementById('footer-building');
   if (d.building_bar) {
-    bb.innerHTML = '<span class="building-dot"></span>' + d.building_bar.time + ' (' + d.building_bar.ticks + ' ticks) C=' + fmt$(d.building_bar.close);
+    buildingEl.style.display = 'flex';
+    buildingEl.querySelector('.stat-value').textContent = d.building_bar.ticks + ' ticks';
   } else {
-    bb.textContent = '--';
+    buildingEl.style.display = 'none';
   }
 
   // Sound: bar complete & pulse detected
   const bars = (d.chart_bars && d.chart_bars.length) ? d.chart_bars : d.log_bars;
+
+  // OHLC metrics (if available from bars)
+  if (bars && bars.length > 0) {
+    const dayOpen = bars[0].open;
+    const dayHigh = Math.max(...bars.map(b => b.high));
+    const dayLow = Math.min(...bars.map(b => b.low));
+    document.getElementById('footer-open').textContent = dayOpen?.toFixed(2) || '--';
+    document.getElementById('footer-high').textContent = dayHigh?.toFixed(2) || '--';
+    document.getElementById('footer-low').textContent = dayLow?.toFixed(2) || '--';
+  }
+  // Prev close from API if available
+  if (d.prev_close) {
+    document.getElementById('footer-prev-close').textContent = d.prev_close?.toFixed(2) || '--';
+  }
   const barCount = bars ? bars.length : 0;
   const pulseCount = (d.pulse_times || []).length;
   if (!initialLoad) {

@@ -717,9 +717,10 @@ def api_today():
         and _is_during_market_hours(s.get('timestamp', ''))
     ]
 
-    # Get trade classification
+    # Get trade classification and SPX data
     spx = yahoo.get_spx_quote() or {}
     spx_price = spx.get('price')
+    prev_close = spx.get('previous_close')
     today_trades = []
     today_pnl = 0.0
     open_positions = []
@@ -761,6 +762,7 @@ def api_today():
         'today_pnl': today_pnl,
         'building_bar': log_data['building_bar'],
         'open_positions': open_positions,
+        'prev_close': prev_close,
     })
 
 
