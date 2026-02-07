@@ -467,6 +467,69 @@ header {
     </form>
   </div>
 
+  <!-- E*TRADE Connection -->
+  <div class="panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">E*TRADE Connection</div>
+        <div class="panel-subtitle">OAuth session for live API access (tokens expire after 2 hours)</div>
+      </div>
+      <span class="status-badge" id="etrade-conn-badge">Checking...</span>
+    </div>
+
+    <!-- Warning banner for token issues -->
+    <div id="etrade-warning-banner" class="message error" style="display:none;"></div>
+
+    <!-- Status display -->
+    <div class="pdt-indicator" id="etrade-conn-indicator">
+      <span class="dot" id="etrade-conn-dot"></span>
+      <span id="etrade-conn-text">Checking connection...</span>
+    </div>
+
+    <div class="pdt-grid" style="grid-template-columns: repeat(3, 1fr);">
+      <div class="pdt-stat">
+        <div class="value" id="etrade-token-age">-</div>
+        <div class="label">Token Age</div>
+      </div>
+      <div class="pdt-stat">
+        <div class="value" id="etrade-expires-in">-</div>
+        <div class="label">Expires In</div>
+      </div>
+      <div class="pdt-stat">
+        <div class="value" id="etrade-auto-renew">-</div>
+        <div class="label">Auto-Renew</div>
+      </div>
+    </div>
+
+    <!-- Connect flow -->
+    <div id="etrade-connect-section">
+      <div class="btn-group" id="etrade-connect-buttons">
+        <button type="button" class="btn btn-primary" id="etrade-connect-btn">Connect to E*TRADE</button>
+        <button type="button" class="btn btn-danger" id="etrade-disconnect-btn" style="display:none;">Disconnect</button>
+      </div>
+
+      <!-- Verifier code input (shown after popup opens) -->
+      <div id="etrade-verifier-section" style="display:none; margin-top:16px;">
+        <div style="padding:16px; background:var(--bg); border:1px solid var(--border); border-radius:6px;">
+          <div style="font-size:13px; color:var(--text); margin-bottom:12px;">
+            <strong>Step 1:</strong> A browser window has opened to E*TRADE. Log in and authorize the application.<br>
+            <strong>Step 2:</strong> E*TRADE will show a verification code. Paste it below.
+          </div>
+          <div style="display:flex; gap:12px; align-items:flex-end;">
+            <div style="flex:1;">
+              <label class="form-label" for="etrade-verifier">Verification Code</label>
+              <input type="text" class="form-input" id="etrade-verifier"
+                     placeholder="Paste the code from E*TRADE" autocomplete="off">
+            </div>
+            <button type="button" class="btn btn-primary" id="etrade-submit-verifier">Submit</button>
+            <button type="button" class="btn btn-secondary" id="etrade-cancel-auth">Cancel</button>
+          </div>
+          <div id="etrade-auth-result" style="margin-top:12px; font-size:13px; display:none;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- PDT Protection -->
   <div class="panel">
     <div class="panel-header">
@@ -617,6 +680,187 @@ async function loadPDTStatus() {
 
 // Load on page load
 loadPDTStatus();
+
+// ---------------------------------------------------------------------------
+// E*TRADE Connection
+// ---------------------------------------------------------------------------
+
+async function loadETradeStatus() {
+  try {
+    const response = await fetch('/auth/etrade/status');
+    const data = await response.json();
+
+    const badge = document.getElementById('etrade-conn-badge');
+    const dot = document.getElementById('etrade-conn-dot');
+    const text = document.getElementById('etrade-conn-text');
+    const ageEl = document.getElementById('etrade-token-age');
+    const expiresEl = document.getElementById('etrade-expires-in');
+    const renewEl = document.getElementById('etrade-auto-renew');
+    const connectBtn = document.getElementById('etrade-connect-btn');
+    const disconnectBtn = document.getElementById('etrade-disconnect-btn');
+    const warningBanner = document.getElementById('etrade-warning-banner');
+
+    if (data.connected) {
+      badge.className = 'status-badge success';
+      badge.textContent = 'Connected';
+      dot.className = 'dot green';
+
+      const ageMin = Math.round(data.token_age_hours * 60);
+      text.textContent = `Connected to E*TRADE (session active)`;
+      ageEl.textContent = ageMin + 'm';
+      expiresEl.textContent = data.expires_in_minutes + 'm';
+      expiresEl.className = 'value ' + (data.expires_in_minutes < 15 ? 'amber' : 'green');
+      renewEl.textContent = data.needs_renewal ? 'Pending' : 'OK';
+      renewEl.className = 'value ' + (data.needs_renewal ? 'amber' : 'green');
+
+      connectBtn.style.display = 'none';
+      disconnectBtn.style.display = '';
+      warningBanner.style.display = 'none';
+
+      if (data.needs_renewal) {
+        dot.className = 'dot amber';
+        text.textContent = 'Connected (token renewal in progress)';
+      }
+    } else {
+      badge.className = 'status-badge error';
+      badge.textContent = 'Not Connected';
+      dot.className = 'dot red';
+      text.textContent = data.reason || 'Not connected to E*TRADE';
+      ageEl.textContent = '-';
+      expiresEl.textContent = '-';
+      expiresEl.className = 'value';
+      renewEl.textContent = '-';
+      renewEl.className = 'value';
+
+      connectBtn.style.display = '';
+      disconnectBtn.style.display = 'none';
+
+      // Show warning if tokens expired (not if never connected)
+      if (data.reason && data.reason.includes('expired')) {
+        warningBanner.textContent = 'E*TRADE session expired. Reconnect to resume live trading.';
+        warningBanner.style.display = 'block';
+      } else {
+        warningBanner.style.display = 'none';
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load E*TRADE status:', error);
+  }
+}
+
+// Connect button - start OAuth flow
+document.getElementById('etrade-connect-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('etrade-connect-btn');
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+
+  try {
+    const response = await fetch('/auth/etrade/start');
+    const data = await response.json();
+
+    if (data.error) {
+      alert('Error: ' + data.error);
+      btn.disabled = false;
+      btn.textContent = 'Connect to E*TRADE';
+      return;
+    }
+
+    // Open auth URL in popup
+    const popup = window.open(data.auth_url, 'etrade_auth',
+      'width=800,height=700,scrollbars=yes,resizable=yes');
+
+    // Show verifier input
+    document.getElementById('etrade-verifier-section').style.display = 'block';
+    document.getElementById('etrade-verifier').value = '';
+    document.getElementById('etrade-verifier').focus();
+    btn.style.display = 'none';
+
+  } catch (error) {
+    alert('Error starting OAuth: ' + error.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Connect to E*TRADE';
+  }
+});
+
+// Submit verifier code
+document.getElementById('etrade-submit-verifier').addEventListener('click', async () => {
+  const verifier = document.getElementById('etrade-verifier').value.trim();
+  if (!verifier) {
+    alert('Please enter the verification code from E*TRADE.');
+    return;
+  }
+
+  const submitBtn = document.getElementById('etrade-submit-verifier');
+  const resultDiv = document.getElementById('etrade-auth-result');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Verifying...';
+  resultDiv.style.display = 'none';
+
+  try {
+    const response = await fetch('/auth/etrade/callback', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({verifier: verifier}),
+    });
+    const data = await response.json();
+
+    if (data.success) {
+      resultDiv.style.display = 'block';
+      resultDiv.style.color = 'var(--green)';
+      resultDiv.textContent = 'Connected successfully!';
+
+      // Hide verifier section after short delay, refresh status
+      setTimeout(() => {
+        document.getElementById('etrade-verifier-section').style.display = 'none';
+        document.getElementById('etrade-connect-btn').style.display = '';
+        loadETradeStatus();
+      }, 1500);
+    } else {
+      resultDiv.style.display = 'block';
+      resultDiv.style.color = 'var(--red)';
+      resultDiv.textContent = 'Error: ' + (data.error || 'Unknown error');
+    }
+  } catch (error) {
+    resultDiv.style.display = 'block';
+    resultDiv.style.color = 'var(--red)';
+    resultDiv.textContent = 'Error: ' + error.message;
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Submit';
+  }
+});
+
+// Cancel auth flow
+document.getElementById('etrade-cancel-auth').addEventListener('click', () => {
+  document.getElementById('etrade-verifier-section').style.display = 'none';
+  document.getElementById('etrade-connect-btn').style.display = '';
+});
+
+// Disconnect - revoke and delete tokens
+document.getElementById('etrade-disconnect-btn').addEventListener('click', async () => {
+  if (!confirm('Disconnect from E*TRADE? You will need to re-authorize to trade.')) return;
+
+  try {
+    await fetch('/auth/etrade/disconnect', {method: 'POST'});
+  } catch (error) {
+    // Best effort
+  }
+  loadETradeStatus();
+});
+
+// Also allow Enter key in verifier input
+document.getElementById('etrade-verifier').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    document.getElementById('etrade-submit-verifier').click();
+  }
+});
+
+// Load E*TRADE status on page load
+loadETradeStatus();
+
+// Refresh every 60 seconds
+setInterval(loadETradeStatus, 60000);
 </script>
 
 </body>

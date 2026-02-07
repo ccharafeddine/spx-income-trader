@@ -1557,6 +1557,10 @@ header::after {
   </div>
 </header>
 
+<!-- E*TRADE token warning banner -->
+<div id="etrade-token-banner" style="display:none; padding:10px 24px; font-size:13px; text-align:center; cursor:pointer;"
+     onclick="window.location='/settings'"></div>
+
 <!-- Settings Overlay -->
 <div class="settings-overlay" id="settings-overlay" onclick="toggleSettings()"></div>
 
@@ -2541,6 +2545,31 @@ async function updateStatus() {
     } else {
       posBody.innerHTML = '<div class="empty">No open positions</div>';
     }
+  }
+
+  // E*TRADE token warning banner
+  const tokenBanner = document.getElementById('etrade-token-banner');
+  if (d.etrade_token) {
+    const t = d.etrade_token;
+    if (t.status === 'renewal_failed' || t.status === 'error') {
+      tokenBanner.style.display = 'block';
+      tokenBanner.style.background = 'rgba(239, 68, 68, 0.15)';
+      tokenBanner.style.borderBottom = '1px solid var(--red)';
+      tokenBanner.style.color = 'var(--red)';
+      tokenBanner.textContent = 'E*TRADE token renewal failed. Click here to reconnect in Settings.';
+    } else if (t.status === 'expired') {
+      tokenBanner.style.display = 'block';
+      tokenBanner.style.background = 'rgba(239, 68, 68, 0.15)';
+      tokenBanner.style.borderBottom = '1px solid var(--red)';
+      tokenBanner.style.color = 'var(--red)';
+      tokenBanner.textContent = 'E*TRADE session expired. Click here to reconnect in Settings.';
+    } else if (t.status === 'renewed') {
+      tokenBanner.style.display = 'none';
+    } else {
+      tokenBanner.style.display = 'none';
+    }
+  } else {
+    tokenBanner.style.display = 'none';
   }
 }
 

@@ -11,6 +11,7 @@ import re
 import json
 import sqlite3
 import ctypes
+import time
 import yaml
 from pathlib import Path
 from datetime import datetime, date, timedelta
@@ -45,8 +46,8 @@ ET = pytz.timezone('US/Eastern')
 @app.before_request
 def check_setup_required():
     """Redirect to setup if E*TRADE credentials are not configured."""
-    # Allow setup and static routes without credentials
-    allowed_paths = ['/setup', '/static', '/api/setup/status']
+    # Allow setup, static, and auth routes without credentials
+    allowed_paths = ['/setup', '/static', '/api/setup/status', '/auth/etrade/']
     if any(request.path.startswith(p) for p in allowed_paths):
         return None
 
@@ -659,6 +660,187 @@ def api_clear_credentials():
         return jsonify({'success': False, 'error': str(e)})
 
 
+# ---------------------------------------------------------------------------
+# E*TRADE OAuth flow (web-based, non-blocking)
+# ---------------------------------------------------------------------------
+
+# Temporary storage for pending OAuth request tokens (single-user app)
+_pending_oauth = {}
+
+
+def _get_etrade_auth():
+    """Create an ETradeAuth instance from current config."""
+    from src.brokers.etrade_auth import ETradeAuth
+    return ETradeAuth(
+        consumer_key=ETRADE_CONFIG.get('consumer_key'),
+        consumer_secret=ETRADE_CONFIG.get('consumer_secret'),
+        sandbox=ETRADE_CONFIG.get('sandbox', True),
+        token_file=ETRADE_CONFIG.get('token_file'),
+    )
+
+
+@app.route('/auth/etrade/start')
+def auth_etrade_start():
+    """Initiate E*TRADE OAuth flow. Returns the authorization URL as JSON."""
+    if not is_etrade_configured():
+        return jsonify({'error': 'E*TRADE credentials not configured. Complete setup first.'}), 400
+
+    try:
+        auth = _get_etrade_auth()
+        request_token, request_token_secret = auth._get_request_token()
+        auth_url = auth._get_authorization_url(request_token)
+
+        # Store pending tokens for the callback
+        _pending_oauth['request_token'] = request_token
+        _pending_oauth['request_token_secret'] = request_token_secret
+
+        return jsonify({'auth_url': auth_url})
+    except Exception as e:
+        return jsonify({'error': f'Failed to start OAuth flow: {e}'}), 500
+
+
+@app.route('/auth/etrade/callback', methods=['POST'])
+def auth_etrade_callback():
+    """Complete OAuth token exchange with the verifier code."""
+    data = request.get_json()
+    if not data or not data.get('verifier'):
+        return jsonify({'error': 'Verifier code is required'}), 400
+
+    if not _pending_oauth.get('request_token'):
+        return jsonify({'error': 'No pending OAuth flow. Start the flow first.'}), 400
+
+    verifier = data['verifier'].strip()
+    if not verifier:
+        return jsonify({'error': 'Verifier code cannot be empty'}), 400
+
+    try:
+        auth = _get_etrade_auth()
+        access_token, access_token_secret = auth._get_access_token(
+            _pending_oauth['request_token'],
+            _pending_oauth['request_token_secret'],
+            verifier,
+        )
+
+        # Store tokens via the auth instance
+        auth.access_token = access_token
+        auth.access_token_secret = access_token_secret
+        auth.token_timestamp = time.time()
+        auth._save_tokens()
+
+        # Clear pending state
+        _pending_oauth.clear()
+
+        return jsonify({
+            'success': True,
+            'message': 'E*TRADE connected successfully',
+            'token_age_hours': 0.0,
+        })
+    except Exception as e:
+        # Clear pending state on failure too
+        _pending_oauth.clear()
+        return jsonify({'error': f'Token exchange failed: {e}'}), 500
+
+
+@app.route('/auth/etrade/status')
+def auth_etrade_status():
+    """Check whether valid OAuth tokens exist and their age."""
+    if not is_etrade_configured():
+        return jsonify({'connected': False, 'reason': 'Credentials not configured'})
+
+    token_file = ETRADE_CONFIG.get('token_file')
+    if not token_file or not os.path.exists(token_file):
+        return jsonify({'connected': False, 'reason': 'No tokens found'})
+
+    try:
+        with open(token_file, 'r') as f:
+            token_data = json.load(f)
+
+        timestamp = token_data.get('timestamp', 0)
+        age_hours = (time.time() - timestamp) / 3600
+
+        # Tokens are invalid if older than 2 hours or environment mismatch
+        sandbox = ETRADE_CONFIG.get('sandbox', True)
+        if token_data.get('sandbox') != sandbox:
+            return jsonify({
+                'connected': False,
+                'reason': 'Token environment mismatch',
+            })
+
+        if age_hours > 2.0:
+            return jsonify({
+                'connected': False,
+                'reason': 'Tokens expired (older than 2 hours)',
+                'token_age_hours': round(age_hours, 2),
+            })
+
+        return jsonify({
+            'connected': True,
+            'token_age_hours': round(age_hours, 2),
+            'expires_in_minutes': max(0, round((2.0 - age_hours) * 60)),
+            'needs_renewal': age_hours > 1.5,
+        })
+
+    except Exception as e:
+        return jsonify({'connected': False, 'reason': f'Error reading tokens: {e}'})
+
+
+@app.route('/auth/etrade/disconnect', methods=['POST'])
+def auth_etrade_disconnect():
+    """Revoke and delete E*TRADE OAuth tokens."""
+    token_file = ETRADE_CONFIG.get('token_file')
+
+    # Try to revoke the token on E*TRADE's side first
+    if token_file and os.path.exists(token_file):
+        try:
+            auth = _get_etrade_auth()
+            auth._load_tokens()
+            auth.revoke_token()
+        except Exception:
+            pass  # Best effort - still delete locally
+
+        # Delete the token file
+        try:
+            os.remove(token_file)
+        except OSError:
+            pass
+
+    return jsonify({'success': True, 'message': 'Disconnected from E*TRADE'})
+
+
+def _try_renew_etrade_token():
+    """Attempt background token renewal. Returns status dict."""
+    token_file = ETRADE_CONFIG.get('token_file')
+    if not token_file or not os.path.exists(token_file):
+        return None
+
+    try:
+        with open(token_file, 'r') as f:
+            token_data = json.load(f)
+
+        timestamp = token_data.get('timestamp', 0)
+        age_hours = (time.time() - timestamp) / 3600
+
+        # Only renew if tokens are between 1.5 and 2.0 hours old
+        if age_hours < 1.5 or age_hours > 2.0:
+            if age_hours <= 1.5:
+                return {'status': 'fresh', 'age_hours': round(age_hours, 2)}
+            return {'status': 'expired', 'age_hours': round(age_hours, 2)}
+
+        # Attempt renewal
+        auth = _get_etrade_auth()
+        auth.access_token = token_data['access_token']
+        auth.access_token_secret = token_data['access_token_secret']
+        auth.token_timestamp = timestamp
+
+        if auth._renew_token():
+            return {'status': 'renewed', 'age_hours': 0.0}
+        else:
+            return {'status': 'renewal_failed', 'age_hours': round(age_hours, 2)}
+
+    except Exception as e:
+        return {'status': 'error', 'error': str(e)}
+
+
 @app.route('/api/pdt/status')
 def api_pdt_status():
     """Get PDT tracker status."""
@@ -868,6 +1050,9 @@ def api_status():
     except Exception:
         pass
 
+    # E*TRADE token status + auto-renewal
+    etrade_token = _try_renew_etrade_token()
+
     return jsonify({
         'bot': bot,
         'mode': mode,
@@ -885,6 +1070,7 @@ def api_status():
         'bnb': bnb_status,
         'orb': orb_status,
         'portfolio': portfolio_status,
+        'etrade_token': etrade_token,
     })
 
 
