@@ -110,6 +110,12 @@ class DesktopApp:
         self._webview_window = None       # Set only in native mode
         self._lockfile = BASE_DIR / 'spx_trader.lock'
 
+        # Bot crash tracking
+        self._bot_crashed = False
+        self._bot_crash_error = None
+        self._bot_crash_time = None
+        self._watchdog_thread = None
+
         # System tray state
         self._tray_icon = None           # pystray.Icon instance
         self._force_quit = False         # Bypass minimize-to-tray on close
@@ -284,6 +290,9 @@ class DesktopApp:
 
             self._bot_mode = mode
             self._bot_started_at = datetime.now()
+            self._bot_crashed = False
+            self._bot_crash_error = None
+            self._bot_crash_time = None
             self._bot_thread = threading.Thread(
                 target=self._run_bot,
                 args=(mode,),
@@ -291,6 +300,7 @@ class DesktopApp:
                 name="trading-bot",
             )
             self._bot_thread.start()
+            self._start_watchdog()
             return True, None
 
     def _run_bot(self, mode):
@@ -370,6 +380,58 @@ class DesktopApp:
             self._bot.shutdown()
             return True, None
 
+    # ------------------------------------------------------------------
+    # Bot watchdog (supervisor thread)
+    # ------------------------------------------------------------------
+
+    def _start_watchdog(self):
+        """Start a watchdog thread to monitor the bot thread."""
+        if self._watchdog_thread and self._watchdog_thread.is_alive():
+            return
+        self._watchdog_thread = threading.Thread(
+            target=self._run_watchdog,
+            daemon=True,
+            name="bot-watchdog",
+        )
+        self._watchdog_thread.start()
+
+    def _run_watchdog(self):
+        """Check every 30 seconds if the bot thread is still alive."""
+        while not self._shutting_down:
+            time.sleep(30)
+            with self._bot_lock:
+                bot_thread = self._bot_thread
+                bot_instance = self._bot
+                was_running = bot_instance is not None
+
+            if bot_thread is None:
+                break  # No bot thread to watch
+
+            if not bot_thread.is_alive() and was_running:
+                # Bot thread died while it was supposed to be running
+                self._bot_crashed = True
+                self._bot_crash_time = datetime.now()
+                err_msg = "Bot thread died unexpectedly"
+                self._bot_crash_error = err_msg
+                logger.error(f"WATCHDOG: {err_msg}")
+
+                # Send notification if configured
+                try:
+                    from src.utils.notifications import NotificationManager
+                    notifier = NotificationManager()
+                    notifier.send(
+                        "Bot Crashed",
+                        "The trading bot stopped unexpectedly. Please review and restart.",
+                    )
+                except Exception as e:
+                    logger.warning(f"Watchdog failed to send notification: {e}")
+
+                self._update_tray_icon()
+                break
+
+            if not bot_thread.is_alive():
+                break  # Bot stopped normally
+
     def get_bot_status(self):
         """Return current bot status as a dict."""
         with self._bot_lock:
@@ -379,18 +441,30 @@ class DesktopApp:
                     uptime = int((datetime.now() - self._bot_started_at).total_seconds())
                 return {
                     'running': True,
+                    'crashed': False,
                     'mode': self._bot_mode,
                     'uptime_seconds': uptime,
                     'trades_today': self._bot.trades_today,
                     'daily_pnl': self._bot.daily_pnl,
                 }
-            return {
+
+            status = {
                 'running': False,
                 'mode': None,
                 'uptime_seconds': 0,
                 'trades_today': 0,
                 'daily_pnl': 0.0,
             }
+            if self._bot_crashed:
+                status['crashed'] = True
+                status['crash_error'] = self._bot_crash_error
+                status['crash_time'] = (
+                    self._bot_crash_time.isoformat()
+                    if self._bot_crash_time else None
+                )
+            else:
+                status['crashed'] = False
+            return status
 
     # ------------------------------------------------------------------
     # System tray

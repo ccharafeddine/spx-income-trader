@@ -46,7 +46,18 @@ def setup_logging(log_file: str, log_level: str = "INFO"):
     )
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
-    
+
+    # Error-only file handler (WARNING+ to separate error.log)
+    error_log = log_path.parent / 'error.log'
+    error_handler = RotatingFileHandler(
+        str(error_log),
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5,
+    )
+    error_handler.setLevel(logging.WARNING)
+    error_handler.setFormatter(file_formatter)
+    logger.addHandler(error_handler)
+
     logger.info("=" * 60)
     logger.info("Logging initialized")
     logger.info(f"Log file: {log_file}")

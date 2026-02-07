@@ -1965,6 +1965,53 @@ def _get_journal_notes(conn, trade_id):
     }
 
 
+@app.route('/api/logs/recent')
+def api_logs_recent():
+    """Return the last N log lines for the dashboard Logs tab."""
+    limit = request.args.get('limit', 50, type=int)
+    limit = min(limit, 200)  # Cap at 200
+    lines = []
+    try:
+        with open(LOG_FILE, 'r', encoding='utf-8', errors='replace') as f:
+            # Read all lines and take the last N
+            all_lines = f.readlines()
+            tail = all_lines[-limit:]
+        for raw in tail:
+            raw = raw.rstrip('\n\r')
+            if not raw:
+                continue
+            # Parse level from log format: "YYYY-MM-DD HH:MM:SS - name - LEVEL - msg"
+            level = 'INFO'
+            for lv in ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'):
+                if f' - {lv} - ' in raw:
+                    level = lv
+                    break
+            lines.append({'line': raw, 'level': level})
+    except FileNotFoundError:
+        pass
+    return jsonify({'lines': lines})
+
+
+@app.route('/api/stale-positions')
+def api_stale_positions():
+    """Check for trades still marked 'active' that may be from a crashed session."""
+    try:
+        conn = get_db_connection()
+        rows = conn.execute(
+            "SELECT id, entry_time, direction, short_strike, long_strike, "
+            "credit_received, quantity, strategy_type "
+            "FROM trades WHERE status = 'active' ORDER BY entry_time"
+        ).fetchall()
+        conn.close()
+        positions = [dict(r) for r in rows]
+        return jsonify({
+            'count': len(positions),
+            'positions': positions,
+        })
+    except Exception as e:
+        return jsonify({'count': 0, 'positions': [], 'error': str(e)})
+
+
 @app.route('/api/events')
 def api_events():
     """Recent system events."""

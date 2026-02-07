@@ -1278,6 +1278,77 @@ header::after {
   .pulse-bar-grid { grid-template-columns: 1fr 1fr; }
 }
 
+/* Warning banner */
+.warning-banner {
+  display: none;
+  padding: 10px 20px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid var(--amber);
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--amber);
+  font-weight: 500;
+}
+.warning-banner.visible { display: flex; align-items: center; gap: 10px; }
+.warning-banner .banner-icon { font-size: 18px; flex-shrink: 0; }
+.warning-banner .banner-text { flex: 1; }
+.warning-banner .banner-dismiss {
+  background: none; border: 1px solid var(--amber); color: var(--amber);
+  border-radius: 3px; padding: 2px 8px; font-size: 11px; cursor: pointer;
+  font-family: var(--font-ui);
+}
+.warning-banner .banner-dismiss:hover { background: var(--amber); color: #000; }
+
+/* Crash banner */
+.crash-banner {
+  display: none;
+  padding: 10px 20px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid var(--red);
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--red);
+  font-weight: 600;
+}
+.crash-banner.visible { display: flex; align-items: center; gap: 10px; }
+
+/* Logs tab */
+.log-controls {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 10px; font-size: 12px;
+}
+.log-controls label { color: var(--text-dim); }
+.log-controls select, .log-controls button {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 3px; padding: 3px 8px; font-size: 11px; font-family: var(--font-ui);
+  cursor: pointer;
+}
+.log-controls button:hover { border-color: var(--cyan); color: #fff; }
+.log-auto-refresh { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.log-auto-refresh input[type="checkbox"] { accent-color: var(--cyan); }
+
+.log-viewer {
+  background: #080b12;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.7;
+  max-height: 600px;
+  overflow-y: auto;
+  overflow-x: auto;
+  white-space: pre;
+}
+.log-line { padding: 1px 0; }
+.log-line.DEBUG { color: #4b5563; }
+.log-line.INFO { color: var(--text); }
+.log-line.WARNING { color: var(--amber); }
+.log-line.ERROR { color: var(--red); font-weight: 600; }
+.log-line.CRITICAL { color: #ff3333; font-weight: 700; background: rgba(239,68,68,0.08); }
+
 /* Settings panel */
 .settings-panel {
   position: fixed;
@@ -1753,10 +1824,24 @@ header::after {
     <div class="summary-stats" id="summary-stats"></div>
   </div>
 
+  <!-- STALE POSITIONS WARNING BANNER -->
+  <div class="warning-banner" id="stale-positions-banner">
+    <span class="banner-icon">&#9888;</span>
+    <span class="banner-text" id="stale-positions-text"></span>
+    <button class="banner-dismiss" onclick="dismissStaleWarning()">Dismiss</button>
+  </div>
+
+  <!-- BOT CRASH BANNER -->
+  <div class="crash-banner" id="crash-banner">
+    <span class="banner-icon">&#9888;</span>
+    <span id="crash-banner-text">Bot crashed &#8212; restart required</span>
+  </div>
+
   <!-- TAB NAVIGATION -->
   <div class="tab-bar" role="tablist">
     <button class="tab-btn active" role="tab" aria-selected="true" onclick="switchTab('overview')">Overview</button>
     <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('journal')">Trade Journal</button>
+    <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('logs')">Logs</button>
   </div>
 
   <!-- TAB: OVERVIEW -->
@@ -2010,6 +2095,34 @@ header::after {
     </div>
 
   </div><!-- /tab-journal -->
+
+  <!-- TAB: LOGS -->
+  <div id="tab-logs" class="tab-content" role="tabpanel">
+    <div class="log-controls">
+      <label>Level:</label>
+      <select id="log-level-filter" onchange="updateLogs()">
+        <option value="">All</option>
+        <option value="DEBUG">DEBUG</option>
+        <option value="INFO">INFO</option>
+        <option value="WARNING">WARNING+</option>
+        <option value="ERROR">ERROR+</option>
+      </select>
+      <label>Lines:</label>
+      <select id="log-line-count" onchange="updateLogs()">
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+        <option value="200">200</option>
+      </select>
+      <button onclick="updateLogs()">Refresh</button>
+      <div class="log-auto-refresh">
+        <input type="checkbox" id="log-auto-refresh" checked>
+        <label for="log-auto-refresh">Auto-refresh (10s)</label>
+      </div>
+    </div>
+    <div class="log-viewer" id="log-viewer">
+      <div class="empty">Loading logs...</div>
+    </div>
+  </div><!-- /tab-logs -->
 
 </div>
 
@@ -2333,11 +2446,19 @@ async function updateStatus() {
       txt.title = '';
       txt.style.color = 'var(--green)';
     }
+  } else if (d.bot.crashed) {
+    dot.className = 'dot';
+    txt.textContent = 'CRASHED';
+    txt.title = d.bot.crash_error || 'Bot stopped unexpectedly';
+    txt.style.color = 'var(--red)';
   } else {
     dot.className = 'dot';
     txt.textContent = d.bot.status === 'stale' ? 'STALE' : 'STOPPED';
     txt.style.color = 'var(--red)';
   }
+
+  // Bot crash banner (desktop mode)
+  if (desktopMode) updateCrashBanner(d.bot);
 
   // Bot controls (desktop mode)
   updateBotControls(d.bot.running);
@@ -3061,9 +3182,10 @@ let activeTab = 'overview';
 function switchTab(tabId) {
   activeTab = tabId;
   document.querySelectorAll('.tab-btn').forEach(btn => {
-    const isActive = btn.textContent.toLowerCase().replace(' ', '') === tabId ||
+    const isActive = btn.textContent.toLowerCase().replace(/\s/g, '') === tabId ||
       (tabId === 'overview' && btn.textContent === 'Overview') ||
-      (tabId === 'journal' && btn.textContent === 'Trade Journal');
+      (tabId === 'journal' && btn.textContent === 'Trade Journal') ||
+      (tabId === 'logs' && btn.textContent === 'Logs');
     btn.classList.toggle('active', isActive);
     btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
   });
@@ -3071,6 +3193,7 @@ function switchTab(tabId) {
     el.classList.toggle('active', el.id === 'tab-' + tabId);
   });
   if (tabId === 'journal') updateJournal();
+  if (tabId === 'logs') updateLogs();
 }
 
 // ---------------------------------------------------------------
@@ -3585,6 +3708,100 @@ document.addEventListener('DOMContentLoaded', () => {
 // Initial load
 checkDesktopMode();
 refreshAll().then(() => { initialLoad = false; });
+
+// ---------------------------------------------------------------
+// Logs Tab
+// ---------------------------------------------------------------
+const LOG_LEVEL_RANK = {DEBUG: 0, INFO: 1, WARNING: 2, ERROR: 3, CRITICAL: 4};
+let logAutoRefreshTimer = null;
+
+async function updateLogs() {
+  const limit = document.getElementById('log-line-count').value;
+  const levelFilter = document.getElementById('log-level-filter').value;
+  const data = await fetchJSON('/api/logs/recent?limit=' + limit);
+  if (!data) return;
+
+  const viewer = document.getElementById('log-viewer');
+  let lines = data.lines || [];
+
+  // Filter by level if set
+  if (levelFilter) {
+    const minRank = LOG_LEVEL_RANK[levelFilter] || 0;
+    lines = lines.filter(l => (LOG_LEVEL_RANK[l.level] || 0) >= minRank);
+  }
+
+  if (lines.length === 0) {
+    viewer.innerHTML = '<div class="empty">No log entries</div>';
+    return;
+  }
+
+  const html = lines.map(l => {
+    const escaped = l.line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return '<div class="log-line ' + l.level + '">' + escaped + '</div>';
+  }).join('');
+  viewer.innerHTML = html;
+  viewer.scrollTop = viewer.scrollHeight;
+}
+
+function startLogAutoRefresh() {
+  stopLogAutoRefresh();
+  logAutoRefreshTimer = setInterval(() => {
+    if (activeTab === 'logs' && document.getElementById('log-auto-refresh').checked) {
+      updateLogs();
+    }
+  }, 10000);
+}
+
+function stopLogAutoRefresh() {
+  if (logAutoRefreshTimer) {
+    clearInterval(logAutoRefreshTimer);
+    logAutoRefreshTimer = null;
+  }
+}
+
+startLogAutoRefresh();
+
+// ---------------------------------------------------------------
+// Stale Positions Warning
+// ---------------------------------------------------------------
+let staleWarningDismissed = false;
+
+async function checkStalePositions() {
+  if (staleWarningDismissed) return;
+  const data = await fetchJSON('/api/stale-positions');
+  if (!data || data.count === 0) return;
+
+  const banner = document.getElementById('stale-positions-banner');
+  const text = document.getElementById('stale-positions-text');
+  text.textContent = data.count + ' position' + (data.count > 1 ? 's were' : ' was') +
+    ' open when the app last closed. Please review.';
+  banner.classList.add('visible');
+}
+
+function dismissStaleWarning() {
+  staleWarningDismissed = true;
+  document.getElementById('stale-positions-banner').classList.remove('visible');
+}
+
+// Check on load
+checkStalePositions();
+
+// ---------------------------------------------------------------
+// Bot Crash Detection
+// ---------------------------------------------------------------
+function updateCrashBanner(botStatus) {
+  const banner = document.getElementById('crash-banner');
+  if (botStatus && botStatus.crashed) {
+    const timeStr = botStatus.crash_time
+      ? ' at ' + new Date(botStatus.crash_time).toLocaleTimeString()
+      : '';
+    document.getElementById('crash-banner-text').textContent =
+      'Bot crashed' + timeStr + ' \u2014 restart required';
+    banner.classList.add('visible');
+  } else {
+    banner.classList.remove('visible');
+  }
+}
 
 // ---------------------------------------------------------------
 // Settings Panel
