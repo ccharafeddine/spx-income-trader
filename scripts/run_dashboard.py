@@ -22,7 +22,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # Set environment to avoid E*TRADE validation on import
-os.environ['TRADING_MODE'] = 'paper'
+os.environ['TRADING_MODE'] = 'dry-run'
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='SPX Income Trader Dashboard')

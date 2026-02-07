@@ -401,7 +401,7 @@ def main():
     print()
     print("  To use E*TRADE broker in the trading bot:")
     print("  - Set TRADING_MODE=live in .env")
-    print("  - The bot will use E*TRADE instead of paper trading")
+    print("  - The bot will use E*TRADE instead of dry-run mode")
     print()
 
     return 0

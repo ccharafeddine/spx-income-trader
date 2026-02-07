@@ -301,16 +301,11 @@ def detect_trading_mode():
     try:
         with open(LOG_FILE, 'r', encoding='utf-8', errors='replace') as f:
             lines = f.readlines()[-200:]
-        found_paper = False
         for line in reversed(lines):
             if 'DRY RUN MODE' in line:
                 return 'DRY RUN'
             if 'LIVE MODE' in line:
                 return 'LIVE'
-            if 'Mode: PAPER' in line:
-                found_paper = True
-        if found_paper:
-            return 'PAPER'
     except FileNotFoundError:
         pass
     return 'UNKNOWN'

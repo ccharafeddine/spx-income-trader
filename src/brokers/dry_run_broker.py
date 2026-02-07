@@ -13,6 +13,7 @@ before going live.
 
 import logging
 import json
+import math
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional
 from pathlib import Path
@@ -65,6 +66,9 @@ class DryRunBroker(BrokerInterface):
         # Options chain simulation parameters
         self.spread_width = 0.20  # Bid-ask spread
         self.strike_interval = 5  # SPX strikes are $5 apart
+
+        # Track which pricing source was used for the last chain
+        self._last_chain_source = None  # 'real' or 'synthetic'
 
         logger.info(f"DryRunBroker initialized with ${initial_balance:,.2f}")
         logger.info(f"Signal log: {self.log_file}")
@@ -127,6 +131,135 @@ class DryRunBroker(BrokerInterface):
         return 0.0
 
     def get_options_chain(self, symbol: str, expiration: str) -> Dict[float, Dict]:
+        """
+        Get options chain, trying real Yahoo Finance data first and
+        falling back to the synthetic model if real data is unavailable.
+        """
+        # Try real chain first
+        chain = self._fetch_real_options_chain(symbol, expiration)
+        if chain:
+            self._last_chain_source = 'real'
+            logger.info(f"Using REAL options chain from Yahoo Finance ({len(chain)} strikes)")
+            return chain
+
+        # Fall back to synthetic
+        chain = self._build_synthetic_chain(symbol, expiration)
+        if chain:
+            self._last_chain_source = 'synthetic'
+            logger.info(f"Using SYNTHETIC options chain ({len(chain)} strikes)")
+        return chain
+
+    def _fetch_real_options_chain(self, symbol: str, expiration: str) -> Optional[Dict[float, Dict]]:
+        """
+        Fetch real SPX option chain from Yahoo Finance via yfinance.
+
+        Returns the chain in the standard format or None on failure.
+        Yahoo Finance may not always have 0DTE SPX data available.
+        """
+        try:
+            import yfinance as yf
+        except ImportError:
+            logger.debug("yfinance not installed, skipping real chain fetch")
+            return None
+
+        try:
+            ticker = yf.Ticker("^SPX")
+
+            # Get available expiration dates
+            available = ticker.options  # tuple of date strings like '2026-02-07'
+            if not available:
+                logger.debug("No option expirations available for ^SPX")
+                return None
+
+            # Find the requested expiration (or closest 0DTE match)
+            target = expiration  # expected format: 'YYYY-MM-DD'
+            if target not in available:
+                # For 0DTE, try today's date in the available list
+                today_str = date.today().strftime('%Y-%m-%d')
+                if today_str in available:
+                    target = today_str
+                else:
+                    # Pick the nearest future expiration
+                    target_date = datetime.strptime(expiration, '%Y-%m-%d').date()
+                    future = [d for d in available
+                              if datetime.strptime(d, '%Y-%m-%d').date() >= target_date]
+                    if not future:
+                        logger.debug(f"No matching expiration for {expiration} in {available[:5]}...")
+                        return None
+                    target = future[0]
+                    logger.debug(f"Requested {expiration} not available, using nearest: {target}")
+
+            opt = ticker.option_chain(target)
+            calls_df = opt.calls
+            puts_df = opt.puts
+
+            if calls_df.empty and puts_df.empty:
+                logger.debug("Real option chain returned empty DataFrames")
+                return None
+
+            def _safe_float(val, default=0.0):
+                try:
+                    f = float(val)
+                    return default if math.isnan(f) else f
+                except (TypeError, ValueError):
+                    return default
+
+            def _safe_int(val, default=0):
+                try:
+                    f = float(val)
+                    return default if math.isnan(f) else int(f)
+                except (TypeError, ValueError):
+                    return default
+
+            # Build strike-keyed chain from the two DataFrames
+            chain: Dict[float, Dict] = {}
+
+            for _, row in calls_df.iterrows():
+                strike = float(row['strike'])
+                chain.setdefault(strike, {})
+                chain[strike].update({
+                    'call_bid': _safe_float(row.get('bid')),
+                    'call_ask': _safe_float(row.get('ask')),
+                    'call_last': _safe_float(row.get('lastPrice')),
+                    'call_volume': _safe_int(row.get('volume')),
+                    'call_oi': _safe_int(row.get('openInterest')),
+                })
+
+            for _, row in puts_df.iterrows():
+                strike = float(row['strike'])
+                chain.setdefault(strike, {})
+                chain[strike].update({
+                    'put_bid': _safe_float(row.get('bid')),
+                    'put_ask': _safe_float(row.get('ask')),
+                    'put_last': _safe_float(row.get('lastPrice')),
+                    'put_volume': _safe_int(row.get('volume')),
+                    'put_oi': _safe_int(row.get('openInterest')),
+                })
+
+            # Fill any strikes that only have one side (call-only or put-only)
+            for strike in chain:
+                chain[strike].setdefault('call_bid', 0)
+                chain[strike].setdefault('call_ask', 0)
+                chain[strike].setdefault('call_last', 0)
+                chain[strike].setdefault('call_volume', 0)
+                chain[strike].setdefault('call_oi', 0)
+                chain[strike].setdefault('put_bid', 0)
+                chain[strike].setdefault('put_ask', 0)
+                chain[strike].setdefault('put_last', 0)
+                chain[strike].setdefault('put_volume', 0)
+                chain[strike].setdefault('put_oi', 0)
+
+            if not chain:
+                return None
+
+            logger.info(f"Fetched real option chain for ^SPX {target}: {len(chain)} strikes")
+            return chain
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch real options chain: {e}")
+            return None
+
+    def _build_synthetic_chain(self, symbol: str, expiration: str) -> Dict[float, Dict]:
         """
         Generate simulated options chain based on REAL underlying price.
 
@@ -198,7 +331,7 @@ class DryRunBroker(BrokerInterface):
                 'put_oi': 500,
             }
 
-        logger.debug(f"Generated options chain with {len(chain)} strikes around ${atm_strike}")
+        logger.debug(f"Generated synthetic chain with {len(chain)} strikes around ${atm_strike}")
         return chain
 
     def place_spread_order(
@@ -244,6 +377,7 @@ class DryRunBroker(BrokerInterface):
             "underlying_price": spread.underlying_price_at_entry,
             "expiration": spread.expiration.isoformat() if spread.expiration else None,
             "vix_at_signal": vix_at_signal,
+            "pricing_source": self._last_chain_source or "unknown",
         }
 
         # Merge metadata into signal data if provided

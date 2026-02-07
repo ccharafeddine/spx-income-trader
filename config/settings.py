@@ -153,7 +153,7 @@ ETRADE_CONFIG = {
 }
 
 # Trading Configuration
-TRADING_MODE = os.getenv('TRADING_MODE', 'paper')
+TRADING_MODE = os.getenv('TRADING_MODE', 'dry-run')
 
 # Database Configuration
 DATABASE_PATH = os.getenv('DATABASE_PATH', str(DB_PATH))
@@ -229,13 +229,13 @@ def validate_settings():
     if not ETRADE_CONFIG['account_id']:
         errors.append("ETRADE_ACCOUNT_ID not set in .env")
 
-    if TRADING_MODE not in ['paper', 'live']:
+    if TRADING_MODE not in ['dry-run', 'live']:
         errors.append(f"Invalid TRADING_MODE: {TRADING_MODE}")
 
     if errors:
         error_msg = "\n".join(errors)
         raise ValueError(f"Configuration errors:\n{error_msg}")
 
-# Validate on import (but only if not in paper mode)
+# Validate on import (only in live mode)
 if TRADING_MODE == 'live':
     validate_settings()

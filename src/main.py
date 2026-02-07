@@ -28,7 +28,6 @@ from config.settings import (
     LOG_FILE,
     LOG_LEVEL
 )
-from src.brokers.paper_trader import PaperBroker
 from src.brokers.dry_run_broker import DryRunBroker
 from src.brokers.etrade_broker import ETradeBroker
 from src.brokers.etrade_auth import ETradeAuth
@@ -813,7 +812,7 @@ def main():
     )
     parser.add_argument(
         '--mode',
-        choices=['paper', 'live'],
+        choices=['dry-run', 'live'],
         default=TRADING_MODE,
         help='Trading mode (default: from .env)'
     )
@@ -881,12 +880,9 @@ def main():
         logger.info("Initializing trading system...")
 
         # Initialize broker based on mode
-        if args.dry_run:
+        if args.dry_run or args.mode == 'dry-run':
             logger.info("*** DRY RUN MODE - Using real market data, no orders will be placed ***")
             broker = DryRunBroker(initial_balance=50000.0)
-            skip_confirm = args.no_confirm
-        elif args.mode == 'paper':
-            broker = PaperBroker(initial_balance=50000.0)
             skip_confirm = args.no_confirm
         else:
             # --- LIVE TRADING MODE ---
@@ -968,7 +964,7 @@ def main():
         # Create bot
         bot = TradingBot(
             broker, strategy, db_manager, notifier,
-            dry_run=args.dry_run,
+            dry_run=(args.dry_run or args.mode == 'dry-run'),
             skip_confirm=skip_confirm
         )
 

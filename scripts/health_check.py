@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.settings import ETRADE_CONFIG, DATABASE_PATH, TRADING_MODE
 from database.db_manager import DatabaseManager
-from src.brokers.paper_trader import PaperBroker
+from src.brokers.dry_run_broker import DryRunBroker
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -67,13 +67,13 @@ def check_broker():
     print("\n🏦 Checking Broker...")
     
     try:
-        if TRADING_MODE == 'paper':
-            broker = PaperBroker()
+        if TRADING_MODE == 'dry-run':
+            broker = DryRunBroker()
             price = broker.get_current_price("SPX")
-            print(f"✅ Paper broker working (SPX: ${price:.2f})")
+            print(f"✅ Dry-run broker working (SPX: ${price:.2f})")
         else:
             print("⚠️  Live broker check skipped (not implemented)")
-        
+
         return []
     except Exception as e:
         return [f"❌ Broker error: {e}"]

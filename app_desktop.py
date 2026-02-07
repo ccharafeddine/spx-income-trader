@@ -35,8 +35,8 @@ from datetime import datetime
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Default to paper mode to avoid E*TRADE credential validation on import
-os.environ.setdefault('TRADING_MODE', 'paper')
+# Default to dry-run mode to avoid E*TRADE credential validation on import
+os.environ.setdefault('TRADING_MODE', 'dry-run')
 
 from config.settings import (
     BASE_DIR, DATABASE_PATH, LOG_FILE, LOG_LEVEL,
@@ -142,8 +142,8 @@ class DesktopApp:
         def api_bot_start():
             from flask import request, jsonify
             data = request.get_json() or {}
-            mode = data.get('mode', 'paper')
-            if mode not in ('paper', 'dry-run', 'live'):
+            mode = data.get('mode', 'dry-run')
+            if mode not in ('dry-run', 'live'):
                 return jsonify({'success': False, 'error': f'Invalid mode: {mode}'}), 400
 
             success, error = desktop.start_bot(mode)
@@ -327,7 +327,7 @@ class DesktopApp:
     # Bot management
     # ------------------------------------------------------------------
 
-    def start_bot(self, mode='paper'):
+    def start_bot(self, mode='dry-run'):
         """Start the trading bot in a background thread.
 
         Returns:
@@ -357,7 +357,6 @@ class DesktopApp:
         bot = None
         try:
             from src.main import TradingBot
-            from src.brokers.paper_trader import PaperBroker
             from src.brokers.dry_run_broker import DryRunBroker
             from src.core.strategy import SPXIncomeStrategy
             from database.db_manager import DatabaseManager
@@ -367,9 +366,6 @@ class DesktopApp:
             if mode == 'dry-run':
                 broker = DryRunBroker(initial_balance=50000.0)
                 dry_run = True
-            elif mode == 'paper':
-                broker = PaperBroker(initial_balance=50000.0)
-                dry_run = False
             else:
                 # Live mode requires E*TRADE authentication
                 from src.brokers.etrade_broker import ETradeBroker
@@ -683,8 +679,8 @@ class DesktopApp:
                 logger.warning(f"Failed to restore window: {e}")
 
     def _on_tray_start_bot(self, icon, item):
-        """Tray action: start the trading bot in paper mode."""
-        self.start_bot('paper')
+        """Tray action: start the trading bot in dry-run mode."""
+        self.start_bot('dry-run')
 
     def _on_tray_stop_bot(self, icon, item):
         """Tray action: stop the trading bot."""

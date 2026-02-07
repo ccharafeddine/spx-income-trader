@@ -24,7 +24,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # Set environment
-os.environ['TRADING_MODE'] = 'paper'
+os.environ['TRADING_MODE'] = 'dry-run'
 
 if __name__ == "__main__":
     # Import and modify sys.argv to add --dry-run
