@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 from datetime import datetime
 import logging
 import uuid
@@ -9,6 +9,9 @@ from ..models.spread import CreditSpread, TradeDirection
 from ..models.bar import Bar
 from .strategy import SPXIncomeStrategy
 from ..brokers.base import BrokerInterface
+
+if TYPE_CHECKING:
+    from .pdt_tracker import PDTTracker
 
 logger = logging.getLogger(__name__)
 
@@ -28,16 +31,21 @@ class PositionManager:
         self,
         broker: BrokerInterface,
         strategy: SPXIncomeStrategy,
-        db_manager
+        db_manager,
+        pdt_tracker: Optional['PDTTracker'] = None
     ):
         self.broker = broker
         self.strategy = strategy
         self.db = db_manager
-        
+        self.pdt_tracker = pdt_tracker
+
         self.open_trades: List[Trade] = []
         self.tz = pytz.timezone("America/New_York")
-        
-        logger.info("PositionManager initialized")
+
+        if pdt_tracker:
+            logger.info("PositionManager initialized with PDT protection")
+        else:
+            logger.info("PositionManager initialized (no PDT protection)")
     
     def enter_trade(
         self,
@@ -198,6 +206,25 @@ class PositionManager:
                         except Exception:
                             pass
 
+                    # PDT protection: check if early close is allowed
+                    is_expiration = "expiration" in reason.lower()
+                    if not is_expiration and self.pdt_tracker:
+                        if not self.pdt_tracker.can_close_early():
+                            pdt_status = self.pdt_tracker.get_pdt_status()
+                            used = pdt_status['day_trades_used']
+                            max_trades = pdt_status['max_day_trades']
+                            logger.warning(
+                                f"PDT protection: skipping early exit "
+                                f"({used}/{max_trades} day trades used in rolling window). "
+                                f"Trade will run to expiration."
+                            )
+                            self.db.log_event("pdt_blocked", "Early exit blocked by PDT", {
+                                'trade_id': trade.id,
+                                'original_reason': reason,
+                                'day_trades_used': used,
+                            })
+                            continue  # Skip this exit, let trade run to expiration
+
                     self._exit_trade(trade, reason)
                 
             except Exception as e:
@@ -258,11 +285,22 @@ class PositionManager:
             
             # Remove from open trades
             self.open_trades.remove(trade)
-            
+
             # Update database
             self.db.save_trade(trade)
             self.db.update_daily_stats(trade.entry_time.date())
-            
+
+            # Record day trade for PDT tracking (if same-day active close)
+            if self.pdt_tracker and trade.entry_time and trade.exit_time:
+                entry_date = trade.entry_time.date()
+                exit_date = trade.exit_time.date()
+                self.pdt_tracker.check_and_record_day_trade(
+                    trade_id=trade.id,
+                    entry_date=entry_date,
+                    exit_date=exit_date,
+                    exit_reason=reason,
+                )
+
         except Exception as e:
             logger.error(f"Failed to exit trade: {e}", exc_info=True)
     

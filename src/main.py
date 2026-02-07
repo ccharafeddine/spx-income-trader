@@ -40,6 +40,7 @@ from src.core.tag_n_turn import TagNTurnStrategy
 from src.core.bnb_strategy import BnBStrategy
 from src.core.orb_strategy import ORBStrategy
 from src.core.portfolio_manager import PortfolioManager, StrategyType
+from src.core.pdt_tracker import PDTTracker
 from src.data.market_data import MarketDataFeed
 from database.db_manager import DatabaseManager
 from src.utils.notifications import NotificationManager
@@ -69,9 +70,33 @@ class TradingBot:
         self.notifier = notification_manager
         self.dry_run = dry_run
         self.skip_confirm = skip_confirm
-        
+
+        # Initialize PDT Tracker
+        pdt_cfg = STRATEGY_PARAMS.get('pdt', {})
+        pdt_enabled = pdt_cfg.get('pdt_protection', True)
+
+        # Account equity callback for PDT threshold checking
+        def get_account_equity():
+            try:
+                balance = broker.get_account_balance()
+                return balance.get('net_account_value', 0)
+            except Exception:
+                return 0
+
+        self.pdt_tracker = PDTTracker(
+            db_path=DATABASE_PATH,
+            enabled=pdt_enabled,
+            threshold=pdt_cfg.get('pdt_threshold', 25000),
+            max_day_trades=pdt_cfg.get('pdt_max_day_trades', 3),
+            window_days=pdt_cfg.get('pdt_window_days', 5),
+            get_account_equity=get_account_equity,
+        )
+
         # Initialize components
-        self.position_manager = PositionManager(broker, strategy, db_manager)
+        self.position_manager = PositionManager(
+            broker, strategy, db_manager,
+            pdt_tracker=self.pdt_tracker
+        )
         self.bar_builder = BarBuilder(interval_minutes=30)
         filters_cfg = STRATEGY_PARAMS.get('filters', {})
         self.bollinger_enabled = filters_cfg.get('bollinger_enabled', True)
@@ -256,6 +281,15 @@ class TradingBot:
                         self.orb_strategy.reset_daily()
                     if self.bnb_enabled and self.bnb_strategy:
                         self.bnb_strategy.on_day_start()  # Activate overnight signal
+
+                    # Refresh PDT tracker account equity for new day
+                    if self.pdt_tracker:
+                        self.pdt_tracker.refresh_account_equity()
+                        pdt_status = self.pdt_tracker.get_pdt_status()
+                        logger.info(
+                            f"PDT status: {pdt_status['day_trades_used']}/{pdt_status['max_day_trades']} "
+                            f"day trades used, restricted={pdt_status['is_restricted']}"
+                        )
 
                 # Heartbeat logging every 5 minutes
                 if (current_time - last_heartbeat).total_seconds() >= 300:
