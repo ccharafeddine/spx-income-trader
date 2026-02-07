@@ -32,6 +32,7 @@ from config.settings import (
     ETRADE_CONFIG, is_etrade_configured, save_etrade_credentials, clear_etrade_credentials
 )
 from src.data.yahoo_finance import YahooFinanceProvider
+from src.utils.version import APP_VERSION
 
 import pytz
 
@@ -1054,6 +1055,7 @@ def api_status():
     etrade_token = _try_renew_etrade_token()
 
     return jsonify({
+        'version': APP_VERSION,
         'bot': bot,
         'mode': mode,
         'market': market,

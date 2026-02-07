@@ -43,6 +43,7 @@ from config.settings import (
     DASHBOARD_PORT, STRATEGY_PARAMS,
 )
 from src.utils.logging import setup_logging
+from src.utils.version import APP_VERSION, check_for_updates
 
 # Configure logging
 setup_logging(LOG_FILE, LOG_LEVEL)
@@ -120,6 +121,9 @@ class DesktopApp:
         self._tray_icon = None           # pystray.Icon instance
         self._force_quit = False         # Bypass minimize-to-tray on close
 
+        # Version update check result (populated by background thread)
+        self._update_info = None
+
         # Import the Flask app and register bot control routes on it
         from dashboard.app import app as flask_app
         self._flask_app = flask_app
@@ -160,6 +164,18 @@ class DesktopApp:
             from flask import jsonify
             return jsonify(desktop.get_bot_status())
 
+        @app.route('/api/version', methods=['GET'])
+        def api_version():
+            from flask import jsonify
+            info = desktop._update_info or {
+                'current_version': APP_VERSION,
+                'latest_version': None,
+                'update_available': False,
+                'download_url': None,
+                'error': None,
+            }
+            return jsonify(info)
+
         @app.route('/api/settings/minimize-to-tray', methods=['GET', 'PUT'])
         def api_minimize_to_tray():
             from flask import request, jsonify
@@ -177,7 +193,7 @@ class DesktopApp:
     def start(self, headless=False, dev=False):
         """Start the desktop application (blocks until shutdown)."""
         logger.info("=" * 60)
-        logger.info("SPX Income Trader - Desktop Application")
+        logger.info(f"SPX Income Trader v{APP_VERSION} - Desktop Application")
         logger.info(f"Dashboard: {self._url}")
         logger.info("=" * 60)
 
@@ -195,6 +211,13 @@ class DesktopApp:
             return
 
         logger.info(f"Dashboard ready at {self._url}")
+
+        # Check for updates in background (never blocks startup)
+        threading.Thread(
+            target=self._run_update_check,
+            daemon=True,
+            name="update-check",
+        ).start()
 
         # Launch the appropriate UI mode
         if headless:
@@ -273,6 +296,29 @@ class DesktopApp:
         self._webview_window = None
         self._stop_tray()
         self.shutdown()
+
+    # ------------------------------------------------------------------
+    # Version update check
+    # ------------------------------------------------------------------
+
+    def _run_update_check(self):
+        """Check for updates in background. Failures are silently ignored."""
+        try:
+            app_cfg = STRATEGY_PARAMS.get('app', {})
+            url = app_cfg.get('update_check_url')
+            dl_url = app_cfg.get('download_url')
+            self._update_info = check_for_updates(
+                update_url=url, download_url=dl_url,
+            )
+        except Exception as exc:
+            logger.debug("Update check failed: %s", exc)
+            self._update_info = {
+                'current_version': APP_VERSION,
+                'latest_version': None,
+                'update_available': False,
+                'download_url': None,
+                'error': str(exc),
+            }
 
     # ------------------------------------------------------------------
     # Bot management

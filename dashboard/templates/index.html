@@ -1300,6 +1300,43 @@ header::after {
 }
 .warning-banner .banner-dismiss:hover { background: var(--amber); color: #000; }
 
+/* Update available banner */
+.update-banner {
+  display: none;
+  padding: 8px 24px;
+  background: rgba(6, 182, 212, 0.1);
+  border-bottom: 1px solid var(--cyan);
+  font-size: 13px;
+  color: var(--cyan);
+  text-align: center;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+}
+.update-banner.visible { display: flex; }
+.update-banner a {
+  color: #fff;
+  text-decoration: underline;
+  font-weight: 500;
+}
+.update-banner a:hover { color: var(--cyan); }
+.update-banner .banner-dismiss {
+  background: none; border: 1px solid var(--cyan); color: var(--cyan);
+  border-radius: 3px; padding: 2px 8px; font-size: 11px; cursor: pointer;
+  font-family: var(--font-ui); margin-left: 12px;
+}
+.update-banner .banner-dismiss:hover { background: var(--cyan); color: #000; }
+
+/* App footer */
+.app-footer {
+  padding: 8px 24px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+}
+
 /* Crash banner */
 .crash-banner {
   display: none;
@@ -1631,6 +1668,12 @@ header::after {
 <!-- E*TRADE token warning banner -->
 <div id="etrade-token-banner" style="display:none; padding:10px 24px; font-size:13px; text-align:center; cursor:pointer;"
      onclick="window.location='/settings'"></div>
+
+<!-- Update available banner -->
+<div class="update-banner" id="update-banner">
+  <span id="update-banner-text"></span>
+  <button class="banner-dismiss" onclick="dismissUpdateBanner()">Dismiss</button>
+</div>
 
 <!-- Settings Overlay -->
 <div class="settings-overlay" id="settings-overlay" onclick="toggleSettings()"></div>
@@ -2455,6 +2498,11 @@ async function updateStatus() {
     dot.className = 'dot';
     txt.textContent = d.bot.status === 'stale' ? 'STALE' : 'STOPPED';
     txt.style.color = 'var(--red)';
+  }
+
+  // Version (in footer)
+  if (d.version) {
+    document.getElementById('app-version').textContent = 'v' + d.version;
   }
 
   // Bot crash banner (desktop mode)
@@ -3705,9 +3753,37 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
+// ---------------------------------------------------------------
+// Version Update Check (runs once on load)
+// ---------------------------------------------------------------
+let updateBannerDismissed = false;
+
+async function checkForUpdates() {
+  try {
+    const data = await fetchJSON('/api/version');
+    if (!data || !data.update_available) return;
+
+    const banner = document.getElementById('update-banner');
+    const text = document.getElementById('update-banner-text');
+    const dlLink = data.download_url
+      ? ' <a href="' + data.download_url + '" target="_blank" rel="noopener">Download update</a>'
+      : '';
+    text.innerHTML = 'Version ' + data.latest_version + ' is available. You are running ' + data.current_version + '.' + dlLink;
+    banner.classList.add('visible');
+  } catch (e) {
+    // Silently ignore - never block the UI for update checks
+  }
+}
+
+function dismissUpdateBanner() {
+  updateBannerDismissed = true;
+  document.getElementById('update-banner').classList.remove('visible');
+}
+
 // Initial load
 checkDesktopMode();
 refreshAll().then(() => { initialLoad = false; });
+checkForUpdates();
 
 // ---------------------------------------------------------------
 // Logs Tab
@@ -3943,5 +4019,10 @@ document.addEventListener('keydown', function(e) {
   }
 });
 </script>
+
+<footer class="app-footer">
+  SPX Income Trader <span id="app-version">v--</span>
+</footer>
+
 </body>
 </html>
