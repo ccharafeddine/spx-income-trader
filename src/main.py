@@ -30,6 +30,8 @@ from config.settings import (
 )
 from src.brokers.paper_trader import PaperBroker
 from src.brokers.dry_run_broker import DryRunBroker
+from src.brokers.etrade_broker import ETradeBroker
+from src.brokers.etrade_auth import ETradeAuth
 from src.core.strategy import SPXIncomeStrategy
 from src.core.position_manager import PositionManager
 from src.core.bar_builder import BarBuilder
@@ -777,6 +779,16 @@ def main():
         action='store_true',
         help='Skip trade confirmation prompts (useful for unattended dry runs)'
     )
+    parser.add_argument(
+        '--confirm-live',
+        action='store_true',
+        help='Required flag to confirm you want to start LIVE trading with real money'
+    )
+    parser.add_argument(
+        '--auto-trade',
+        action='store_true',
+        help='Skip per-trade confirmation prompts in live mode (use with caution)'
+    )
 
     args = parser.parse_args()
 
@@ -818,11 +830,82 @@ def main():
         if args.dry_run:
             logger.info("*** DRY RUN MODE - Using real market data, no orders will be placed ***")
             broker = DryRunBroker(initial_balance=50000.0)
+            skip_confirm = args.no_confirm
         elif args.mode == 'paper':
             broker = PaperBroker(initial_balance=50000.0)
+            skip_confirm = args.no_confirm
         else:
-            logger.error("Live trading not yet implemented. Use --mode paper or --dry-run")
-            return 1
+            # --- LIVE TRADING MODE ---
+            # Require explicit --confirm-live flag to prevent accidental live starts
+            if not args.confirm_live:
+                print("\n" + "=" * 60)
+                print("WARNING: You are about to start LIVE trading with real money.")
+                print("Add --confirm-live to proceed.")
+                print("=" * 60 + "\n")
+                return 1
+
+            logger.info("*** LIVE TRADING MODE - Real orders will be placed ***")
+
+            # Authenticate with E*TRADE
+            etrade_auth = ETradeAuth()
+            logger.info("Authenticating with E*TRADE...")
+            if not etrade_auth.authenticate():
+                logger.error("E*TRADE authentication failed. Cannot start live trading.")
+                print("ERROR: E*TRADE authentication failed. Check your credentials and try again.")
+                return 1
+            logger.info("E*TRADE authentication successful")
+
+            # Create live broker
+            broker = ETradeBroker(auth=etrade_auth)
+
+            # Pre-flight checks: verify broker connectivity before starting the bot
+            logger.info("Running pre-flight checks...")
+            preflight_passed = True
+
+            # Check 1: Fetch a quote
+            try:
+                price = broker.get_current_price("SPX")
+                if price <= 0:
+                    raise ValueError(f"Got invalid SPX price: {price}")
+                logger.info(f"  [OK] SPX quote: ${price:,.2f}")
+            except Exception as e:
+                logger.error(f"  [FAIL] Could not fetch SPX quote: {e}")
+                preflight_passed = False
+
+            # Check 2: Fetch options chain
+            try:
+                today_str = datetime.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                chain = broker.get_options_chain("SPX", today_str)
+                if not chain:
+                    raise ValueError("Options chain returned empty")
+                logger.info(f"  [OK] Options chain: {len(chain)} strikes loaded")
+            except Exception as e:
+                logger.error(f"  [FAIL] Could not fetch options chain: {e}")
+                preflight_passed = False
+
+            # Check 3: Read account balance
+            try:
+                balance = broker.get_account_balance()
+                net_value = balance.get('net_account_value', 0)
+                if net_value <= 0:
+                    raise ValueError(f"Got invalid account value: {net_value}")
+                logger.info(f"  [OK] Account balance: ${net_value:,.2f}")
+            except Exception as e:
+                logger.error(f"  [FAIL] Could not read account balance: {e}")
+                preflight_passed = False
+
+            if not preflight_passed:
+                logger.error("Pre-flight checks failed. Fix the issues above before starting live trading.")
+                return 1
+
+            logger.info("All pre-flight checks passed")
+
+            # In live mode, force manual confirmation of each trade unless --auto-trade is set
+            skip_confirm = args.auto_trade
+            if not skip_confirm:
+                logger.info("Live mode: per-trade confirmation ENABLED (pass --auto-trade to disable)")
+            else:
+                logger.warning("Live mode: per-trade confirmation DISABLED (--auto-trade active)")
 
         strategy = SPXIncomeStrategy()
         db_manager = DatabaseManager(DATABASE_PATH)
@@ -832,7 +915,7 @@ def main():
         bot = TradingBot(
             broker, strategy, db_manager, notifier,
             dry_run=args.dry_run,
-            skip_confirm=args.no_confirm
+            skip_confirm=skip_confirm
         )
 
         # Set up signal handlers
