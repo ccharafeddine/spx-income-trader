@@ -1,0 +1,19 @@
+# Desktop application dependencies
+# Includes all base requirements plus desktop-specific packages
+
+-r requirements.txt
+
+# Desktop GUI
+pywebview>=4.0
+
+# Secure credential storage
+keyring>=24.0
+
+# Platform-specific directories (config, cache, etc.)
+platformdirs>=4.0
+
+# System tray icon
+pystray>=0.19
+
+# Image processing (required by pystray)
+Pillow>=10.0
