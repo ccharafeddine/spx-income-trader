@@ -138,6 +138,11 @@ class DesktopApp:
         app = self._flask_app
         desktop = self
 
+        # Expose the authoritative bot status function so the dashboard's
+        # /api/status can use it instead of the lockfile-based check (which
+        # doesn't work in desktop mode since the PID is always this process).
+        app._desktop_get_bot_status = desktop.get_bot_status
+
         @app.route('/api/bot/start', methods=['POST'])
         def api_bot_start():
             from flask import request, jsonify

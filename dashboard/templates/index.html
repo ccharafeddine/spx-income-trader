@@ -3713,6 +3713,7 @@ async function stopBot() {
       alert('Failed to stop bot: ' + data.error);
       btn.disabled = false;
       btn.textContent = 'Stop Bot';
+      refreshAll();
       return;
     }
     // Signal sent. Poll status until bot fully stops (max ~10s).

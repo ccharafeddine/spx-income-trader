@@ -72,11 +72,19 @@ MIN_CREDIT_THRESHOLD = 1.00  # Signals below this were before safeguards
 # ---------------------------------------------------------------------------
 
 def check_bot_status():
-    """Check if the trading bot process is running via its lockfile.
+    """Check if the trading bot process is running.
 
-    Includes heartbeat-based staleness detection as secondary check.
-    Uses different thresholds for market open vs closed hours.
+    In desktop mode the bot runs as a thread in the same process, so
+    the lockfile/PID check is unreliable (PID is always alive).  Use
+    the authoritative desktop status function when available.
+
+    In standalone mode, falls back to lockfile + PID + heartbeat checks.
     """
+    # Desktop mode: use the in-process bot status (authoritative)
+    desktop_fn = getattr(app, '_desktop_get_bot_status', None)
+    if desktop_fn is not None:
+        return desktop_fn()
+
     if not LOCKFILE.exists():
         return {'running': False, 'pid': None, 'status': 'stopped'}
 
