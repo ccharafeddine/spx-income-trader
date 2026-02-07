@@ -21,9 +21,13 @@ logs/*.log
 .vscode/
 .idea/
 
-# Tokens
+# Tokens and credentials
 tokens/
 *.token
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Strategy PDF (copyrighted material)
 *.pdf
@@ -32,6 +36,13 @@ tokens/
 database/*.json
 signals_*.json
 
+# Build artifacts
+dist/
+build/_pyinstaller/
+build/Output/
+*.spec
+
 # OS files
 .DS_Store
 Thumbs.db
+nul

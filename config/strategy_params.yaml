@@ -183,3 +183,24 @@ orb:
 
   # ORB trades don't count against daily income limit
   separate_daily_limit: true
+
+# ============================================
+# PDT (Pattern Day Trader) RULE PROTECTION
+# ============================================
+# Prevents PDT rule violations for accounts under $25,000
+# A "day trade" = position opened AND actively closed same day
+# Expiration (0DTE running to close) does NOT count as day trade
+pdt:
+  # Master switch - set to false to disable PDT protection entirely
+  pdt_protection: true
+
+  # Account equity threshold - PDT rules apply below this amount
+  # At or above this threshold, unlimited day trades are allowed
+  pdt_threshold: 25000
+
+  # Maximum day trades allowed in the rolling window
+  # FINRA PDT rule allows 3 day trades per 5 business days
+  pdt_max_day_trades: 3
+
+  # Rolling window in business days (excludes weekends and NYSE holidays)
+  pdt_window_days: 5

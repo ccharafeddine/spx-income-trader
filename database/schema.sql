@@ -89,3 +89,17 @@ CREATE TABLE IF NOT EXISTS journal_notes (
 CREATE INDEX IF NOT EXISTS idx_trades_entry_time ON trades(entry_time);
 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
 CREATE INDEX IF NOT EXISTS idx_daily_stats_date ON daily_stats(date);
+
+-- PDT (Pattern Day Trader) day trade tracking
+-- Records trades that were opened AND actively closed on the same day
+-- Expiration (0DTE running to close) does NOT count as a day trade
+CREATE TABLE IF NOT EXISTS pdt_day_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_id TEXT NOT NULL,
+    trade_date DATE NOT NULL,
+    exit_reason TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(trade_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pdt_trade_date ON pdt_day_trades(trade_date);

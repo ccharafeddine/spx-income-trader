@@ -30,6 +30,8 @@ from config.settings import (
 )
 from src.brokers.paper_trader import PaperBroker
 from src.brokers.dry_run_broker import DryRunBroker
+from src.brokers.etrade_broker import ETradeBroker
+from src.brokers.etrade_auth import ETradeAuth
 from src.core.strategy import SPXIncomeStrategy
 from src.core.position_manager import PositionManager
 from src.core.bar_builder import BarBuilder
@@ -38,6 +40,7 @@ from src.core.tag_n_turn import TagNTurnStrategy
 from src.core.bnb_strategy import BnBStrategy
 from src.core.orb_strategy import ORBStrategy
 from src.core.portfolio_manager import PortfolioManager, StrategyType
+from src.core.pdt_tracker import PDTTracker
 from src.data.market_data import MarketDataFeed
 from database.db_manager import DatabaseManager
 from src.utils.notifications import NotificationManager
@@ -67,9 +70,33 @@ class TradingBot:
         self.notifier = notification_manager
         self.dry_run = dry_run
         self.skip_confirm = skip_confirm
-        
+
+        # Initialize PDT Tracker
+        pdt_cfg = STRATEGY_PARAMS.get('pdt', {})
+        pdt_enabled = pdt_cfg.get('pdt_protection', True)
+
+        # Account equity callback for PDT threshold checking
+        def get_account_equity():
+            try:
+                balance = broker.get_account_balance()
+                return balance.get('net_account_value', 0)
+            except Exception:
+                return 0
+
+        self.pdt_tracker = PDTTracker(
+            db_path=DATABASE_PATH,
+            enabled=pdt_enabled,
+            threshold=pdt_cfg.get('pdt_threshold', 25000),
+            max_day_trades=pdt_cfg.get('pdt_max_day_trades', 3),
+            window_days=pdt_cfg.get('pdt_window_days', 5),
+            get_account_equity=get_account_equity,
+        )
+
         # Initialize components
-        self.position_manager = PositionManager(broker, strategy, db_manager)
+        self.position_manager = PositionManager(
+            broker, strategy, db_manager,
+            pdt_tracker=self.pdt_tracker
+        )
         self.bar_builder = BarBuilder(interval_minutes=30)
         filters_cfg = STRATEGY_PARAMS.get('filters', {})
         self.bollinger_enabled = filters_cfg.get('bollinger_enabled', True)
@@ -255,6 +282,15 @@ class TradingBot:
                     if self.bnb_enabled and self.bnb_strategy:
                         self.bnb_strategy.on_day_start()  # Activate overnight signal
 
+                    # Refresh PDT tracker account equity for new day
+                    if self.pdt_tracker:
+                        self.pdt_tracker.refresh_account_equity()
+                        pdt_status = self.pdt_tracker.get_pdt_status()
+                        logger.info(
+                            f"PDT status: {pdt_status['day_trades_used']}/{pdt_status['max_day_trades']} "
+                            f"day trades used, restricted={pdt_status['is_restricted']}"
+                        )
+
                 # Heartbeat logging every 5 minutes
                 if (current_time - last_heartbeat).total_seconds() >= 300:
                     setup_str = ""
@@ -290,8 +326,11 @@ class TradingBot:
                     consecutive_errors = 0
                     continue
 
-                # Monitor existing positions
-                self.position_manager.monitor_positions()
+                # Monitor existing positions and accumulate realized P&L
+                closed_pnl = self.position_manager.monitor_positions()
+                if closed_pnl != 0:
+                    self.daily_pnl += closed_pnl
+                    logger.info(f"Daily P&L updated: ${self.daily_pnl:.2f} (trade closed: ${closed_pnl:+.2f})")
 
                 # Look for new setups
                 if self._is_setup_window(current_time):
@@ -777,6 +816,16 @@ def main():
         action='store_true',
         help='Skip trade confirmation prompts (useful for unattended dry runs)'
     )
+    parser.add_argument(
+        '--confirm-live',
+        action='store_true',
+        help='Required flag to confirm you want to start LIVE trading with real money'
+    )
+    parser.add_argument(
+        '--auto-trade',
+        action='store_true',
+        help='Skip per-trade confirmation prompts in live mode (use with caution)'
+    )
 
     args = parser.parse_args()
 
@@ -818,11 +867,82 @@ def main():
         if args.dry_run:
             logger.info("*** DRY RUN MODE - Using real market data, no orders will be placed ***")
             broker = DryRunBroker(initial_balance=50000.0)
+            skip_confirm = args.no_confirm
         elif args.mode == 'paper':
             broker = PaperBroker(initial_balance=50000.0)
+            skip_confirm = args.no_confirm
         else:
-            logger.error("Live trading not yet implemented. Use --mode paper or --dry-run")
-            return 1
+            # --- LIVE TRADING MODE ---
+            # Require explicit --confirm-live flag to prevent accidental live starts
+            if not args.confirm_live:
+                print("\n" + "=" * 60)
+                print("WARNING: You are about to start LIVE trading with real money.")
+                print("Add --confirm-live to proceed.")
+                print("=" * 60 + "\n")
+                return 1
+
+            logger.info("*** LIVE TRADING MODE - Real orders will be placed ***")
+
+            # Authenticate with E*TRADE
+            etrade_auth = ETradeAuth()
+            logger.info("Authenticating with E*TRADE...")
+            if not etrade_auth.authenticate():
+                logger.error("E*TRADE authentication failed. Cannot start live trading.")
+                print("ERROR: E*TRADE authentication failed. Check your credentials and try again.")
+                return 1
+            logger.info("E*TRADE authentication successful")
+
+            # Create live broker
+            broker = ETradeBroker(auth=etrade_auth)
+
+            # Pre-flight checks: verify broker connectivity before starting the bot
+            logger.info("Running pre-flight checks...")
+            preflight_passed = True
+
+            # Check 1: Fetch a quote
+            try:
+                price = broker.get_current_price("SPX")
+                if price <= 0:
+                    raise ValueError(f"Got invalid SPX price: {price}")
+                logger.info(f"  [OK] SPX quote: ${price:,.2f}")
+            except Exception as e:
+                logger.error(f"  [FAIL] Could not fetch SPX quote: {e}")
+                preflight_passed = False
+
+            # Check 2: Fetch options chain
+            try:
+                today_str = datetime.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                chain = broker.get_options_chain("SPX", today_str)
+                if not chain:
+                    raise ValueError("Options chain returned empty")
+                logger.info(f"  [OK] Options chain: {len(chain)} strikes loaded")
+            except Exception as e:
+                logger.error(f"  [FAIL] Could not fetch options chain: {e}")
+                preflight_passed = False
+
+            # Check 3: Read account balance
+            try:
+                balance = broker.get_account_balance()
+                net_value = balance.get('net_account_value', 0)
+                if net_value <= 0:
+                    raise ValueError(f"Got invalid account value: {net_value}")
+                logger.info(f"  [OK] Account balance: ${net_value:,.2f}")
+            except Exception as e:
+                logger.error(f"  [FAIL] Could not read account balance: {e}")
+                preflight_passed = False
+
+            if not preflight_passed:
+                logger.error("Pre-flight checks failed. Fix the issues above before starting live trading.")
+                return 1
+
+            logger.info("All pre-flight checks passed")
+
+            # In live mode, force manual confirmation of each trade unless --auto-trade is set
+            skip_confirm = args.auto_trade
+            if not skip_confirm:
+                logger.info("Live mode: per-trade confirmation ENABLED (pass --auto-trade to disable)")
+            else:
+                logger.warning("Live mode: per-trade confirmation DISABLED (--auto-trade active)")
 
         strategy = SPXIncomeStrategy()
         db_manager = DatabaseManager(DATABASE_PATH)
@@ -832,7 +952,7 @@ def main():
         bot = TradingBot(
             broker, strategy, db_manager, notifier,
             dry_run=args.dry_run,
-            skip_confirm=args.no_confirm
+            skip_confirm=skip_confirm
         )
 
         # Set up signal handlers

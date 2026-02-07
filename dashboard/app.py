@@ -9,12 +9,14 @@ import sys
 import os
 import re
 import json
+import logging
 import sqlite3
 import ctypes
+import time
 import yaml
 from pathlib import Path
 from datetime import datetime, date, timedelta
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, redirect, url_for
 
 # Project root setup
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -27,14 +29,35 @@ SETTINGS_CHANGED_FILE = PROJECT_ROOT / 'database' / '.settings_changed'
 
 from config.settings import (
     BASE_DIR, DATABASE_PATH, LOG_FILE,
-    DASHBOARD_PORT, DASHBOARD_HOST, STRATEGY_PARAMS
+    DASHBOARD_PORT, DASHBOARD_HOST, STRATEGY_PARAMS,
+    ETRADE_CONFIG, is_etrade_configured, save_etrade_credentials, clear_etrade_credentials
 )
 from src.data.yahoo_finance import YahooFinanceProvider
+from src.utils.version import APP_VERSION
 
 import pytz
 
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 ET = pytz.timezone('US/Eastern')
+
+
+# ---------------------------------------------------------------------------
+# Middleware: Redirect to setup if not configured
+# ---------------------------------------------------------------------------
+
+@app.before_request
+def check_setup_required():
+    """Redirect to setup if E*TRADE credentials are not configured."""
+    # Allow setup, static, and auth routes without credentials
+    allowed_paths = ['/setup', '/static', '/api/setup/status', '/auth/etrade/']
+    if any(request.path.startswith(p) for p in allowed_paths):
+        return None
+
+    # Check if credentials are configured
+    if not is_etrade_configured():
+        return redirect(url_for('setup'))
 
 # Shared Yahoo Finance provider (has its own 60s cache)
 yahoo = YahooFinanceProvider()
@@ -506,6 +529,376 @@ def compute_account(conn, spx_price):
 # Routes
 # ---------------------------------------------------------------------------
 
+@app.route('/setup', methods=['GET', 'POST'])
+def setup():
+    """Setup/onboarding page for E*TRADE credentials."""
+    error = None
+    success = None
+
+    if request.method == 'POST':
+        consumer_key = request.form.get('consumer_key', '').strip()
+        consumer_secret = request.form.get('consumer_secret', '').strip()
+        account_id = request.form.get('account_id', '').strip()
+        environment = request.form.get('environment', 'sandbox')
+
+        # Validate fields
+        if not consumer_key or not consumer_secret or not account_id:
+            error = 'All fields are required.'
+        else:
+            # Save to keychain
+            sandbox = environment != 'production'
+            if save_etrade_credentials(consumer_key, consumer_secret, account_id, sandbox):
+                return redirect(url_for('index'))
+            else:
+                error = 'Failed to save credentials. Make sure keyring is installed.'
+
+        return render_template('setup.html',
+            error=error,
+            consumer_key=consumer_key,
+            account_id=account_id,
+            environment=environment,
+            is_configured=is_etrade_configured()
+        )
+
+    # GET request
+    return render_template('setup.html',
+        is_configured=is_etrade_configured(),
+        environment='sandbox' if ETRADE_CONFIG.get('sandbox', True) else 'production'
+    )
+
+
+@app.route('/settings', methods=['GET', 'POST'])
+def settings():
+    """Settings page for managing credentials and viewing PDT status."""
+    message = None
+    message_type = None
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+
+        if action == 'update_credentials':
+            consumer_key = request.form.get('consumer_key', '').strip()
+            consumer_secret = request.form.get('consumer_secret', '').strip()
+            account_id = request.form.get('account_id', '').strip()
+            environment = request.form.get('environment', 'sandbox')
+
+            # Only update if new values provided (not masked placeholders)
+            if consumer_key and not consumer_key.startswith('****'):
+                # Get existing values if partial update
+                existing_key = ETRADE_CONFIG.get('consumer_key') or ''
+                existing_secret = ETRADE_CONFIG.get('consumer_secret') or ''
+                existing_account = ETRADE_CONFIG.get('account_id') or ''
+
+                new_key = consumer_key if consumer_key else existing_key
+                new_secret = consumer_secret if consumer_secret else existing_secret
+                new_account = account_id if (account_id and not account_id.startswith('****')) else existing_account
+
+                sandbox = environment != 'production'
+                if save_etrade_credentials(new_key, new_secret, new_account, sandbox):
+                    message = 'Credentials updated successfully.'
+                    message_type = 'success'
+                else:
+                    message = 'Failed to save credentials.'
+                    message_type = 'error'
+            else:
+                message = 'No changes detected.'
+                message_type = 'success'
+
+    # Prepare masked values for display
+    key = ETRADE_CONFIG.get('consumer_key') or ''
+    account = ETRADE_CONFIG.get('account_id') or ''
+    masked_key = '****' + key[-4:] if len(key) > 4 else key
+    masked_account = '****' + account[-4:] if len(account) > 4 else account
+
+    return render_template('settings.html',
+        message=message,
+        message_type=message_type,
+        masked_key=masked_key,
+        masked_account=masked_account,
+        is_production=not ETRADE_CONFIG.get('sandbox', True),
+        credential_source=ETRADE_CONFIG.get('credential_source', 'none').title()
+    )
+
+
+@app.route('/api/setup/status')
+def api_setup_status():
+    """Check if credentials are configured."""
+    return jsonify({'configured': is_etrade_configured()})
+
+
+@app.route('/api/test-connection')
+def api_test_connection():
+    """Test E*TRADE API connection."""
+    if not is_etrade_configured():
+        return jsonify({'success': False, 'error': 'Credentials not configured'})
+
+    try:
+        # Try to get SPX quote via Yahoo (always works)
+        spx = yahoo.get_spx_quote() or {}
+        spx_price = spx.get('price')
+
+        if spx_price:
+            return jsonify({
+                'success': True,
+                'spx_price': spx_price,
+                'message': 'Connection successful'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Could not fetch SPX price'
+            })
+    except Exception as e:
+        logger.error(f"Test connection failed: {e}")
+        return jsonify({'success': False, 'error': 'Connection test failed'})
+
+
+@app.route('/api/clear-credentials', methods=['POST'])
+def api_clear_credentials():
+    """Clear stored credentials from keychain."""
+    try:
+        if clear_etrade_credentials():
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to clear credentials'})
+    except Exception as e:
+        logger.error(f"Failed to clear credentials: {e}")
+        return jsonify({'success': False, 'error': 'Failed to clear credentials'})
+
+
+# ---------------------------------------------------------------------------
+# E*TRADE OAuth flow (web-based, non-blocking)
+# ---------------------------------------------------------------------------
+
+# Temporary storage for pending OAuth request tokens (single-user app)
+_pending_oauth = {}
+
+
+def _get_etrade_auth():
+    """Create an ETradeAuth instance from current config."""
+    from src.brokers.etrade_auth import ETradeAuth
+    return ETradeAuth(
+        consumer_key=ETRADE_CONFIG.get('consumer_key'),
+        consumer_secret=ETRADE_CONFIG.get('consumer_secret'),
+        sandbox=ETRADE_CONFIG.get('sandbox', True),
+        token_file=ETRADE_CONFIG.get('token_file'),
+    )
+
+
+@app.route('/auth/etrade/start')
+def auth_etrade_start():
+    """Initiate E*TRADE OAuth flow. Returns the authorization URL as JSON."""
+    if not is_etrade_configured():
+        return jsonify({'error': 'E*TRADE credentials not configured. Complete setup first.'}), 400
+
+    try:
+        auth = _get_etrade_auth()
+        request_token, request_token_secret = auth._get_request_token()
+        auth_url = auth._get_authorization_url(request_token)
+
+        # Store pending tokens for the callback
+        _pending_oauth['request_token'] = request_token
+        _pending_oauth['request_token_secret'] = request_token_secret
+
+        return jsonify({'auth_url': auth_url})
+    except Exception as e:
+        logger.error(f"OAuth start failed: {e}")
+        return jsonify({'error': 'Failed to start OAuth flow. Check credentials and try again.'}), 500
+
+
+@app.route('/auth/etrade/callback', methods=['POST'])
+def auth_etrade_callback():
+    """Complete OAuth token exchange with the verifier code."""
+    data = request.get_json()
+    if not data or not data.get('verifier'):
+        return jsonify({'error': 'Verifier code is required'}), 400
+
+    if not _pending_oauth.get('request_token'):
+        return jsonify({'error': 'No pending OAuth flow. Start the flow first.'}), 400
+
+    verifier = data['verifier'].strip()
+    if not verifier:
+        return jsonify({'error': 'Verifier code cannot be empty'}), 400
+
+    try:
+        auth = _get_etrade_auth()
+        access_token, access_token_secret = auth._get_access_token(
+            _pending_oauth['request_token'],
+            _pending_oauth['request_token_secret'],
+            verifier,
+        )
+
+        # Store tokens via the auth instance
+        auth.access_token = access_token
+        auth.access_token_secret = access_token_secret
+        auth.token_timestamp = time.time()
+        auth._save_tokens()
+
+        # Clear pending state
+        _pending_oauth.clear()
+
+        return jsonify({
+            'success': True,
+            'message': 'E*TRADE connected successfully',
+            'token_age_hours': 0.0,
+        })
+    except Exception as e:
+        # Clear pending state on failure too
+        _pending_oauth.clear()
+        logger.error(f"OAuth token exchange failed: {e}")
+        return jsonify({'error': 'Token exchange failed. Please try again.'}), 500
+
+
+@app.route('/auth/etrade/status')
+def auth_etrade_status():
+    """Check whether valid OAuth tokens exist and their age."""
+    if not is_etrade_configured():
+        return jsonify({'connected': False, 'reason': 'Credentials not configured'})
+
+    token_file = ETRADE_CONFIG.get('token_file')
+    if not token_file or not os.path.exists(token_file):
+        return jsonify({'connected': False, 'reason': 'No tokens found'})
+
+    try:
+        with open(token_file, 'r') as f:
+            token_data = json.load(f)
+
+        timestamp = token_data.get('timestamp', 0)
+        age_hours = (time.time() - timestamp) / 3600
+
+        # Tokens are invalid if older than 2 hours or environment mismatch
+        sandbox = ETRADE_CONFIG.get('sandbox', True)
+        if token_data.get('sandbox') != sandbox:
+            return jsonify({
+                'connected': False,
+                'reason': 'Token environment mismatch',
+            })
+
+        if age_hours > 2.0:
+            return jsonify({
+                'connected': False,
+                'reason': 'Tokens expired (older than 2 hours)',
+                'token_age_hours': round(age_hours, 2),
+            })
+
+        return jsonify({
+            'connected': True,
+            'token_age_hours': round(age_hours, 2),
+            'expires_in_minutes': max(0, round((2.0 - age_hours) * 60)),
+            'needs_renewal': age_hours > 1.5,
+        })
+
+    except Exception as e:
+        logger.error(f"Error reading token status: {e}")
+        return jsonify({'connected': False, 'reason': 'Error reading token status'})
+
+
+@app.route('/auth/etrade/disconnect', methods=['POST'])
+def auth_etrade_disconnect():
+    """Revoke and delete E*TRADE OAuth tokens."""
+    token_file = ETRADE_CONFIG.get('token_file')
+
+    # Try to revoke the token on E*TRADE's side first
+    if token_file and os.path.exists(token_file):
+        try:
+            auth = _get_etrade_auth()
+            auth._load_tokens()
+            auth.revoke_token()
+        except Exception:
+            pass  # Best effort - still delete locally
+
+        # Delete the token file
+        try:
+            os.remove(token_file)
+        except OSError:
+            pass
+
+    return jsonify({'success': True, 'message': 'Disconnected from E*TRADE'})
+
+
+def _try_renew_etrade_token():
+    """Attempt background token renewal. Returns status dict."""
+    token_file = ETRADE_CONFIG.get('token_file')
+    if not token_file or not os.path.exists(token_file):
+        return None
+
+    try:
+        with open(token_file, 'r') as f:
+            token_data = json.load(f)
+
+        timestamp = token_data.get('timestamp', 0)
+        age_hours = (time.time() - timestamp) / 3600
+
+        # Only renew if tokens are between 1.5 and 2.0 hours old
+        if age_hours < 1.5 or age_hours > 2.0:
+            if age_hours <= 1.5:
+                return {'status': 'fresh', 'age_hours': round(age_hours, 2)}
+            return {'status': 'expired', 'age_hours': round(age_hours, 2)}
+
+        # Attempt renewal
+        auth = _get_etrade_auth()
+        auth.access_token = token_data['access_token']
+        auth.access_token_secret = token_data['access_token_secret']
+        auth.token_timestamp = timestamp
+
+        if auth._renew_token():
+            return {'status': 'renewed', 'age_hours': 0.0}
+        else:
+            return {'status': 'renewal_failed', 'age_hours': round(age_hours, 2)}
+
+    except Exception as e:
+        logger.error(f"Token renewal check failed: {e}")
+        return {'status': 'error', 'error': 'Token renewal check failed'}
+
+
+@app.route('/api/pdt/status')
+def api_pdt_status():
+    """Get PDT tracker status."""
+    pdt_cfg = STRATEGY_PARAMS.get('pdt', {})
+
+    # If PDT tracking is disabled, return minimal status
+    if not pdt_cfg.get('pdt_protection', True):
+        return jsonify({
+            'enabled': False,
+            'is_restricted': False,
+            'day_trades_used': 0,
+            'day_trades_remaining': 999,
+            'max_day_trades': 3,
+            'account_value': None,
+            'threshold': 25000,
+            'next_slot_frees_on': None,
+        })
+
+    # Try to load PDT status from tracker
+    try:
+        from src.core.pdt_tracker import PDTTracker
+
+        tracker = PDTTracker(
+            db_path=DATABASE_PATH,
+            enabled=pdt_cfg.get('pdt_protection', True),
+            threshold=pdt_cfg.get('pdt_threshold', 25000),
+            max_day_trades=pdt_cfg.get('pdt_max_day_trades', 3),
+            window_days=pdt_cfg.get('pdt_window_days', 5),
+        )
+
+        status = tracker.get_pdt_status()
+        return jsonify(status)
+
+    except Exception as e:
+        logger.error(f"PDT status check failed: {e}")
+        return jsonify({
+            'enabled': True,
+            'is_restricted': False,
+            'day_trades_used': 0,
+            'day_trades_remaining': 3,
+            'max_day_trades': 3,
+            'account_value': None,
+            'threshold': 25000,
+            'next_slot_frees_on': None,
+            'error': 'Failed to load PDT status',
+        })
+
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -668,7 +1061,11 @@ def api_status():
     except Exception:
         pass
 
+    # E*TRADE token status + auto-renewal
+    etrade_token = _try_renew_etrade_token()
+
     return jsonify({
+        'version': APP_VERSION,
         'bot': bot,
         'mode': mode,
         'market': market,
@@ -685,6 +1082,7 @@ def api_status():
         'bnb': bnb_status,
         'orb': orb_status,
         'portfolio': portfolio_status,
+        'etrade_token': etrade_token,
     })
 
 
@@ -1138,7 +1536,8 @@ def api_journal_save_notes():
         conn.close()
         return jsonify({'status': 'ok', 'trade_id': trade_id})
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Failed to save journal notes: {e}")
+        return jsonify({'error': 'Failed to save journal notes'}), 500
 
 
 def _correlate_trade_with_signal(trade, signals):
@@ -1579,6 +1978,54 @@ def _get_journal_notes(conn, trade_id):
     }
 
 
+@app.route('/api/logs/recent')
+def api_logs_recent():
+    """Return the last N log lines for the dashboard Logs tab."""
+    limit = request.args.get('limit', 50, type=int)
+    limit = min(limit, 200)  # Cap at 200
+    lines = []
+    try:
+        with open(LOG_FILE, 'r', encoding='utf-8', errors='replace') as f:
+            # Read all lines and take the last N
+            all_lines = f.readlines()
+            tail = all_lines[-limit:]
+        for raw in tail:
+            raw = raw.rstrip('\n\r')
+            if not raw:
+                continue
+            # Parse level from log format: "YYYY-MM-DD HH:MM:SS - name - LEVEL - msg"
+            level = 'INFO'
+            for lv in ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'):
+                if f' - {lv} - ' in raw:
+                    level = lv
+                    break
+            lines.append({'line': raw, 'level': level})
+    except FileNotFoundError:
+        pass
+    return jsonify({'lines': lines})
+
+
+@app.route('/api/stale-positions')
+def api_stale_positions():
+    """Check for trades still marked 'active' that may be from a crashed session."""
+    try:
+        conn = get_db_connection()
+        rows = conn.execute(
+            "SELECT id, entry_time, direction, short_strike, long_strike, "
+            "credit_received, quantity, strategy_type "
+            "FROM trades WHERE status = 'active' ORDER BY entry_time"
+        ).fetchall()
+        conn.close()
+        positions = [dict(r) for r in rows]
+        return jsonify({
+            'count': len(positions),
+            'positions': positions,
+        })
+    except Exception as e:
+        logger.error(f"Stale positions check failed: {e}")
+        return jsonify({'count': 0, 'positions': [], 'error': 'Failed to check positions'})
+
+
 @app.route('/api/events')
 def api_events():
     """Recent system events."""
@@ -1689,7 +2136,8 @@ def api_update_settings():
         _save_runtime_settings(changes)
         return jsonify({'success': True})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error(f"Settings update failed: {e}")
+        return jsonify({'success': False, 'error': 'Failed to update settings'})
 
 
 @app.route('/api/settings/reset', methods=['POST'])
@@ -1701,7 +2149,8 @@ def api_reset_settings():
         _notify_bot_settings_changed()
         return jsonify({'success': True})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error(f"Settings reset failed: {e}")
+        return jsonify({'success': False, 'error': 'Failed to reset settings'})
 
 
 # ---------------------------------------------------------------------------
