@@ -3711,13 +3711,36 @@ async function stopBot() {
     const data = await resp.json();
     if (!data.success) {
       alert('Failed to stop bot: ' + data.error);
+      btn.disabled = false;
+      btn.textContent = 'Stop Bot';
+      return;
     }
+    // Signal sent. Poll status until bot fully stops (max ~10s).
+    let attempts = 0;
+    const pollStop = setInterval(async () => {
+      attempts++;
+      try {
+        const sr = await fetch('/api/bot/status');
+        const sd = await sr.json();
+        if (!sd.running && !sd.stopping) {
+          clearInterval(pollStop);
+          btn.disabled = false;
+          btn.textContent = 'Stop Bot';
+          refreshAll();
+        } else if (attempts >= 20) {
+          clearInterval(pollStop);
+          btn.disabled = false;
+          btn.textContent = 'Stop Bot';
+          refreshAll();
+        }
+      } catch (_) {
+        // ignore transient fetch errors during shutdown
+      }
+    }, 500);
   } catch (e) {
     alert('Error stopping bot: ' + e.message);
-  } finally {
     btn.disabled = false;
     btn.textContent = 'Stop Bot';
-    setTimeout(refreshAll, 1500);
   }
 }
 

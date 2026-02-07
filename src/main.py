@@ -110,6 +110,7 @@ class TradingBot:
         
         # State
         self.running = False
+        self._shutdown_called = False
         self.tz = pytz.timezone("America/New_York")
         self.trades_today = 0
         self.daily_pnl = 0.0
@@ -248,6 +249,12 @@ class TradingBot:
             logger.error(f"Fatal error: {e}", exc_info=True)
             self.shutdown(error=True)
     
+    def _interruptible_sleep(self, seconds):
+        """Sleep in small increments, exiting early if self.running becomes False."""
+        end = time_module.time() + seconds
+        while self.running and time_module.time() < end:
+            time_module.sleep(min(0.5, end - time_module.time()))
+
     def _run_main_loop(self):
         """Main trading loop"""
         consecutive_errors = 0
@@ -311,7 +318,7 @@ class TradingBot:
                 # Check if market is open
                 if not self._is_market_open(current_time):
                     logger.info(f"Market closed ({current_time.strftime('%a %H:%M')} ET). Next check in 60s...")
-                    time_module.sleep(60)
+                    self._interruptible_sleep(60)
                     consecutive_errors = 0  # Reset error counter
                     continue
 
@@ -322,7 +329,7 @@ class TradingBot:
                         self.pending_setup = None
                     else:
                         logger.info("Daily limits reached, monitoring only")
-                    time_module.sleep(300)
+                    self._interruptible_sleep(300)
                     consecutive_errors = 0
                     continue
 
@@ -367,7 +374,7 @@ class TradingBot:
                 consecutive_errors = 0
 
                 # Sleep before next iteration
-                time_module.sleep(30)
+                self._interruptible_sleep(30)
             
             except KeyboardInterrupt:
                 raise  # Let this propagate
@@ -385,7 +392,7 @@ class TradingBot:
                 # Exponential backoff
                 sleep_time = min(60 * (2 ** consecutive_errors), 300)  # Max 5 minutes
                 logger.info(f"Sleeping {sleep_time}s before retry...")
-                time_module.sleep(sleep_time)
+                self._interruptible_sleep(sleep_time)
     
     def _is_market_open(self, dt: datetime) -> bool:
         """Check if market is currently open"""
@@ -757,26 +764,36 @@ class TradingBot:
         return response in ['yes', 'y']
     
     def shutdown(self, error: bool = False):
-        """Shutdown the trading bot"""
+        """Shutdown the trading bot. Safe to call multiple times."""
+        if self._shutdown_called:
+            logger.debug("shutdown() already called, skipping")
+            return
+        self._shutdown_called = True
+
         logger.info("Shutting down trading bot...")
-        
         self.running = False
-        
+
         # Log shutdown event
-        self.db.log_event(
-            "bot_stopped",
-            "Trading bot stopped",
-            {"error": error}
-        )
-        
+        try:
+            self.db.log_event(
+                "bot_stopped",
+                "Trading bot stopped",
+                {"error": error}
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log shutdown event: {e}")
+
         # Send notification
         if self.notifier:
-            self.notifier.send(
-                "🛑 Trading Bot Stopped",
-                f"Trades today: {self.trades_today}\n"
-                f"Daily P&L: ${self.daily_pnl:.2f}"
-            )
-        
+            try:
+                self.notifier.send(
+                    "Trading Bot Stopped",
+                    f"Trades today: {self.trades_today}\n"
+                    f"Daily P&L: ${self.daily_pnl:.2f}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send shutdown notification: {e}")
+
         logger.info("Shutdown complete")
 
 

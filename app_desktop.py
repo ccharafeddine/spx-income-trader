@@ -154,9 +154,12 @@ class DesktopApp:
         @app.route('/api/bot/stop', methods=['POST'])
         def api_bot_stop():
             from flask import jsonify
+            logger.info("API /api/bot/stop called")
             success, error = desktop.stop_bot()
             if success:
-                return jsonify({'success': True})
+                logger.info("API /api/bot/stop returning success (signal sent)")
+                return jsonify({'success': True, 'message': 'Shutdown signal sent. Poll /api/bot/status to confirm.'})
+            logger.warning(f"API /api/bot/stop returning error: {error}")
             return jsonify({'success': False, 'error': error}), 409
 
         @app.route('/api/bot/status', methods=['GET'])
@@ -351,6 +354,7 @@ class DesktopApp:
 
     def _run_bot(self, mode):
         """Initialize and run the trading bot (called in daemon thread)."""
+        bot = None
         try:
             from src.main import TradingBot
             from src.brokers.paper_trader import PaperBroker
@@ -404,10 +408,21 @@ class DesktopApp:
         except Exception as e:
             logger.error(f"Bot thread error: {e}", exc_info=True)
         finally:
+            # Ensure shutdown cleanup (DB event, notification) always runs.
+            # shutdown() is idempotent so this is safe even if it was
+            # already called from within start() (e.g. fatal-error path).
+            if bot is not None:
+                logger.info("Bot thread finishing, running shutdown cleanup")
+                try:
+                    bot.shutdown()
+                except Exception as e:
+                    logger.warning(f"Error during bot shutdown cleanup: {e}")
+
             with self._bot_lock:
                 self._bot = None
                 self._bot_mode = None
                 self._bot_started_at = None
+            logger.info("Bot thread exited, status reset to stopped")
             self._update_tray_icon()
             try:
                 self._lockfile.unlink(missing_ok=True)
@@ -415,16 +430,26 @@ class DesktopApp:
                 pass
 
     def stop_bot(self):
-        """Gracefully stop the trading bot.
+        """Signal the trading bot to stop. Returns immediately without
+        waiting for the bot thread to finish -- the dashboard should poll
+        /api/bot/status to confirm the bot has fully stopped.
 
         Returns:
             (success: bool, error: str | None)
         """
         with self._bot_lock:
             if self._bot is None or not self._bot.running:
+                logger.debug("stop_bot called but bot is not running")
                 return False, 'Bot is not running'
-            self._bot.shutdown()
-            return True, None
+            bot = self._bot
+
+        # Signal stop outside the lock so we never block on I/O while
+        # holding _bot_lock.  The bot thread will pick up running=False
+        # within ~0.5s (interruptible sleep) and perform its own cleanup.
+        logger.info("Stop requested: sending shutdown signal to trading bot")
+        bot.running = False
+        logger.info("Shutdown signal sent (bot will stop after current iteration)")
+        return True, None
 
     # ------------------------------------------------------------------
     # Bot watchdog (supervisor thread)
@@ -487,6 +512,7 @@ class DesktopApp:
                     uptime = int((datetime.now() - self._bot_started_at).total_seconds())
                 return {
                     'running': True,
+                    'stopping': False,
                     'crashed': False,
                     'mode': self._bot_mode,
                     'uptime_seconds': uptime,
@@ -494,8 +520,22 @@ class DesktopApp:
                     'daily_pnl': self._bot.daily_pnl,
                 }
 
+            # Bot reference still exists but running=False means we sent
+            # the stop signal and the thread is still winding down.
+            if self._bot is not None and not self._bot.running:
+                return {
+                    'running': False,
+                    'stopping': True,
+                    'crashed': False,
+                    'mode': self._bot_mode,
+                    'uptime_seconds': 0,
+                    'trades_today': 0,
+                    'daily_pnl': 0.0,
+                }
+
             status = {
                 'running': False,
+                'stopping': False,
                 'mode': None,
                 'uptime_seconds': 0,
                 'trades_today': 0,
@@ -690,15 +730,21 @@ class DesktopApp:
         # Stop the system tray icon
         self._stop_tray()
 
-        # Stop the trading bot if it is running
+        # Signal the trading bot to stop (don't hold the lock during I/O)
         with self._bot_lock:
-            if self._bot is not None and self._bot.running:
-                logger.info("Stopping trading bot...")
-                self._bot.shutdown()
+            bot = self._bot
+        if bot is not None and bot.running:
+            logger.info("Signaling trading bot to stop...")
+            bot.running = False
 
-        # Wait for the bot thread to finish
+        # Wait for the bot thread to finish (it handles its own cleanup)
         if self._bot_thread and self._bot_thread.is_alive():
+            logger.info("Waiting for bot thread to exit...")
             self._bot_thread.join(timeout=10)
+            if self._bot_thread.is_alive():
+                logger.warning("Bot thread did not exit within 10s timeout")
+            else:
+                logger.info("Bot thread exited cleanly")
 
         # Clean up lockfile
         try:
