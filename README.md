@@ -330,9 +330,236 @@ Auto-migration adds new columns to existing databases on startup.
 | Paper | Simulated | Simulated | Simulated | Test without market |
 | E*TRADE | Real | Real | Live orders | Production trading |
 
+## Dynamic Position Sizing
+
+The Portfolio Manager supports three position sizing methods that scale with account size:
+
+```yaml
+portfolio:
+  position_sizing:
+    method: "percent_risk"     # "percent_risk", "fixed_contracts", or "kelly"
+    risk_per_trade_pct: 2.0    # Risk 2% of account per trade
+    min_contracts: 1           # Never less than 1 contract
+    max_contracts: 20          # Cap regardless of account size
+```
+
+**Methods:**
+
+| Method | Description | Best For |
+|--------|-------------|----------|
+| `percent_risk` | Size based on X% of account per trade | Most users (default) |
+| `fixed_contracts` | Use per-strategy contract amounts | Simple fixed sizing |
+| `kelly` | Optimal sizing using historical win rate (half-Kelly) | Advanced (needs 10+ trades) |
+
+**Scaling Example (percent_risk @ 2%):**
+
+| Account Size | Risk Budget | $500 Risk/Contract | Contracts |
+|-------------|-------------|-------------------|-----------|
+| $25,000 | $500 | $500 | 1 |
+| $50,000 | $1,000 | $500 | 2 |
+| $100,000 | $2,000 | $500 | 4 |
+| $250,000 | $5,000 | $500 | 10 |
+
+---
+
+## Testing Checklist
+
+Before going live, validate these scenarios in dry-run mode:
+
+### Strategy Execution
+- [ ] Daily Income: Pulse detected and logged correctly
+- [ ] Daily Income: Breakout confirmation triggers entry
+- [ ] Daily Income: 80% profit target closes position
+- [ ] Daily Income: Position expires at 4pm
+- [ ] Tag 'n Turn: BB tag detected
+- [ ] Tag 'n Turn: Reversal pulse confirmed
+- [ ] Tag 'n Turn: Multi-day position persists across restarts
+- [ ] B&B: EOD signal detected and persisted
+- [ ] B&B: Next-day entry triggers at 09:30
+- [ ] B&B: Aggressive roll works when first bar confirms
+- [ ] ORB: Opening range set correctly
+- [ ] ORB: Breakout triggers entry
+
+### Risk Management
+- [ ] First losing trade captured correctly
+- [ ] Circuit breaker triggers at 2% realized loss
+- [ ] Circuit breaker resets next day
+- [ ] Position sizing scales correctly
+- [ ] Max positions limit enforced
+- [ ] Strategy priority works when slots limited
+
+### 1pm Management
+- [ ] Trending day (>$15 move) = HOLD
+- [ ] Non-trending + profitable = CLOSE considered
+- [ ] Non-trending + unfavorable = CLOSE considered
+- [ ] Decision logged correctly
+
+### Dashboard
+- [ ] LED lights update correctly
+- [ ] Settings changes hot-reload
+- [ ] Chart annotations display
+- [ ] Trade journal shows all data
+- [ ] Export CSV works
+
+### Edge Cases
+- [ ] Bot handles market holidays
+- [ ] Bot handles early close days
+- [ ] Bot recovers from restart mid-day
+- [ ] Bot handles no setups day gracefully
+
+---
+
+## Production Deployment
+
+### Current Setup (Development)
+
+The Flask development server is fine for local, single-user monitoring:
+```bash
+python -m dashboard.app
+```
+
+### Production Server (Optional)
+
+For remote access or multiple users, use a production WSGI server:
+
+**Windows (Waitress):**
+```bash
+pip install waitress
+waitress-serve --host=0.0.0.0 --port=5000 dashboard.app:app
+```
+
+**Linux/Mac (Gunicorn):**
+```bash
+pip install gunicorn
+gunicorn -w 4 -b 0.0.0.0:5000 dashboard.app:app
+```
+
+### Remote Access Considerations
+
+If exposing the dashboard externally:
+- Configure firewall to allow port 5000
+- Set up reverse proxy (nginx) with HTTPS
+- Add authentication to the dashboard
+- Consider VPN instead of public exposure
+
+### Running as a Service
+
+**Windows (Task Scheduler):**
+- Create scheduled task to run at startup
+- Set "Run whether user is logged on or not"
+
+**Linux (systemd):**
+```ini
+[Unit]
+Description=SPX Income Trader Bot
+After=network.target
+
+[Service]
+Type=simple
+User=trader
+WorkingDirectory=/home/trader/spx-income-trader
+ExecStart=/usr/bin/python -m src.main --no-confirm
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| "Market data unavailable" | Check internet connection, Yahoo Finance may be rate-limited |
+| Dashboard shows "STALE" | Bot may have crashed, check logs and restart |
+| No pulse bars detected | Normal - not every day has valid setups |
+| Position not closing at 80% | Check if spread price is being fetched correctly |
+| "Circuit breaker active" | Daily loss limit hit, will reset tomorrow |
+
+### Log Analysis
+
+Check `logs/trading.log` for detailed information:
+```bash
+# Recent activity
+tail -100 logs/trading.log
+
+# Search for errors
+grep -i error logs/trading.log
+
+# Search for trades
+grep -i "executing\|closed\|expired" logs/trading.log
+
+# Search for pulse bars
+grep -i "pulse" logs/trading.log
+```
+
+### Reset State
+
+If needed, clear state files to reset:
+```bash
+# Clear portfolio state
+rm database/portfolio_state.json
+
+# Clear runtime settings (restore YAML defaults)
+rm database/runtime_settings.json
+
+# Clear B&B signals
+rm database/bnb_signals.json
+
+# Clear Tag 'n Turn positions
+rm database/tag_n_turn_positions.json
+```
+
+---
+
+## Minimum Account Requirements
+
+| Requirement | Amount | Reason |
+|-------------|--------|--------|
+| **PDT Rule** | $25,000 | Pattern Day Trader minimum for margin accounts |
+| **Risk-Based** | $17,500+ | 2% risk = $350 per trade (1 contract) |
+| **Recommended** | $25,000+ | Allows 2 contracts with buffer |
+
+**Note:** PDT rule applies if you close positions same-day (80% target). Letting positions expire avoids day trade classification.
+
+---
+
+## Expected Performance
+
+Based on the strategy methodology (NOT guaranteed):
+
+| Scenario | Win Rate | Annual Return |
+|----------|----------|---------------|
+| Conservative | 60% | 20-30% |
+| Moderate | 70% | 40-60% |
+| Optimistic | 80% | 70-100% |
+
+**Requires validation with 50+ trades across different market conditions.**
+
+---
+
 ## Risk Disclaimer
 
-This software is for educational purposes. Trading options involves substantial risk of loss. Past performance does not guarantee future results. Use at your own risk.
+**This software is for educational purposes only.**
+
+- Trading options involves substantial risk of loss
+- Past performance does not guarantee future results
+- The developers are not responsible for any financial losses
+- Always test thoroughly in dry-run mode before risking real capital
+- Consider consulting a financial advisor before trading
+
+**Use at your own risk.**
+
+---
+
+## Credits
+
+- Strategy: Phil Newton's "Production Line Trading" from Anti Vestor
+- Implementation: Claude + Human collaboration
 
 ## License
 
