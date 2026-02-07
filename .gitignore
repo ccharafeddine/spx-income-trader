@@ -32,6 +32,13 @@ tokens/
 database/*.json
 signals_*.json
 
+# Build artifacts
+dist/
+build/_pyinstaller/
+build/Output/
+*.spec
+
 # OS files
 .DS_Store
 Thumbs.db
+nul
