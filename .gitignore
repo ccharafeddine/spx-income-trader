@@ -21,9 +21,13 @@ logs/*.log
 .vscode/
 .idea/
 
-# Tokens
+# Tokens and credentials
 tokens/
 *.token
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Strategy PDF (copyrighted material)
 *.pdf

@@ -54,7 +54,7 @@ def check_configuration() -> bool:
         config_ok = False
 
     if ETRADE_CONFIG['consumer_secret']:
-        print(f"  Consumer Secret: {ETRADE_CONFIG['consumer_secret'][:8]}...  [OK]")
+        print(f"  Consumer Secret: {ETRADE_CONFIG['consumer_secret'][:4]}****  [OK]")
     else:
         print("  Consumer Secret: NOT SET  [MISSING]")
         config_ok = False
@@ -66,7 +66,9 @@ def check_configuration() -> bool:
     print(f"  Token File:      {ETRADE_CONFIG['token_file']}")
 
     if ETRADE_CONFIG['account_id']:
-        print(f"  Account ID:      {ETRADE_CONFIG['account_id']}")
+        acct = ETRADE_CONFIG['account_id']
+        masked_acct = '****' + acct[-4:] if len(acct) > 4 else acct
+        print(f"  Account ID:      {masked_acct}")
     else:
         print("  Account ID:      NOT SET (will use first available)")
 

@@ -884,9 +884,10 @@ class ETradeBroker(BrokerInterface):
             long_mid = (chain[long_strike]['call_bid'] + chain[long_strike]['call_ask']) / 2
 
         # Spread value = what we'd pay to close (buy back short, sell long)
+        # Return per-share price (not multiplied by 100) to match entry_price units
         spread_value = short_mid - long_mid
 
-        return spread_value * 100  # Convert to dollars per contract
+        return spread_value
 
     def get_orders(self, status: Optional[str] = None) -> List[Dict]:
         """Get orders for account, optionally filtered by status"""

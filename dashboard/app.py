@@ -9,6 +9,7 @@ import sys
 import os
 import re
 import json
+import logging
 import sqlite3
 import ctypes
 import time
@@ -35,6 +36,8 @@ from src.data.yahoo_finance import YahooFinanceProvider
 from src.utils.version import APP_VERSION
 
 import pytz
+
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 ET = pytz.timezone('US/Eastern')
@@ -646,7 +649,8 @@ def api_test_connection():
                 'error': 'Could not fetch SPX price'
             })
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error(f"Test connection failed: {e}")
+        return jsonify({'success': False, 'error': 'Connection test failed'})
 
 
 @app.route('/api/clear-credentials', methods=['POST'])
@@ -658,7 +662,8 @@ def api_clear_credentials():
         else:
             return jsonify({'success': False, 'error': 'Failed to clear credentials'})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error(f"Failed to clear credentials: {e}")
+        return jsonify({'success': False, 'error': 'Failed to clear credentials'})
 
 
 # ---------------------------------------------------------------------------
@@ -697,7 +702,8 @@ def auth_etrade_start():
 
         return jsonify({'auth_url': auth_url})
     except Exception as e:
-        return jsonify({'error': f'Failed to start OAuth flow: {e}'}), 500
+        logger.error(f"OAuth start failed: {e}")
+        return jsonify({'error': 'Failed to start OAuth flow. Check credentials and try again.'}), 500
 
 
 @app.route('/auth/etrade/callback', methods=['POST'])
@@ -739,7 +745,8 @@ def auth_etrade_callback():
     except Exception as e:
         # Clear pending state on failure too
         _pending_oauth.clear()
-        return jsonify({'error': f'Token exchange failed: {e}'}), 500
+        logger.error(f"OAuth token exchange failed: {e}")
+        return jsonify({'error': 'Token exchange failed. Please try again.'}), 500
 
 
 @app.route('/auth/etrade/status')
@@ -782,7 +789,8 @@ def auth_etrade_status():
         })
 
     except Exception as e:
-        return jsonify({'connected': False, 'reason': f'Error reading tokens: {e}'})
+        logger.error(f"Error reading token status: {e}")
+        return jsonify({'connected': False, 'reason': 'Error reading token status'})
 
 
 @app.route('/auth/etrade/disconnect', methods=['POST'])
@@ -839,7 +847,8 @@ def _try_renew_etrade_token():
             return {'status': 'renewal_failed', 'age_hours': round(age_hours, 2)}
 
     except Exception as e:
-        return {'status': 'error', 'error': str(e)}
+        logger.error(f"Token renewal check failed: {e}")
+        return {'status': 'error', 'error': 'Token renewal check failed'}
 
 
 @app.route('/api/pdt/status')
@@ -876,6 +885,7 @@ def api_pdt_status():
         return jsonify(status)
 
     except Exception as e:
+        logger.error(f"PDT status check failed: {e}")
         return jsonify({
             'enabled': True,
             'is_restricted': False,
@@ -885,7 +895,7 @@ def api_pdt_status():
             'account_value': None,
             'threshold': 25000,
             'next_slot_frees_on': None,
-            'error': str(e),
+            'error': 'Failed to load PDT status',
         })
 
 
@@ -1526,7 +1536,8 @@ def api_journal_save_notes():
         conn.close()
         return jsonify({'status': 'ok', 'trade_id': trade_id})
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Failed to save journal notes: {e}")
+        return jsonify({'error': 'Failed to save journal notes'}), 500
 
 
 def _correlate_trade_with_signal(trade, signals):
@@ -2011,7 +2022,8 @@ def api_stale_positions():
             'positions': positions,
         })
     except Exception as e:
-        return jsonify({'count': 0, 'positions': [], 'error': str(e)})
+        logger.error(f"Stale positions check failed: {e}")
+        return jsonify({'count': 0, 'positions': [], 'error': 'Failed to check positions'})
 
 
 @app.route('/api/events')
@@ -2124,7 +2136,8 @@ def api_update_settings():
         _save_runtime_settings(changes)
         return jsonify({'success': True})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error(f"Settings update failed: {e}")
+        return jsonify({'success': False, 'error': 'Failed to update settings'})
 
 
 @app.route('/api/settings/reset', methods=['POST'])
@@ -2136,7 +2149,8 @@ def api_reset_settings():
         _notify_bot_settings_changed()
         return jsonify({'success': True})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error(f"Settings reset failed: {e}")
+        return jsonify({'success': False, 'error': 'Failed to reset settings'})
 
 
 # ---------------------------------------------------------------------------

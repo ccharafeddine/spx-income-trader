@@ -71,19 +71,18 @@ class SPXIncomeStrategy:
     ) -> Optional[TradeDirection]:
         """
         Evaluate if bar creates a valid trading setup
-        
+
         Args:
             bar: Completed 30-minute bar
             current_price: Current SPX price
-            
+
         Returns:
             TradeDirection if valid setup, None otherwise
         """
-        # Check time window (9:30 - 11:30 EST)
-        if not self._is_setup_window(bar.timestamp):
-            logger.debug("Outside setup window")
-            return None
-        
+        # NOTE: Window gating is handled by TradingBot._is_setup_window()
+        # which supports both morning (9:30-11:30) and afternoon windows.
+        # No redundant time filter here.
+
         # Analyze bar for pulse pattern
         bar_type = self.pulse_detector.analyze_bar(bar)
         
@@ -314,7 +313,7 @@ class SPXIncomeStrategy:
         credit = trade.spread.credit_received or 0
         qty = trade.quantity or 1
         max_profit = credit * 100 * qty
-        current_pnl = getattr(trade, 'unrealized_pnl', None) or 0
+        current_pnl = trade.pnl if trade.pnl is not None else 0
         pnl_pct = (current_pnl / max_profit * 100) if max_profit > 0 else 0
 
         assessment = {

@@ -155,12 +155,17 @@ class PositionManager:
             logger.error(f"Failed to enter trade: {e}", exc_info=True)
             return None
     
-    def monitor_positions(self):
-        """Monitor all open positions for exit conditions"""
+    def monitor_positions(self) -> float:
+        """Monitor all open positions for exit conditions.
+
+        Returns:
+            Total realized P&L from trades closed this cycle.
+        """
         if not self.open_trades:
-            return
-        
+            return 0.0
+
         logger.debug(f"Monitoring {len(self.open_trades)} open positions")
+        realized_pnl = 0.0
         
         current_time = datetime.now(self.tz)
         
@@ -226,10 +231,14 @@ class PositionManager:
                             continue  # Skip this exit, let trade run to expiration
 
                     self._exit_trade(trade, reason)
+                    if trade.pnl is not None:
+                        realized_pnl += trade.pnl
                 
             except Exception as e:
                 logger.error(f"Error monitoring trade {trade.id}: {e}")
-    
+
+        return realized_pnl
+
     def _exit_trade(self, trade: Trade, reason: str):
         """Execute trade exit"""
         try:

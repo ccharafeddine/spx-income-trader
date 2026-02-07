@@ -351,22 +351,23 @@ class DryRunBroker(BrokerInterface):
             return 0
 
         # Simple spread valuation based on intrinsic value
+        # Returns per-share price (not multiplied by 100) to match entry_price units
         if spread.direction == TradeDirection.BULLISH:
             # Put credit spread
             if current_price >= spread.short_leg.strike:
                 return 0  # Both OTM, spread worth ~0
             elif current_price <= spread.long_leg.strike:
-                return spread.spread_width * 100  # Max loss
+                return spread.spread_width  # Max loss per share
             else:
-                return (spread.short_leg.strike - current_price) * 100
+                return spread.short_leg.strike - current_price
         else:
             # Call credit spread
             if current_price <= spread.short_leg.strike:
                 return 0  # Both OTM
             elif current_price >= spread.long_leg.strike:
-                return spread.spread_width * 100  # Max loss
+                return spread.spread_width  # Max loss per share
             else:
-                return (current_price - spread.short_leg.strike) * 100
+                return current_price - spread.short_leg.strike
 
     def get_account_balance(self) -> Dict:
         """Get hypothetical account balance."""

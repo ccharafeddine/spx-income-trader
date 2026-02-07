@@ -326,8 +326,11 @@ class TradingBot:
                     consecutive_errors = 0
                     continue
 
-                # Monitor existing positions
-                self.position_manager.monitor_positions()
+                # Monitor existing positions and accumulate realized P&L
+                closed_pnl = self.position_manager.monitor_positions()
+                if closed_pnl != 0:
+                    self.daily_pnl += closed_pnl
+                    logger.info(f"Daily P&L updated: ${self.daily_pnl:.2f} (trade closed: ${closed_pnl:+.2f})")
 
                 # Look for new setups
                 if self._is_setup_window(current_time):
