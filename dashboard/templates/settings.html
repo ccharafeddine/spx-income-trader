@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPX Income Trader - Settings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0a0e17;
+  --panel: #111827;
+  --border: #1e2a3a;
+  --text: #d1d5db;
+  --text-dim: #6b7280;
+  --green: #10b981;
+  --green-dim: rgba(16, 185, 129, 0.15);
+  --red: #ef4444;
+  --red-dim: rgba(239, 68, 68, 0.15);
+  --amber: #f59e0b;
+  --amber-dim: rgba(245, 158, 11, 0.15);
+  --blue: #3b82f6;
+  --cyan: #06b6d4;
+  --font-mono: 'JetBrains Mono', Consolas, Monaco, monospace;
+  --font-ui: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 0;
+}
+
+/* Header */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.logo {
+  font-family: var(--font-ui);
+  font-size: 17px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 3px;
+  text-decoration: none;
+}
+
+.page-title {
+  font-size: 14px;
+  color: var(--text-dim);
+  border-left: 1px solid var(--border);
+  padding-left: 16px;
+}
+
+.header-right a {
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 13px;
+  transition: color 0.2s;
+}
+
+.header-right a:hover {
+  color: var(--text);
+}
+
+/* Main container */
+.main-content {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+/* Panels */
+.panel {
+  background: var(--panel);
+  background-image: radial-gradient(rgba(255,255,255,0.03) 1px, transparent 1px);
+  background-size: 4px 4px;
+  border: 1px solid var(--border);
+  border-top: 1px solid rgba(255,255,255,0.05);
+  border-radius: 8px;
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.panel-subtitle {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+/* Form elements */
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.form-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.form-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1);
+}
+
+.form-input.masked {
+  letter-spacing: 2px;
+}
+
+.form-select {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+
+.form-select:focus {
+  outline: none;
+  border-color: var(--cyan);
+}
+
+/* Buttons */
+.btn-group {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--cyan) 0%, var(--blue) 100%);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(6, 182, 212, 0.3);
+}
+
+.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.btn-secondary:hover {
+  border-color: var(--text-dim);
+}
+
+.btn-danger {
+  background: transparent;
+  border: 1px solid var(--red);
+  color: var(--red);
+}
+
+.btn-danger:hover {
+  background: var(--red-dim);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Status indicators */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-badge.success {
+  background: var(--green-dim);
+  color: var(--green);
+  border: 1px solid var(--green);
+}
+
+.status-badge.warning {
+  background: var(--amber-dim);
+  color: var(--amber);
+  border: 1px solid var(--amber);
+}
+
+.status-badge.error {
+  background: var(--red-dim);
+  color: var(--red);
+  border: 1px solid var(--red);
+}
+
+/* PDT Section */
+.pdt-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.pdt-stat {
+  text-align: center;
+  padding: 16px;
+  background: var(--bg);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.pdt-stat .value {
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.pdt-stat .value.green { color: var(--green); }
+.pdt-stat .value.amber { color: var(--amber); }
+.pdt-stat .value.red { color: var(--red); }
+
+.pdt-stat .label {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: 4px;
+}
+
+.pdt-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.pdt-indicator .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.pdt-indicator .dot.green { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.pdt-indicator .dot.amber { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.pdt-indicator .dot.red { background: var(--red); box-shadow: 0 0 8px var(--red); }
+
+/* Messages */
+.message {
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.message.success {
+  background: var(--green-dim);
+  border: 1px solid var(--green);
+  color: var(--green);
+}
+
+.message.error {
+  background: var(--red-dim);
+  border: 1px solid var(--red);
+  color: var(--red);
+}
+
+/* Credential source indicator */
+.cred-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.cred-source svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Test connection result */
+#test-result {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  display: none;
+}
+
+#test-result.success {
+  display: block;
+  background: var(--green-dim);
+  border: 1px solid var(--green);
+  color: var(--green);
+}
+
+#test-result.error {
+  display: block;
+  background: var(--red-dim);
+  border: 1px solid var(--red);
+  color: var(--red);
+}
+
+#test-result.loading {
+  display: block;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: var(--blue);
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <a href="/" class="logo">SPX INCOME TRADER</a>
+    <span class="page-title">Settings</span>
+  </div>
+  <div class="header-right">
+    <a href="/">Back to Dashboard</a>
+  </div>
+</header>
+
+<div class="main-content">
+  {% if message %}
+  <div class="message {{ message_type or 'success' }}">{{ message }}</div>
+  {% endif %}
+
+  <!-- API Credentials -->
+  <div class="panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">E*TRADE API Credentials</div>
+        <div class="panel-subtitle">Manage your API keys and connection settings</div>
+      </div>
+      <div class="cred-source">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        Source: {{ credential_source or 'Not configured' }}
+      </div>
+    </div>
+
+    <form method="POST" action="/settings" id="credentials-form">
+      <input type="hidden" name="action" value="update_credentials">
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="consumer_key">Consumer Key</label>
+          <input type="text" class="form-input masked" id="consumer_key" name="consumer_key"
+                 placeholder="Enter key or leave blank to keep current"
+                 value="{{ masked_key or '' }}">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="consumer_secret">Consumer Secret</label>
+          <input type="password" class="form-input" id="consumer_secret" name="consumer_secret"
+                 placeholder="Enter secret or leave blank to keep current">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="account_id">Account ID</label>
+          <input type="text" class="form-input" id="account_id" name="account_id"
+                 placeholder="Account ID"
+                 value="{{ masked_account or '' }}">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="environment">Environment</label>
+          <select class="form-select" id="environment" name="environment">
+            <option value="sandbox" {% if not is_production %}selected{% endif %}>Sandbox (Testing)</option>
+            <option value="production" {% if is_production %}selected{% endif %}>Production (Live Trading)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="btn-group">
+        <button type="submit" class="btn btn-primary">Save Changes</button>
+        <button type="button" class="btn btn-secondary" id="test-connection-btn">Test Connection</button>
+        <button type="button" class="btn btn-danger" id="clear-credentials-btn">Clear Credentials</button>
+      </div>
+
+      <div id="test-result"></div>
+    </form>
+  </div>
+
+  <!-- PDT Protection -->
+  <div class="panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">PDT Rule Protection</div>
+        <div class="panel-subtitle">Pattern Day Trader rule compliance for accounts under $25,000</div>
+      </div>
+      <span class="status-badge" id="pdt-status-badge">Loading...</span>
+    </div>
+
+    <div class="pdt-indicator" id="pdt-indicator">
+      <span class="dot" id="pdt-dot"></span>
+      <span id="pdt-status-text">Loading PDT status...</span>
+    </div>
+
+    <div class="pdt-grid">
+      <div class="pdt-stat">
+        <div class="value" id="pdt-equity">-</div>
+        <div class="label">Account Equity</div>
+      </div>
+      <div class="pdt-stat">
+        <div class="value" id="pdt-used">-</div>
+        <div class="label">Day Trades Used</div>
+      </div>
+      <div class="pdt-stat">
+        <div class="value" id="pdt-remaining">-</div>
+        <div class="label">Remaining</div>
+      </div>
+      <div class="pdt-stat">
+        <div class="value" id="pdt-next-free">-</div>
+        <div class="label">Next Slot Frees</div>
+      </div>
+    </div>
+
+    <div style="font-size: 12px; color: var(--text-dim);">
+      PDT protection is <strong id="pdt-enabled-text">-</strong>.
+      When enabled, the bot will skip early exits if no day trade slots are available,
+      letting trades run to expiration instead.
+    </div>
+  </div>
+</div>
+
+<script>
+// Test connection
+document.getElementById('test-connection-btn').addEventListener('click', async () => {
+  const resultDiv = document.getElementById('test-result');
+  resultDiv.className = 'loading';
+  resultDiv.textContent = 'Testing connection...';
+  resultDiv.style.display = 'block';
+
+  try {
+    const response = await fetch('/api/test-connection');
+    const data = await response.json();
+
+    if (data.success) {
+      resultDiv.className = 'success';
+      resultDiv.textContent = `Connection successful! SPX price: $${data.spx_price?.toFixed(2) || 'N/A'}`;
+    } else {
+      resultDiv.className = 'error';
+      resultDiv.textContent = `Connection failed: ${data.error}`;
+    }
+  } catch (error) {
+    resultDiv.className = 'error';
+    resultDiv.textContent = `Error: ${error.message}`;
+  }
+});
+
+// Clear credentials
+document.getElementById('clear-credentials-btn').addEventListener('click', async () => {
+  if (!confirm('Are you sure you want to clear all stored credentials?')) {
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/clear-credentials', { method: 'POST' });
+    const data = await response.json();
+
+    if (data.success) {
+      window.location.href = '/setup';
+    } else {
+      alert('Failed to clear credentials: ' + data.error);
+    }
+  } catch (error) {
+    alert('Error: ' + error.message);
+  }
+});
+
+// Load PDT status
+async function loadPDTStatus() {
+  try {
+    const response = await fetch('/api/pdt/status');
+    const data = await response.json();
+
+    // Update badge
+    const badge = document.getElementById('pdt-status-badge');
+    if (!data.enabled) {
+      badge.className = 'status-badge';
+      badge.textContent = 'Disabled';
+    } else if (data.is_restricted) {
+      badge.className = 'status-badge warning';
+      badge.textContent = 'Active';
+    } else {
+      badge.className = 'status-badge success';
+      badge.textContent = 'Inactive';
+    }
+
+    // Update indicator
+    const dot = document.getElementById('pdt-dot');
+    const statusText = document.getElementById('pdt-status-text');
+    const remaining = data.day_trades_remaining;
+
+    if (!data.enabled) {
+      dot.className = 'dot';
+      statusText.textContent = 'PDT protection is disabled';
+    } else if (remaining === 0) {
+      dot.className = 'dot red';
+      statusText.textContent = 'No day trade slots available - early exits blocked';
+    } else if (remaining === 1) {
+      dot.className = 'dot amber';
+      statusText.textContent = '1 day trade slot remaining - use with caution';
+    } else {
+      dot.className = 'dot green';
+      statusText.textContent = `${remaining} day trade slots available`;
+    }
+
+    // Update stats
+    document.getElementById('pdt-equity').textContent =
+      data.account_value ? `$${data.account_value.toLocaleString()}` : '-';
+
+    document.getElementById('pdt-used').textContent =
+      `${data.day_trades_used}/${data.max_day_trades}`;
+
+    const remainingEl = document.getElementById('pdt-remaining');
+    remainingEl.textContent = remaining;
+    remainingEl.className = 'value ' + (remaining === 0 ? 'red' : remaining === 1 ? 'amber' : 'green');
+
+    document.getElementById('pdt-next-free').textContent =
+      data.next_slot_frees_on || 'N/A';
+
+    // Update enabled text
+    document.getElementById('pdt-enabled-text').textContent =
+      data.enabled ? 'enabled' : 'disabled in config';
+
+  } catch (error) {
+    console.error('Failed to load PDT status:', error);
+  }
+}
+
+// Load on page load
+loadPDTStatus();
+</script>
+
+</body>
+</html>

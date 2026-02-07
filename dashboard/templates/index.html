@@ -105,6 +105,27 @@ header::after {
 }
 .mode-badge.dry { background: rgba(245,158,11,0.15); color: var(--amber); border: 1px solid var(--amber); }
 .mode-badge.live { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+.pdt-badge {
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: bold;
+  font-family: var(--font-mono);
+  background: var(--border);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.pdt-badge:hover { border-color: var(--cyan); }
+.pdt-badge.green { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+.pdt-badge.amber { background: rgba(245,158,11,0.15); color: var(--amber); border: 1px solid var(--amber); }
+.pdt-badge.red { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+.settings-link {
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 12px;
+  transition: color 0.2s;
+}
+.settings-link:hover { color: var(--cyan); }
 .header-right {
   display: flex;
   align-items: center;
@@ -1495,8 +1516,10 @@ header::after {
       <span id="bot-status-text">--</span>
     </div>
     <span class="mode-badge" id="mode-badge">--</span>
+    <a href="/settings" class="pdt-badge" id="pdt-badge" title="PDT Rule Status - Click for settings">PDT: -/-</a>
   </div>
   <div class="header-right">
+    <a href="/settings" class="settings-link">Settings</a>
     <button class="header-btn" id="settings-toggle" onclick="toggleSettings()" title="Settings" aria-label="Open settings panel">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"></circle>
@@ -2230,6 +2253,38 @@ function updateStrategyStatuses(data) {
 // Update functions
 // ---------------------------------------------------------------
 
+async function updatePDTBadge() {
+  try {
+    const data = await fetchJSON('/api/pdt/status');
+    if (!data) return;
+
+    const badge = document.getElementById('pdt-badge');
+    if (!badge) return;
+
+    const remaining = data.day_trades_remaining;
+    const max = data.max_day_trades || 3;
+
+    if (!data.enabled) {
+      badge.textContent = 'PDT: OFF';
+      badge.className = 'pdt-badge';
+    } else {
+      badge.textContent = `PDT: ${remaining}/${max}`;
+      if (remaining === 0) {
+        badge.className = 'pdt-badge red';
+        badge.title = 'No day trade slots available - early exits blocked';
+      } else if (remaining === 1) {
+        badge.className = 'pdt-badge amber';
+        badge.title = '1 day trade slot remaining - use with caution';
+      } else {
+        badge.className = 'pdt-badge green';
+        badge.title = `${remaining} day trade slots available`;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to fetch PDT status:', e);
+  }
+}
+
 async function updateStatus() {
   const d = await fetchJSON('/api/status');
   if (!d) return;
@@ -2259,6 +2314,9 @@ async function updateStatus() {
   const badge = document.getElementById('mode-badge');
   badge.textContent = d.mode || 'UNKNOWN';
   badge.className = 'mode-badge' + (d.mode === 'DRY RUN' ? ' dry' : d.mode === 'LIVE' ? ' live' : '');
+
+  // PDT badge (async, don't block status update)
+  updatePDTBadge();
 
   // Market
   const ms = document.getElementById('market-status');

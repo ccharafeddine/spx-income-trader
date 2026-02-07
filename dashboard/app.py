@@ -14,7 +14,7 @@ import ctypes
 import yaml
 from pathlib import Path
 from datetime import datetime, date, timedelta
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, redirect, url_for
 
 # Project root setup
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -27,7 +27,8 @@ SETTINGS_CHANGED_FILE = PROJECT_ROOT / 'database' / '.settings_changed'
 
 from config.settings import (
     BASE_DIR, DATABASE_PATH, LOG_FILE,
-    DASHBOARD_PORT, DASHBOARD_HOST, STRATEGY_PARAMS
+    DASHBOARD_PORT, DASHBOARD_HOST, STRATEGY_PARAMS,
+    ETRADE_CONFIG, is_etrade_configured, save_etrade_credentials, clear_etrade_credentials
 )
 from src.data.yahoo_finance import YahooFinanceProvider
 
@@ -35,6 +36,23 @@ import pytz
 
 app = Flask(__name__)
 ET = pytz.timezone('US/Eastern')
+
+
+# ---------------------------------------------------------------------------
+# Middleware: Redirect to setup if not configured
+# ---------------------------------------------------------------------------
+
+@app.before_request
+def check_setup_required():
+    """Redirect to setup if E*TRADE credentials are not configured."""
+    # Allow setup and static routes without credentials
+    allowed_paths = ['/setup', '/static', '/api/setup/status']
+    if any(request.path.startswith(p) for p in allowed_paths):
+        return None
+
+    # Check if credentials are configured
+    if not is_etrade_configured():
+        return redirect(url_for('setup'))
 
 # Shared Yahoo Finance provider (has its own 60s cache)
 yahoo = YahooFinanceProvider()
@@ -505,6 +523,188 @@ def compute_account(conn, spx_price):
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+@app.route('/setup', methods=['GET', 'POST'])
+def setup():
+    """Setup/onboarding page for E*TRADE credentials."""
+    error = None
+    success = None
+
+    if request.method == 'POST':
+        consumer_key = request.form.get('consumer_key', '').strip()
+        consumer_secret = request.form.get('consumer_secret', '').strip()
+        account_id = request.form.get('account_id', '').strip()
+        environment = request.form.get('environment', 'sandbox')
+
+        # Validate fields
+        if not consumer_key or not consumer_secret or not account_id:
+            error = 'All fields are required.'
+        else:
+            # Save to keychain
+            sandbox = environment != 'production'
+            if save_etrade_credentials(consumer_key, consumer_secret, account_id, sandbox):
+                return redirect(url_for('index'))
+            else:
+                error = 'Failed to save credentials. Make sure keyring is installed.'
+
+        return render_template('setup.html',
+            error=error,
+            consumer_key=consumer_key,
+            account_id=account_id,
+            environment=environment,
+            is_configured=is_etrade_configured()
+        )
+
+    # GET request
+    return render_template('setup.html',
+        is_configured=is_etrade_configured(),
+        environment='sandbox' if ETRADE_CONFIG.get('sandbox', True) else 'production'
+    )
+
+
+@app.route('/settings', methods=['GET', 'POST'])
+def settings():
+    """Settings page for managing credentials and viewing PDT status."""
+    message = None
+    message_type = None
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+
+        if action == 'update_credentials':
+            consumer_key = request.form.get('consumer_key', '').strip()
+            consumer_secret = request.form.get('consumer_secret', '').strip()
+            account_id = request.form.get('account_id', '').strip()
+            environment = request.form.get('environment', 'sandbox')
+
+            # Only update if new values provided (not masked placeholders)
+            if consumer_key and not consumer_key.startswith('****'):
+                # Get existing values if partial update
+                existing_key = ETRADE_CONFIG.get('consumer_key') or ''
+                existing_secret = ETRADE_CONFIG.get('consumer_secret') or ''
+                existing_account = ETRADE_CONFIG.get('account_id') or ''
+
+                new_key = consumer_key if consumer_key else existing_key
+                new_secret = consumer_secret if consumer_secret else existing_secret
+                new_account = account_id if (account_id and not account_id.startswith('****')) else existing_account
+
+                sandbox = environment != 'production'
+                if save_etrade_credentials(new_key, new_secret, new_account, sandbox):
+                    message = 'Credentials updated successfully.'
+                    message_type = 'success'
+                else:
+                    message = 'Failed to save credentials.'
+                    message_type = 'error'
+            else:
+                message = 'No changes detected.'
+                message_type = 'success'
+
+    # Prepare masked values for display
+    key = ETRADE_CONFIG.get('consumer_key') or ''
+    account = ETRADE_CONFIG.get('account_id') or ''
+    masked_key = '****' + key[-4:] if len(key) > 4 else key
+    masked_account = '****' + account[-4:] if len(account) > 4 else account
+
+    return render_template('settings.html',
+        message=message,
+        message_type=message_type,
+        masked_key=masked_key,
+        masked_account=masked_account,
+        is_production=not ETRADE_CONFIG.get('sandbox', True),
+        credential_source=ETRADE_CONFIG.get('credential_source', 'none').title()
+    )
+
+
+@app.route('/api/setup/status')
+def api_setup_status():
+    """Check if credentials are configured."""
+    return jsonify({'configured': is_etrade_configured()})
+
+
+@app.route('/api/test-connection')
+def api_test_connection():
+    """Test E*TRADE API connection."""
+    if not is_etrade_configured():
+        return jsonify({'success': False, 'error': 'Credentials not configured'})
+
+    try:
+        # Try to get SPX quote via Yahoo (always works)
+        spx = yahoo.get_spx_quote() or {}
+        spx_price = spx.get('price')
+
+        if spx_price:
+            return jsonify({
+                'success': True,
+                'spx_price': spx_price,
+                'message': 'Connection successful'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Could not fetch SPX price'
+            })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/clear-credentials', methods=['POST'])
+def api_clear_credentials():
+    """Clear stored credentials from keychain."""
+    try:
+        if clear_etrade_credentials():
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to clear credentials'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/pdt/status')
+def api_pdt_status():
+    """Get PDT tracker status."""
+    pdt_cfg = STRATEGY_PARAMS.get('pdt', {})
+
+    # If PDT tracking is disabled, return minimal status
+    if not pdt_cfg.get('pdt_protection', True):
+        return jsonify({
+            'enabled': False,
+            'is_restricted': False,
+            'day_trades_used': 0,
+            'day_trades_remaining': 999,
+            'max_day_trades': 3,
+            'account_value': None,
+            'threshold': 25000,
+            'next_slot_frees_on': None,
+        })
+
+    # Try to load PDT status from tracker
+    try:
+        from src.core.pdt_tracker import PDTTracker
+
+        tracker = PDTTracker(
+            db_path=DATABASE_PATH,
+            enabled=pdt_cfg.get('pdt_protection', True),
+            threshold=pdt_cfg.get('pdt_threshold', 25000),
+            max_day_trades=pdt_cfg.get('pdt_max_day_trades', 3),
+            window_days=pdt_cfg.get('pdt_window_days', 5),
+        )
+
+        status = tracker.get_pdt_status()
+        return jsonify(status)
+
+    except Exception as e:
+        return jsonify({
+            'enabled': True,
+            'is_restricted': False,
+            'day_trades_used': 0,
+            'day_trades_remaining': 3,
+            'max_day_trades': 3,
+            'account_value': None,
+            'threshold': 25000,
+            'next_slot_frees_on': None,
+            'error': str(e),
+        })
+
 
 @app.route('/')
 def index():
