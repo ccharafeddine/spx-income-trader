@@ -119,6 +119,23 @@ header::after {
 .pdt-badge.green { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
 .pdt-badge.amber { background: rgba(245,158,11,0.15); color: var(--amber); border: 1px solid var(--amber); }
 .pdt-badge.red { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+/* Bot controls (desktop mode only) */
+.bot-controls { display: flex; align-items: center; gap: 8px; }
+.bot-mode-select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 3px; padding: 3px 6px; font-size: 11px; font-family: var(--font-ui);
+  cursor: pointer; outline: none;
+}
+.bot-mode-select:focus { border-color: var(--cyan); }
+.bot-ctrl-btn {
+  padding: 3px 10px; border-radius: 3px; font-size: 11px; font-weight: 600;
+  font-family: var(--font-ui); cursor: pointer; border: 1px solid; transition: all 0.2s;
+}
+.bot-ctrl-btn.start { background: var(--green-dim); color: var(--green); border-color: var(--green); }
+.bot-ctrl-btn.start:hover { background: var(--green); color: #fff; }
+.bot-ctrl-btn.stop { background: var(--red-dim); color: var(--red); border-color: var(--red); }
+.bot-ctrl-btn.stop:hover { background: var(--red); color: #fff; }
+.bot-ctrl-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .settings-link {
   color: var(--text-dim);
   text-decoration: none;
@@ -1517,6 +1534,14 @@ header::after {
     </div>
     <span class="mode-badge" id="mode-badge">--</span>
     <a href="/settings" class="pdt-badge" id="pdt-badge" title="PDT Rule Status - Click for settings">PDT: -/-</a>
+    <div class="bot-controls" id="bot-controls" style="display:none">
+      <select id="bot-mode-select" class="bot-mode-select">
+        <option value="paper">Paper</option>
+        <option value="dry-run">Dry Run</option>
+      </select>
+      <button class="bot-ctrl-btn start" id="bot-start-btn" onclick="startBot()">Start Bot</button>
+      <button class="bot-ctrl-btn stop" id="bot-stop-btn" onclick="stopBot()" style="display:none">Stop Bot</button>
+    </div>
   </div>
   <div class="header-right">
     <a href="/settings" class="settings-link">Settings</a>
@@ -2309,6 +2334,9 @@ async function updateStatus() {
     txt.textContent = d.bot.status === 'stale' ? 'STALE' : 'STOPPED';
     txt.style.color = 'var(--red)';
   }
+
+  // Bot controls (desktop mode)
+  updateBotControls(d.bot.running);
 
   // Mode badge
   const badge = document.getElementById('mode-badge');
@@ -3416,6 +3444,83 @@ async function saveReview(tradeId, idx) {
 // ---------------------------------------------------------------
 let countdown = 30;
 
+// ---------------------------------------------------------------
+// Bot Controls (desktop mode only)
+// ---------------------------------------------------------------
+let desktopMode = false;
+
+async function checkDesktopMode() {
+  try {
+    const resp = await fetch('/api/bot/status');
+    if (resp.ok) {
+      desktopMode = true;
+      document.getElementById('bot-controls').style.display = 'flex';
+    }
+  } catch (e) {
+    // Not in desktop mode; controls stay hidden
+  }
+}
+
+function updateBotControls(botRunning) {
+  if (!desktopMode) return;
+  const startBtn = document.getElementById('bot-start-btn');
+  const stopBtn = document.getElementById('bot-stop-btn');
+  const modeSelect = document.getElementById('bot-mode-select');
+  if (botRunning) {
+    startBtn.style.display = 'none';
+    modeSelect.style.display = 'none';
+    stopBtn.style.display = 'inline-block';
+  } else {
+    startBtn.style.display = 'inline-block';
+    modeSelect.style.display = 'inline-block';
+    stopBtn.style.display = 'none';
+  }
+}
+
+async function startBot() {
+  const btn = document.getElementById('bot-start-btn');
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+  try {
+    const mode = document.getElementById('bot-mode-select').value;
+    const resp = await fetch('/api/bot/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mode}),
+    });
+    const data = await resp.json();
+    if (!data.success) {
+      alert('Failed to start bot: ' + data.error);
+    }
+  } catch (e) {
+    alert('Error starting bot: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Start Bot';
+    setTimeout(refreshAll, 1500);
+  }
+}
+
+async function stopBot() {
+  if (!confirm('Stop the trading bot?')) return;
+  const btn = document.getElementById('bot-stop-btn');
+  btn.disabled = true;
+  btn.textContent = 'Stopping...';
+  try {
+    const resp = await fetch('/api/bot/stop', {method: 'POST'});
+    const data = await resp.json();
+    if (!data.success) {
+      alert('Failed to stop bot: ' + data.error);
+    }
+  } catch (e) {
+    alert('Error stopping bot: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Stop Bot';
+    setTimeout(refreshAll, 1500);
+  }
+}
+
 async function refreshAll() {
   const cdEl = document.getElementById('refresh-countdown');
   cdEl.style.opacity = '0.4';
@@ -3449,6 +3554,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Initial load
+checkDesktopMode();
 refreshAll().then(() => { initialLoad = false; });
 
 // ---------------------------------------------------------------
