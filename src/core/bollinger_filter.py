@@ -8,6 +8,7 @@ Implements the Bollinger Band bias filter from Production Line Trading (p.30-33)
 - Bias persists until opposite band is tagged
 - Pulse bar setups should only be taken if they align with current bias
 """
+from __future__ import annotations
 
 import logging
 import math

@@ -7,6 +7,7 @@ Determines the correct data directory based on runtime mode:
 
 Exposes: DATA_DIR, LOG_DIR, DB_PATH, TOKENS_DIR, CONFIG_DIR, BUNDLE_DIR
 """
+from __future__ import annotations
 
 import sys
 import shutil
