@@ -16,6 +16,7 @@ Usage:
     python app_desktop.py --dev            # System browser instead of native
     python app_desktop.py --headless       # No UI, just Flask server
     python app_desktop.py --port 8080      # Custom port
+    python app_desktop.py --no-tray        # Disable system tray icon
 """
 
 import sys
@@ -119,6 +120,7 @@ class DesktopApp:
 
         # System tray state
         self._tray_icon = None           # pystray.Icon instance
+        self._tray_available = False     # True only when tray started successfully
         self._force_quit = False         # Bypass minimize-to-tray on close
 
         # Version update check result (populated by background thread)
@@ -198,8 +200,9 @@ class DesktopApp:
     # Application lifecycle
     # ------------------------------------------------------------------
 
-    def start(self, headless=False, dev=False):
+    def start(self, headless=False, dev=False, no_tray=False):
         """Start the desktop application (blocks until shutdown)."""
+        self._no_tray = no_tray
         logger.info("=" * 60)
         logger.info(f"SPX Income Trader v{APP_VERSION} - Desktop Application")
         logger.info(f"Dashboard: {self._url}")
@@ -285,8 +288,9 @@ class DesktopApp:
         # Intercept window close for minimize-to-tray behavior
         self._webview_window.events.closing += self._on_webview_closing
 
-        # Start system tray icon in background thread
-        self._start_tray()
+        # Start system tray icon in background thread (unless disabled)
+        if not self._no_tray:
+            self._start_tray()
 
         try:
             # webview.start() blocks until the window is destroyed
@@ -636,13 +640,17 @@ class DesktopApp:
         )
 
     def _start_tray(self):
-        """Create and start the system tray icon in a daemon thread."""
+        """Create and start the system tray icon in a daemon thread.
+
+        If pystray is missing or crashes at any point the app continues
+        without a tray icon.
+        """
         try:
             import pystray  # noqa: F811
         except ImportError:
             logger.warning(
-                "pystray is not installed -- system tray disabled. "
-                "Install with: pip install pystray Pillow"
+                "System tray not available -- app will close on window "
+                "close instead of minimizing."
             )
             return
 
@@ -653,16 +661,33 @@ class DesktopApp:
                 title='SPX Income Trader',
                 menu=self._build_tray_menu(),
             )
-            tray_thread = threading.Thread(
-                target=self._tray_icon.run,
-                daemon=True,
-                name='system-tray',
-            )
-            tray_thread.start()
-            logger.info("System tray icon started")
         except Exception as e:
-            logger.warning(f"Failed to start system tray: {e}")
+            logger.warning(
+                f"System tray not available ({e}) -- app will close on "
+                "window close instead of minimizing."
+            )
             self._tray_icon = None
+            return
+
+        def _safe_tray_run():
+            try:
+                self._tray_icon.run()
+            except Exception as e:
+                logger.warning(
+                    f"System tray crashed ({e}) -- app will close on "
+                    "window close instead of minimizing."
+                )
+                self._tray_icon = None
+                self._tray_available = False
+
+        tray_thread = threading.Thread(
+            target=_safe_tray_run,
+            daemon=True,
+            name='system-tray',
+        )
+        tray_thread.start()
+        self._tray_available = True
+        logger.info("System tray icon started")
 
     def _stop_tray(self):
         """Stop the system tray icon."""
@@ -708,7 +733,7 @@ class DesktopApp:
         """Intercept window close -- minimize to tray if enabled."""
         if self._force_quit:
             return True  # Allow close (quit was requested)
-        if self._get_minimize_to_tray() and self._tray_icon is not None:
+        if self._get_minimize_to_tray() and self._tray_available and self._tray_icon is not None:
             try:
                 self._webview_window.hide()
             except Exception:
@@ -780,6 +805,11 @@ def main():
         default=None,
         help=f'Dashboard port (default: {DASHBOARD_PORT})',
     )
+    parser.add_argument(
+        '--no-tray',
+        action='store_true',
+        help='Disable the system tray icon',
+    )
     args = parser.parse_args()
 
     desktop_app = DesktopApp(port=args.port)
@@ -804,7 +834,7 @@ def main():
     except (OSError, ValueError):
         pass  # SIGTERM registration may fail on some platforms
 
-    desktop_app.start(headless=args.headless, dev=args.dev)
+    desktop_app.start(headless=args.headless, dev=args.dev, no_tray=args.no_tray)
 
 
 if __name__ == '__main__':
