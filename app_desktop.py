@@ -805,12 +805,29 @@ def main():
         default=None,
         help=f'Dashboard port (default: {DASHBOARD_PORT})',
     )
-    parser.add_argument(
+    # On macOS packaged builds, default tray off (pystray crashes py2app).
+    # Users can force-enable with --tray.
+    _macos_packaged = (
+        sys.platform == 'darwin'
+        and getattr(sys, 'frozen', None) is not None
+    )
+    tray_group = parser.add_mutually_exclusive_group()
+    tray_group.add_argument(
         '--no-tray',
         action='store_true',
-        help='Disable the system tray icon',
+        default=_macos_packaged,
+        help='Disable the system tray icon (default on macOS packaged builds)',
+    )
+    tray_group.add_argument(
+        '--tray',
+        action='store_true',
+        help='Force-enable the system tray icon',
     )
     args = parser.parse_args()
+
+    # --tray overrides the macOS default
+    if args.tray:
+        args.no_tray = False
 
     desktop_app = DesktopApp(port=args.port)
 
