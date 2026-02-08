@@ -3,7 +3,7 @@ Application path resolution for SPX Income Trader.
 
 Determines the correct data directory based on runtime mode:
 - Source mode (git repo / development): uses project root for backward compat
-- Packaged mode (PyInstaller bundle): uses platformdirs user_data_dir
+- Packaged mode (PyInstaller / py2app): uses platformdirs user_data_dir
 
 Exposes: DATA_DIR, LOG_DIR, DB_PATH, TOKENS_DIR, CONFIG_DIR, BUNDLE_DIR
 """
@@ -25,14 +25,26 @@ init_messages: list[str] = []
 
 
 def _is_packaged() -> bool:
-    """True when running inside a PyInstaller bundle."""
-    return getattr(sys, '_MEIPASS', None) is not None
+    """True when running inside a PyInstaller or py2app bundle."""
+    if getattr(sys, '_MEIPASS', None) is not None:
+        return True
+    if getattr(sys, 'frozen', None) == 'macosx_app':
+        return True
+    return False
 
 
 def _get_bundle_dir() -> Path:
-    """Directory containing bundled resources (PyInstaller extraction root)."""
-    if _is_packaged():
+    """Directory containing bundled resources.
+
+    PyInstaller: sys._MEIPASS (temporary extraction root).
+    py2app: <AppBundle>/Contents/Resources (where data files live).
+    Source: project root.
+    """
+    if getattr(sys, '_MEIPASS', None) is not None:
         return Path(sys._MEIPASS)
+    if getattr(sys, 'frozen', None) == 'macosx_app':
+        # py2app places resources in <bundle>/Contents/Resources
+        return Path(sys.executable).resolve().parent.parent / 'Resources'
     return _get_source_root()
 
 
