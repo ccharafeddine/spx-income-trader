@@ -90,6 +90,17 @@ PY2APP_OPTIONS = {
         "NSAppleEventsUsageDescription": "SPX Income Trader needs automation access.",
     },
     "packages": [
+        # Project packages (no __init__.py -- namespace packages)
+        "src",
+        "src.brokers",
+        "src.core",
+        "src.data",
+        "src.models",
+        "src.utils",
+        "dashboard",
+        "config",
+        "database",
+        # Third-party
         "flask",
         "jinja2",
         "sqlalchemy",
