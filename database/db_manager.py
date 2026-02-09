@@ -327,6 +327,23 @@ class DatabaseManager:
                 'avg_loss': avg_loss,
             }
 
+    def get_active_trades_raw(self) -> List[Dict]:
+        """Get active trades using a plain connection (no detect_types).
+
+        This avoids sqlite3's TIMESTAMP converter choking on timezone-aware
+        datetime strings like '2026-02-03 00:00:00-05:00'.
+        """
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                "SELECT * FROM trades WHERE status IN ('pending', 'active') "
+                "ORDER BY entry_time DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
     def close_orphaned_trade(
         self,
         trade_id: str,

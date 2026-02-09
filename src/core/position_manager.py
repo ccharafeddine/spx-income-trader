@@ -331,7 +331,9 @@ class PositionManager:
         offline at market close.  Uses yfinance to look up the SPX closing
         price on the expiration date and calculates correct P&L.
         """
-        open_trades = self.db.get_open_trades()
+        # Use raw connection to avoid sqlite3 TIMESTAMP converter choking on
+        # timezone-aware strings like '2026-02-03 00:00:00-05:00'
+        open_trades = self.db.get_active_trades_raw()
         if not open_trades:
             return
 
@@ -343,14 +345,12 @@ class PositionManager:
             if not exp_raw:
                 continue
 
-            # Parse expiration (stored as datetime string or date string)
+            # Parse expiration (stored as text: "2026-02-03", "2026-02-03 16:00:00",
+            # or "2026-02-03 00:00:00-05:00")
             try:
-                if isinstance(exp_raw, str):
-                    # Handle both "2026-02-03" and "2026-02-03 16:00:00" formats
-                    exp_raw = exp_raw.split(' ')[0] if ' ' in exp_raw else exp_raw
-                    exp_date = datetime.strptime(exp_raw, '%Y-%m-%d').date()
-                else:
-                    exp_date = exp_raw.date() if hasattr(exp_raw, 'date') else exp_raw
+                exp_str = str(exp_raw).split(' ')[0] if ' ' in str(exp_raw) else str(exp_raw)
+                # Handle date-only "2026-02-03" format
+                exp_date = datetime.strptime(exp_str[:10], '%Y-%m-%d').date()
             except (ValueError, AttributeError):
                 continue
 
