@@ -2871,98 +2871,107 @@ async function updateToday() {
       });
     });
 
-    // Signal entry markers (dashed vertical lines)
-    (d.signals || []).forEach(s => {
-      const ts = s.timestamp ? s.timestamp.split('T')[1].substring(0, 5) : null;
-      if (!ts) return;
-      shapes.push({
-        type: 'line', x0: ts, x1: ts, y0: 0, y1: 1,
-        xref: 'x', yref: 'paper',
-        line: {color: '#f59e0b', width: 1, dash: 'dash'},
-      });
-    });
-
     // Trade zone visualization for open positions
+    // Track whether y-axis needs expanding to include strike levels
+    let yRangeMin = null, yRangeMax = null;
+
     (d.open_positions || []).forEach(pos => {
       const isBullish = pos.direction === 'bullish';
       const shortStrike = pos.short_strike;
       const longStrike = pos.long_strike;
-      const credit = pos.credit_received || 0;
-      const breakeven = isBullish ? shortStrike - credit : shortStrike + credit;
 
+      // ── Zone shading ──
+      // Profit zone (green): area where spread expires worthless
+      //   Bullish (put credit spread): SPX above short put strike
+      //   Bearish (call credit spread): SPX below short call strike
       const validLows = sortedLows.filter(v => v != null);
       const validHighs = sortedHighs.filter(v => v != null);
-      const chartBottom = validLows.length ? Math.min(...validLows) - 5 : shortStrike - 20;
-      const chartTop = validHighs.length ? Math.max(...validHighs) + 5 : shortStrike + 20;
+      const chartBottom = validLows.length ? Math.min(...validLows) - 5 : shortStrike - 30;
+      const chartTop = validHighs.length ? Math.max(...validHighs) + 5 : shortStrike + 30;
 
-      // Profit zone — from short strike to safe side
       shapes.push({
         type: 'rect', x0: 0, x1: 1, xref: 'paper',
         y0: isBullish ? shortStrike : chartBottom,
         y1: isBullish ? chartTop : shortStrike,
-        yref: 'y', fillcolor: 'rgba(16,185,129,0.06)', line: {width: 0}, layer: 'below',
+        yref: 'y', fillcolor: 'rgba(16,185,129,0.05)', line: {width: 0}, layer: 'below',
       });
-      // Danger zone — between breakeven and long strike
+      // Danger zone (red): between strikes where losses occur
       shapes.push({
         type: 'rect', x0: 0, x1: 1, xref: 'paper',
-        y0: Math.min(breakeven, longStrike), y1: Math.max(breakeven, longStrike),
-        yref: 'y', fillcolor: 'rgba(239,68,68,0.06)', line: {width: 0}, layer: 'below',
-      });
-      // Caution zone — between short strike and breakeven
-      shapes.push({
-        type: 'rect', x0: 0, x1: 1, xref: 'paper',
-        y0: Math.min(shortStrike, breakeven), y1: Math.max(shortStrike, breakeven),
-        yref: 'y', fillcolor: 'rgba(245,158,11,0.06)', line: {width: 0}, layer: 'below',
+        y0: Math.min(shortStrike, longStrike),
+        y1: Math.max(shortStrike, longStrike),
+        yref: 'y', fillcolor: 'rgba(239,68,68,0.07)', line: {width: 0}, layer: 'below',
       });
 
-      // Short strike line (solid, prominent)
+      // ── Strike lines (full-width horizontal dashed) ──
+      // Short strike — red
       shapes.push({
         type: 'line', x0: 0, x1: 1, xref: 'paper',
         y0: shortStrike, y1: shortStrike, yref: 'y',
-        line: {color: '#f59e0b', width: 1.5, dash: 'solid'},
+        line: {color: '#ef4444', width: 1.5, dash: 'dash'},
       });
-      // Breakeven line (dashed)
-      shapes.push({
-        type: 'line', x0: 0, x1: 1, xref: 'paper',
-        y0: breakeven, y1: breakeven, yref: 'y',
-        line: {color: '#6b7280', width: 1, dash: 'dash'},
-      });
-      // Long strike line (dotted, dimmer)
+      // Long strike — orange
       shapes.push({
         type: 'line', x0: 0, x1: 1, xref: 'paper',
         y0: longStrike, y1: longStrike, yref: 'y',
-        line: {color: '#ef4444', width: 1, dash: 'dot'},
+        line: {color: '#f59e0b', width: 1, dash: 'dash'},
       });
 
-      // Labels on right side
+      // ── Strike labels on right edge ──
       annotations.push({
         x: 1.0, y: shortStrike, xref: 'paper', yref: 'y',
         text: 'Short ' + shortStrike, showarrow: false, xanchor: 'left',
-        font: {color: '#f59e0b', size: 9}, bgcolor: 'rgba(10,14,23,0.8)', borderpad: 2,
-      });
-      annotations.push({
-        x: 1.0, y: breakeven, xref: 'paper', yref: 'y',
-        text: 'B/E ' + breakeven.toFixed(2), showarrow: false, xanchor: 'left',
-        font: {color: '#6b7280', size: 9}, bgcolor: 'rgba(10,14,23,0.8)', borderpad: 2,
+        font: {color: '#ef4444', size: 9}, bgcolor: 'rgba(10,14,23,0.9)', borderpad: 2,
       });
       annotations.push({
         x: 1.0, y: longStrike, xref: 'paper', yref: 'y',
         text: 'Long ' + longStrike, showarrow: false, xanchor: 'left',
-        font: {color: '#ef4444', size: 9}, bgcolor: 'rgba(10,14,23,0.8)', borderpad: 2,
+        font: {color: '#f59e0b', size: 9}, bgcolor: 'rgba(10,14,23,0.9)', borderpad: 2,
       });
 
-      // Entry marker
-      const entryTime = pos.entry_time ? pos.entry_time.substring(11, 16) : null;
-      const entryPrice = pos.underlying_price_at_entry || pos.entry_price;
-      if (entryTime && entryPrice) {
-        annotations.push({
-          x: entryTime, y: entryPrice, xref: 'x', yref: 'y',
-          text: '\u25B6 Entry', showarrow: true, arrowhead: 0,
-          ax: -40, ay: 0,
-          font: {color: '#06b6d4', size: 10, family: 'DM Sans'}, bgcolor: 'rgba(10,14,23,0.8)', borderpad: 3,
-          arrowcolor: '#06b6d4',
+      // ── Entry marker at exact bar time and SPX price ──
+      const entryTimeStr = pos.entry_time ? pos.entry_time.substring(11, 16) : null;
+      const entryPrice = pos.underlying_price_at_entry;
+      if (entryTimeStr && entryPrice) {
+        // Find closest bar category to entry time (x-axis is categorical)
+        const eMins = parseInt(entryTimeStr.split(':')[0]) * 60 + parseInt(entryTimeStr.split(':')[1]);
+        let bestIdx = -1, bestDist = Infinity;
+        sortedTimestamps.forEach((t, i) => {
+          if (sortedCloses[i] == null) return;
+          const p = t.split(':');
+          const bMins = parseInt(p[0]) * 60 + parseInt(p[1]);
+          const dist = Math.abs(bMins - eMins);
+          if (dist < bestDist) { bestDist = dist; bestIdx = i; }
         });
+
+        if (bestIdx >= 0) {
+          const entryX = sortedTimestamps[bestIdx];
+          // Subtle vertical dotted line at entry time
+          shapes.push({
+            type: 'line', x0: entryX, x1: entryX, y0: 0, y1: 1,
+            xref: 'x', yref: 'paper',
+            line: {color: 'rgba(6,182,212,0.4)', width: 1, dash: 'dot'},
+            layer: 'below',
+          });
+          // Diamond marker annotation at exact (time, price)
+          annotations.push({
+            x: entryX, y: entryPrice, xref: 'x', yref: 'y',
+            text: '\u25C6 Entry $' + entryPrice.toFixed(0),
+            showarrow: true, arrowhead: 0, arrowwidth: 1,
+            ax: -65, ay: -22,
+            font: {color: '#06b6d4', size: 10, family: 'DM Sans'},
+            bgcolor: 'rgba(10,14,23,0.9)', bordercolor: '#06b6d4',
+            borderwidth: 1, borderpad: 3, arrowcolor: '#06b6d4',
+          });
+        }
       }
+
+      // Ensure y-axis range includes strikes and entry price
+      const extraPts = [shortStrike, longStrike];
+      if (pos.underlying_price_at_entry) extraPts.push(pos.underlying_price_at_entry);
+      const allY = [...validLows, ...validHighs, ...extraPts];
+      yRangeMin = Math.min(...allY) - 3;
+      yRangeMax = Math.max(...allY) + 3;
     });
 
     const layout = {
@@ -2974,7 +2983,10 @@ async function updateToday() {
         type: 'category',
         rangeslider: {visible: false},
       },
-      yaxis: {gridcolor: 'rgba(255,255,255,0.04)', side: 'right'},
+      yaxis: {
+        gridcolor: 'rgba(255,255,255,0.04)', side: 'right',
+        range: yRangeMin != null ? [yRangeMin, yRangeMax] : undefined,
+      },
       shapes: shapes,
       annotations: annotations,
       showlegend: false,
