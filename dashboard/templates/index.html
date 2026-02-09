@@ -628,15 +628,50 @@ header::after {
 }
 .pos-dir { font-weight: bold; font-size: 12px; font-family: var(--font-mono); }
 .pos-status {
+  position: relative;
   font-size: 10px;
   font-weight: bold;
   font-family: var(--font-ui);
   padding: 1px 6px;
   border-radius: 2px;
+  cursor: default;
 }
 .pos-status.safe { background: var(--green-dim); color: var(--green); }
 .pos-status.warning { background: rgba(245,158,11,0.15); color: var(--amber); }
 .pos-status.danger { background: var(--red-dim); color: var(--red); animation: flash 1s infinite; }
+.status-tooltip {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: -4px;
+  background: #1a1f2e;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 4px;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: normal;
+  font-family: var(--font-mono);
+  line-height: 1.6;
+  white-space: nowrap;
+  max-width: 300px;
+  color: var(--text-secondary);
+  z-index: 100;
+  transition: opacity 0.15s, visibility 0.15s;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.status-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: 10px;
+  border: 5px solid transparent;
+  border-top-color: #1a1f2e;
+}
+.status-tooltip .tt-line { display: block; }
+.status-tooltip .tt-zones { color: var(--text-muted); font-size: 10px; }
+.pos-status:hover .status-tooltip { visibility: visible; opacity: 1; }
 @keyframes flash {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
@@ -2693,13 +2728,25 @@ async function updateStatus() {
           : (p.distance_to_short <= 0 ? 'below' : 'above');
         const distAbs = Math.abs(p.distance_to_short).toFixed(2);
         const entryTs = p.entry_time ? p.entry_time.substring(11, 16) : '--';
-        const statusTips = {safe:'SPX is >10 pts from short strike',warning:'SPX is within 10 pts of short strike',danger:'SPX has crossed the short strike',unknown:'Unable to determine position status'};
-        const stTip = statusTips[st] || '';
+        // Build rich tooltip content
+        const spxNow = p.short_strike + p.distance_to_short;
+        const breakeven = p.direction === 'bullish'
+          ? p.short_strike - p.credit_received
+          : p.short_strike + p.credit_received;
+        const beDist = Math.abs(spxNow - breakeven).toFixed(2);
+        const ttLine1 = 'SPX is ' + distAbs + ' pts ' + distLabel + ' short strike ' + p.short_strike;
+        const ttLine2 = 'SAFE: &gt;10 pts &middot; WARNING: 0-10 pts &middot; DANGER: crossed';
+        const ttLine3 = 'Breakeven: ' + breakeven.toFixed(2) + ' (' + beDist + ' pts away)';
+        const tooltipHtml = '<span class="status-tooltip">' +
+          '<span class="tt-line">' + ttLine1 + '</span>' +
+          '<span class="tt-line tt-zones">' + ttLine2 + '</span>' +
+          '<span class="tt-line">' + ttLine3 + '</span>' +
+        '</span>';
 
         html += '<div class="position-card ' + st + '">' +
           '<div class="pos-header">' +
             '<span class="pos-dir ' + dirCls + '">' + spread + ' ' + p.short_strike + '/' + p.long_strike + '</span>' +
-            '<span class="pos-status ' + st + '" title="' + stTip + '">' + (p.position_status || 'UNKNOWN') + '</span>' +
+            '<span class="pos-status ' + st + '">' + (p.position_status || 'UNKNOWN') + tooltipHtml + '</span>' +
           '</div>' +
           '<div class="pos-grid">' +
             '<span class="status-label">Entry</span><span class="status-value">' + entryTs + ' ET</span>' +
