@@ -2693,11 +2693,13 @@ async function updateStatus() {
           : (p.distance_to_short <= 0 ? 'below' : 'above');
         const distAbs = Math.abs(p.distance_to_short).toFixed(2);
         const entryTs = p.entry_time ? p.entry_time.substring(11, 16) : '--';
+        const statusTips = {safe:'SPX is >10 pts from short strike',warning:'SPX is within 10 pts of short strike',danger:'SPX has crossed the short strike',unknown:'Unable to determine position status'};
+        const stTip = statusTips[st] || '';
 
         html += '<div class="position-card ' + st + '">' +
           '<div class="pos-header">' +
             '<span class="pos-dir ' + dirCls + '">' + spread + ' ' + p.short_strike + '/' + p.long_strike + '</span>' +
-            '<span class="pos-status ' + st + '">' + (p.position_status || 'UNKNOWN') + '</span>' +
+            '<span class="pos-status ' + st + '" title="' + stTip + '">' + (p.position_status || 'UNKNOWN') + '</span>' +
           '</div>' +
           '<div class="pos-grid">' +
             '<span class="status-label">Entry</span><span class="status-value">' + entryTs + ' ET</span>' +

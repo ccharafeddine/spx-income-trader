@@ -249,19 +249,22 @@ class PositionManager:
             # Get current value for exit
             current_value = self.broker.get_position_value(trade.spread)
             
-            # If expiration, no need to close
+            # If expiration, calculate P&L from underlying price vs strikes
             if "expiration" in reason.lower():
                 underlying_price = self.broker.get_current_price("SPX")
                 final_pnl = trade.spread.profit_at_price(underlying_price) * trade.quantity
-                
-                trade.close(
-                    exit_price=0.0,
-                    exit_time=datetime.now(self.tz),
-                    reason=reason
-                )
+
+                # Set exit fields directly (trade.close() calls update_pnl()
+                # which uses entry_price-exit_price math, wrong for expirations)
+                trade.exit_price = 0.0
+                trade.exit_time = datetime.now(self.tz)
+                trade.exit_reason = reason
+                trade.status = TradeStatus.CLOSED
                 trade.pnl = final_pnl
-                
-                logger.info(f"Trade expired: Final P&L ${final_pnl:.2f}")
+                max_profit = trade.spread.max_profit * trade.quantity
+                trade.pnl_percent = (final_pnl / max_profit * 100) if max_profit > 0 else 0.0
+
+                logger.info(f"Trade expired: SPX=${underlying_price:,.2f}, Final P&L ${final_pnl:.2f}")
                 
             else:
                 # Close position
@@ -321,9 +324,130 @@ class PositionManager:
         """Get all open trades"""
         return self.open_trades.copy()
     
+    def resolve_expired_trades(self):
+        """Resolve trades still marked 'active' in the DB that have already expired.
+
+        Runs at bot startup to handle trades orphaned when the bot was
+        offline at market close.  Uses yfinance to look up the SPX closing
+        price on the expiration date and calculates correct P&L.
+        """
+        open_trades = self.db.get_open_trades()
+        if not open_trades:
+            return
+
+        now = datetime.now(self.tz)
+        resolved = 0
+
+        for row in open_trades:
+            exp_raw = row.get('expiration')
+            if not exp_raw:
+                continue
+
+            # Parse expiration (stored as datetime string or date string)
+            try:
+                if isinstance(exp_raw, str):
+                    # Handle both "2026-02-03" and "2026-02-03 16:00:00" formats
+                    exp_raw = exp_raw.split(' ')[0] if ' ' in exp_raw else exp_raw
+                    exp_date = datetime.strptime(exp_raw, '%Y-%m-%d').date()
+                else:
+                    exp_date = exp_raw.date() if hasattr(exp_raw, 'date') else exp_raw
+            except (ValueError, AttributeError):
+                continue
+
+            # Only process trades whose expiration date has passed
+            if exp_date >= now.date():
+                continue
+
+            trade_id = row['id']
+            direction = row['direction']
+            short_strike = row['short_strike']
+            long_strike = row['long_strike']
+            credit = row['credit_received']
+            quantity = row['quantity']
+
+            # Try to get SPX closing price on expiration date
+            spx_close = self._get_historical_close(exp_date)
+
+            if spx_close is not None:
+                pnl = self._profit_at_price(
+                    direction, short_strike, long_strike, credit, spx_close
+                ) * quantity
+                source = f"SPX close ${spx_close:,.2f}"
+            else:
+                # Fallback: assume expired worthless (common for far-OTM 0DTE)
+                pnl = credit * 100 * quantity
+                source = "assumed OTM (no historical data)"
+
+            max_profit = credit * 100 * quantity
+            pnl_pct = (pnl / max_profit * 100) if max_profit > 0 else 0.0
+
+            # Use market close (4 PM ET) on expiration date as exit time
+            exit_time = self.tz.localize(
+                datetime.combine(exp_date, datetime.strptime('16:00', '%H:%M').time())
+            )
+            exit_reason = f"Expired (resolved at startup, {source})"
+
+            self.db.close_orphaned_trade(trade_id, pnl, pnl_pct, exit_reason, exit_time)
+            self.db.update_daily_stats(exp_date)
+            resolved += 1
+
+            logger.info(
+                f"Resolved orphaned trade {trade_id[:8]}: {direction} "
+                f"{short_strike}/{long_strike}, P&L=${pnl:+.2f} ({pnl_pct:+.1f}%) - {source}"
+            )
+
+        if resolved:
+            logger.info(f"Resolved {resolved} orphaned expired trade(s)")
+
+    @staticmethod
+    def _get_historical_close(trade_date):
+        """Get SPX closing price for a given date via yfinance."""
+        try:
+            import yfinance as yf
+            from datetime import timedelta
+
+            start = trade_date
+            end = trade_date + timedelta(days=1)
+            data = yf.download(
+                '%5EGSPC', start=str(start), end=str(end),
+                interval='1d', progress=False
+            )
+
+            if not data.empty:
+                if hasattr(data.columns, 'nlevels') and data.columns.nlevels > 1:
+                    data.columns = data.columns.get_level_values(0)
+                return float(data['Close'].iloc[-1])
+        except Exception as e:
+            logger.warning(f"Failed to get historical SPX close for {trade_date}: {e}")
+        return None
+
+    @staticmethod
+    def _profit_at_price(direction, short_strike, long_strike, credit, underlying_price):
+        """Calculate per-contract P&L at a given underlying price (from DB row data)."""
+        max_profit = credit * 100
+        spread_width = abs(long_strike - short_strike)
+        max_risk = (spread_width - credit) * 100
+
+        if direction == 'bullish':
+            if underlying_price >= short_strike:
+                return max_profit
+            elif underlying_price <= long_strike:
+                return -max_risk
+            else:
+                loss = (short_strike - underlying_price) * 100
+                return max_profit - loss
+        else:
+            if underlying_price <= short_strike:
+                return max_profit
+            elif underlying_price >= long_strike:
+                return -max_risk
+            else:
+                loss = (underlying_price - short_strike) * 100
+                return max_profit - loss
+
     def close_all_positions(self, reason: str = "Manual close"):
         """Close all open positions"""
         logger.warning(f"Closing all positions: {reason}")
-        
+
         for trade in self.open_trades.copy():
             self._exit_trade(trade, reason)

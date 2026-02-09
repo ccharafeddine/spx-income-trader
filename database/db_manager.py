@@ -326,3 +326,29 @@ class DatabaseManager:
                 'avg_win': avg_win,
                 'avg_loss': avg_loss,
             }
+
+    def close_orphaned_trade(
+        self,
+        trade_id: str,
+        pnl: float,
+        pnl_percent: float,
+        exit_reason: str,
+        exit_time: Optional[datetime] = None,
+    ):
+        """Close an orphaned trade directly in the DB (expired while bot was offline)."""
+        if exit_time is None:
+            exit_time = datetime.now()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE trades SET
+                    status = 'closed',
+                    exit_price = 0.0,
+                    exit_time = ?,
+                    exit_reason = ?,
+                    pnl = ?,
+                    pnl_percent = ?
+                WHERE id = ?
+            """, (exit_time, exit_reason, pnl, pnl_percent, trade_id))
+            conn.commit()
+            logger.info(f"Orphaned trade {trade_id} resolved: P&L=${pnl:+.2f}")

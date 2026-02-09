@@ -212,6 +212,12 @@ class TradingBot:
             "max_daily_trades": self.max_daily_trades
         })
         
+        # Resolve any trades that expired while bot was offline
+        try:
+            self.position_manager.resolve_expired_trades()
+        except Exception as e:
+            logger.warning(f"Failed to resolve expired trades: {e}")
+
         # Seed Bollinger filter with historical data
         if self.bollinger_enabled:
             try:
