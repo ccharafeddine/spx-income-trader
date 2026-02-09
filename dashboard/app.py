@@ -208,24 +208,41 @@ def _is_during_market_hours(timestamp_str):
 
 
 def _parse_expiration(exp_str):
-    """Parse an expiration string into a timezone-aware datetime."""
+    """Parse an expiration string into a timezone-aware datetime.
+
+    For date-only strings ('2026-02-07'), returns 4:00 PM ET (market close).
+    Handles: ISO format, 'YYYY-MM-DD HH:MM:SS', 'YYYY-MM-DD', and
+    timezone-aware strings like '2026-02-07 00:00:00-05:00'.
+    """
     if not exp_str:
         return None
     try:
-        if 'T' in exp_str:
+        exp_str = str(exp_str).strip()
+        dt = None
+
+        # Try fromisoformat first (handles 'T' separator AND timezone offsets)
+        try:
             dt = datetime.fromisoformat(exp_str)
-        else:
-            # Try common formats
-            for fmt in ('%Y-%m-%d %H:%M:%S%z', '%Y-%m-%d %H:%M:%S'):
-                try:
-                    dt = datetime.strptime(exp_str, fmt)
-                    break
-                except ValueError:
-                    continue
-            else:
-                return None
+        except ValueError:
+            pass
+
+        # Try date-only: "2026-02-07"
+        if dt is None and len(exp_str) >= 10:
+            try:
+                dt = datetime.strptime(exp_str[:10], '%Y-%m-%d')
+            except ValueError:
+                pass
+
+        if dt is None:
+            return None
+
+        # Ensure timezone-aware (localize to ET if naive)
         if dt.tzinfo is None:
             dt = ET.localize(dt)
+
+        # If time is midnight (date-only input), set to 4 PM ET (market close)
+        if dt.hour == 0 and dt.minute == 0 and dt.second == 0:
+            dt = dt.replace(hour=16, minute=0, second=0)
         return dt
     except (ValueError, TypeError):
         return None
@@ -1139,9 +1156,16 @@ def api_today():
                 today_trades.append(t)
 
         # Only truly open positions for strike lines
-        # Add current SPX price so frontend can compute zones
+        # Add current SPX price and time remaining for frontend
+        now = datetime.now(ET)
         for p in open_pos:
             p['current_price'] = spx_price
+            exp_dt = _parse_expiration(p.get('expiration'))
+            if exp_dt:
+                remaining = exp_dt - now
+                p['time_remaining_secs'] = max(0, int(remaining.total_seconds()))
+            else:
+                p['time_remaining_secs'] = 0
         open_positions = open_pos
         conn.close()
     except Exception:
@@ -2010,13 +2034,19 @@ def api_logs_recent():
 
 @app.route('/api/stale-positions')
 def api_stale_positions():
-    """Check for trades still marked 'active' that may be from a crashed session."""
+    """Check for trades still marked 'active' from a PREVIOUS day (not today).
+
+    Only flags genuinely orphaned positions, not the current session's trades.
+    """
+    today_str = date.today().strftime('%Y-%m-%d')
     try:
         conn = get_db_connection()
         rows = conn.execute(
             "SELECT id, entry_time, direction, short_strike, long_strike, "
             "credit_received, quantity, strategy_type "
-            "FROM trades WHERE status = 'active' ORDER BY entry_time"
+            "FROM trades WHERE status = 'active' "
+            "AND DATE(entry_time) < ? ORDER BY entry_time",
+            (today_str,)
         ).fetchall()
         conn.close()
         positions = [dict(r) for r in rows]

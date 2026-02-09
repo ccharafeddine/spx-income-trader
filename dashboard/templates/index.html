@@ -3866,7 +3866,7 @@ startLogAutoRefresh();
 // ---------------------------------------------------------------
 // Stale Positions Warning
 // ---------------------------------------------------------------
-let staleWarningDismissed = false;
+let staleWarningDismissed = sessionStorage.getItem('stale_dismissed') === '1';
 
 async function checkStalePositions() {
   if (staleWarningDismissed) return;
@@ -3882,6 +3882,7 @@ async function checkStalePositions() {
 
 function dismissStaleWarning() {
   staleWarningDismissed = true;
+  sessionStorage.setItem('stale_dismissed', '1');
   document.getElementById('stale-positions-banner').classList.remove('visible');
 }
 
