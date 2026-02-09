@@ -327,7 +327,13 @@ class TradingBot:
                     consecutive_errors = 0  # Reset error counter
                     continue
 
-                # Check daily limits
+                # Monitor existing positions ALWAYS (even when daily limits reached)
+                closed_pnl = self.position_manager.monitor_positions()
+                if closed_pnl != 0:
+                    self.daily_pnl += closed_pnl
+                    logger.info(f"Daily P&L updated: ${self.daily_pnl:.2f} (trade closed: ${closed_pnl:+.2f})")
+
+                # Check daily limits (for new entries only - monitoring always runs above)
                 if not self._check_daily_limits():
                     if self.pending_setup:
                         logger.info("Daily limits reached, clearing pending setup")
@@ -337,12 +343,6 @@ class TradingBot:
                     self._interruptible_sleep(300)
                     consecutive_errors = 0
                     continue
-
-                # Monitor existing positions and accumulate realized P&L
-                closed_pnl = self.position_manager.monitor_positions()
-                if closed_pnl != 0:
-                    self.daily_pnl += closed_pnl
-                    logger.info(f"Daily P&L updated: ${self.daily_pnl:.2f} (trade closed: ${closed_pnl:+.2f})")
 
                 # Look for new setups
                 if self._is_setup_window(current_time):

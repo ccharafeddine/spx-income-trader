@@ -309,11 +309,11 @@ class SPXIncomeStrategy:
 
         is_trending = abs_move >= self.trending_threshold
 
-        # Calculate current P&L percentage
-        credit = trade.spread.credit_received or 0
+        # Calculate current P&L directly from spread intrinsic value at current SPX price.
+        # This is self-sufficient and does not depend on trade.pnl being set by monitor_positions().
         qty = trade.quantity or 1
-        max_profit = credit * 100 * qty
-        current_pnl = trade.pnl if trade.pnl is not None else 0
+        current_pnl = trade.spread.profit_at_price(current_price) * qty
+        max_profit = trade.spread.max_profit * qty
         pnl_pct = (current_pnl / max_profit * 100) if max_profit > 0 else 0
 
         assessment = {
