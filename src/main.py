@@ -13,6 +13,7 @@ from datetime import datetime, time
 import time as time_module
 import signal
 import json
+import threading
 from typing import Optional
 import pytz
 
@@ -115,6 +116,10 @@ class TradingBot:
         self.daily_pnl = 0.0
         self.current_trading_date = None
 
+        # Token auto-renewal for live broker (E*TRADE tokens expire after 2 hours)
+        self._token_renewal_thread = None
+        self._token_renewal_stop = threading.Event()
+
         # Pending setup state (pulse bar detected, waiting for breakout)
         self.pending_setup = None  # {direction, bar, trigger_price, timestamp}
 
@@ -184,6 +189,45 @@ class TradingBot:
 
         logger.info("TradingBot initialized")
     
+    def _start_token_renewal(self):
+        """Start background token renewal if broker has an auth object.
+
+        E*TRADE access tokens expire after 2 hours of inactivity.
+        This thread renews them every 90 minutes to keep the session alive
+        throughout the 6.5-hour trading day.
+        """
+        auth = getattr(self.broker, 'auth', None)
+        if auth is None or not hasattr(auth, '_renew_token'):
+            return
+
+        def _renewal_loop():
+            interval = 90 * 60  # 90 minutes
+            while not self._token_renewal_stop.wait(interval):
+                try:
+                    if auth._renew_token():
+                        logger.info("OAuth token renewed successfully")
+                    else:
+                        logger.warning(
+                            "OAuth token renewal failed - session may expire. "
+                            "Re-authentication may be needed."
+                        )
+                except Exception as e:
+                    logger.error(f"OAuth token renewal error: {e}")
+
+        self._token_renewal_stop.clear()
+        self._token_renewal_thread = threading.Thread(
+            target=_renewal_loop, name="token-renewal", daemon=True
+        )
+        self._token_renewal_thread.start()
+        logger.info("Token auto-renewal started (every 90 minutes)")
+
+    def _stop_token_renewal(self):
+        """Stop the background token renewal thread."""
+        if self._token_renewal_thread and self._token_renewal_thread.is_alive():
+            self._token_renewal_stop.set()
+            self._token_renewal_thread.join(timeout=5)
+            logger.info("Token auto-renewal stopped")
+
     def start(self):
         """Start the trading bot"""
         self.running = True
@@ -198,7 +242,10 @@ class TradingBot:
         logger.info(f"Max daily trades: {self.max_daily_trades}")
         logger.info(f"Max daily loss: ${self.max_daily_loss}")
         logger.info("=" * 60)
-        
+
+        # Start token auto-renewal for live broker
+        self._start_token_renewal()
+
         # Send startup notification
         if self.notifier:
             self.notifier.send(
@@ -777,6 +824,9 @@ class TradingBot:
 
         logger.info("Shutting down trading bot...")
         self.running = False
+
+        # Stop token renewal thread
+        self._stop_token_renewal()
 
         # Log shutdown event
         try:

@@ -826,8 +826,24 @@ class ETradeBroker(BrokerInterface):
         """Alias for close_position for interface compatibility"""
         return self.close_position(spread, quantity, limit_price, dry_run)
 
+    # Map E*TRADE status strings to the normalized values position_manager expects
+    _STATUS_MAP = {
+        'EXECUTED': 'filled',
+        'OPEN': 'open',
+        'PENDING': 'pending',
+        'CANCELLED': 'cancelled',
+        'CANCEL_REQUESTED': 'cancel_requested',
+        'EXPIRED': 'expired',
+        'REJECTED': 'rejected',
+        'PARTIAL': 'partial',
+    }
+
     def get_order_status(self, order_id: str) -> Dict:
-        """Get order status and fill information"""
+        """Get order status and fill information.
+
+        Returns normalized status strings (lowercase) that match what
+        position_manager expects: 'filled', 'open', 'cancelled', etc.
+        """
         endpoint = self.ORDERS_LIST.format(account_id_key=self.account_id_key)
         params = {'orderId': order_id}
 
@@ -846,8 +862,11 @@ class ETradeBroker(BrokerInterface):
                     if isinstance(order_detail, list):
                         order_detail = order_detail[0]
 
+                    raw_status = order_detail.get('status', 'UNKNOWN')
+                    normalized = self._STATUS_MAP.get(raw_status, raw_status.lower())
+
                     return {
-                        'status': order_detail.get('status', 'UNKNOWN'),
+                        'status': normalized,
                         'fill_price': float(order_detail.get('executedPrice', 0) or 0),
                         'filled_quantity': int(order_detail.get('filledQuantity', 0) or 0),
                         'order_type': order_detail.get('orderType'),
@@ -858,7 +877,7 @@ class ETradeBroker(BrokerInterface):
         except ETradeAPIError as e:
             logger.error(f"Error getting order status: {e.message}")
 
-        return {'status': 'NOT_FOUND', 'fill_price': 0, 'filled_quantity': 0}
+        return {'status': 'not_found', 'fill_price': 0, 'filled_quantity': 0}
 
     def get_position_value(self, spread: CreditSpread) -> float:
         """
