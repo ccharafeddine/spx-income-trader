@@ -40,6 +40,7 @@ class PositionManager:
         self.pdt_tracker = pdt_tracker
 
         self.open_trades: List[Trade] = []
+        self.recently_closed: List[Dict] = []  # [{id, pnl}] for portfolio tracking
         self.tz = pytz.timezone("America/New_York")
 
         # Daily market cache (set once per day by TradingBot)
@@ -331,29 +332,41 @@ class PositionManager:
                 logger.info(f"Trade expired: SPX=${underlying_price:,.2f}, Final P&L ${final_pnl:.2f}")
                 
             else:
-                # Close position
-                limit_price = min(current_value + 0.10, 0.50)
-                
+                # Close position - cap at spread width (max possible value)
+                max_debit = trade.spread.spread_width
+                limit_price = min(current_value + 0.10, max_debit)
+
                 order_id = self.broker.close_spread(
                     trade.spread,
                     trade.quantity,
                     limit_price
                 )
-                
+
+                if not order_id:
+                    logger.error(f"Close order failed for trade {trade.id}, will retry next cycle")
+                    return
+
                 # Wait for fill
                 import time
                 time.sleep(2)
-                
+
                 order_status = self.broker.get_order_status(order_id)
+                if order_status['status'] != 'filled':
+                    logger.warning(
+                        f"Close order {order_id} not filled (status: {order_status['status']}), "
+                        f"will retry next cycle"
+                    )
+                    return
+
                 exit_price = order_status['fill_price']
-                
+
                 trade.close(
                     exit_price=exit_price,
                     exit_time=datetime.now(self.tz),
                     reason=reason
                 )
                 trade.exit_order_id = order_id
-                
+
                 logger.info(f"✓ Trade closed at ${exit_price:.2f}")
             
             logger.info(f"  P&L: ${trade.pnl:.2f}")
@@ -361,6 +374,9 @@ class PositionManager:
             
             # Remove from open trades
             self.open_trades.remove(trade)
+
+            # Track for portfolio risk updates
+            self.recently_closed.append({'id': trade.id, 'pnl': trade.pnl or 0.0})
 
             # Update database
             self.db.save_trade(trade)

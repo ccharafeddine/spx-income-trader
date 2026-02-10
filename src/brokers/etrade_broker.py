@@ -618,7 +618,8 @@ class ETradeBroker(BrokerInterface):
             time.sleep(self.ORDER_POLL_INTERVAL)
 
             status = self.get_order_status(order_id)
-            order_status = OrderStatus(status.get('status', 'NOT_FOUND'))
+            raw_status = status.get('status', 'not_found')
+            order_status = self._NORMALIZED_TO_ENUM.get(raw_status, OrderStatus.NOT_FOUND)
 
             logger.debug(f"Order {order_id} poll {polls}: {order_status.value}")
 
@@ -836,6 +837,19 @@ class ETradeBroker(BrokerInterface):
         'EXPIRED': 'expired',
         'REJECTED': 'rejected',
         'PARTIAL': 'partial',
+    }
+
+    # Reverse map: normalized lowercase strings -> OrderStatus enum
+    _NORMALIZED_TO_ENUM = {
+        'filled': OrderStatus.EXECUTED,
+        'open': OrderStatus.OPEN,
+        'pending': OrderStatus.PENDING,
+        'cancelled': OrderStatus.CANCELLED,
+        'cancel_requested': OrderStatus.CANCEL_REQUESTED,
+        'expired': OrderStatus.EXPIRED,
+        'rejected': OrderStatus.REJECTED,
+        'partial': OrderStatus.PARTIAL,
+        'not_found': OrderStatus.NOT_FOUND,
     }
 
     def get_order_status(self, order_id: str) -> Dict:

@@ -132,6 +132,10 @@ class TradingBot:
         # Pending setup state (pulse bar detected, waiting for breakout)
         self.pending_setup = None  # {direction, bar, trigger_price, timestamp}
 
+        # Market state (updated every cycle by _update_market_state)
+        self._current_spx_price = 0.0
+        self._last_completed_bar = None
+
         # Parameters
         self.max_daily_trades = STRATEGY_PARAMS['strategy']['max_daily_trades']
         self.max_daily_loss = STRATEGY_PARAMS['risk']['max_daily_loss']
@@ -452,6 +456,8 @@ class TradingBot:
                     self.trades_today = 0
                     self.daily_pnl = 0.0
                     self.pending_setup = None
+                    self.bar_builder.reset()
+                    self._last_completed_bar = None
                     self.bollinger.day_open = None  # Reset for new day, will set at market open
                     self.position_manager._day_open = None
                     self.position_manager._prev_close = None
@@ -502,6 +508,15 @@ class TradingBot:
                     self.daily_pnl += closed_pnl
                     logger.info(f"Daily P&L updated: ${self.daily_pnl:.2f} (trade closed: ${closed_pnl:+.2f})")
 
+                # Update portfolio risk tracking for closed trades
+                for closed in self.position_manager.recently_closed:
+                    self.portfolio.close_position(closed['id'], closed['pnl'])
+                self.position_manager.recently_closed.clear()
+
+                # Update market state: build bars, feed parallel strategies
+                # (runs every cycle during market hours, NOT gated by setup window)
+                self._update_market_state(current_time)
+
                 # Check daily limits (for new entries only - monitoring always runs above)
                 if not self._check_daily_limits():
                     if self.pending_setup:
@@ -513,32 +528,35 @@ class TradingBot:
                     consecutive_errors = 0
                     continue
 
-                # Look for new setups
-                if self._is_setup_window(current_time):
+                # Check pending breakout triggers (after daily limits gate)
+                self._check_breakout_trigger(current_time)
+
+                # Evaluate completed bars for new pulse setups (bar must have started in a window)
+                if self._last_completed_bar and self._bar_in_setup_window(self._last_completed_bar.timestamp):
                     self._check_for_setups()
-                else:
-                    # Expire pending setup when its specific window closes
-                    if self.pending_setup:
-                        ps = self.pending_setup
-                        ps_window = ps.get('window', 'morning')
-                        # Determine the end time for the setup's window
-                        if ps_window == 'afternoon':
-                            window_end = self.afternoon_end
-                            window_label = f"{self.afternoon_start.strftime('%H:%M')}-{self.afternoon_end.strftime('%H:%M')}"
-                        else:
-                            window_end = time(11, 30)
-                            window_label = "9:30-11:30"
-                        # Expire if we're past the window end
-                        if current_time.time() > window_end:
-                            logger.info(
-                                f"Pending {ps['direction'].value.upper()} setup expired "
-                                f"({ps_window} window closed at {window_end.strftime('%H:%M')} ET without breakout). "
-                                f"Trigger was {'above' if ps['direction'].value == 'bullish' else 'below'} "
-                                f"${ps['trigger_price']:,.2f}"
-                            )
-                            self.pending_setup = None
-                    # Log once on startup if outside setup window, or every 10 minutes
-                    if loop_count == 1 or loop_count % 20 == 0:  # every ~10 min at 30s intervals
+
+                # Expire pending setups past their window
+                if self.pending_setup and not self._is_setup_window(current_time):
+                    ps = self.pending_setup
+                    ps_window = ps.get('window', 'morning')
+                    if ps_window == 'afternoon':
+                        window_end = self.afternoon_end
+                        window_label = f"{self.afternoon_start.strftime('%H:%M')}-{self.afternoon_end.strftime('%H:%M')}"
+                    else:
+                        window_end = time(11, 30)
+                        window_label = "9:30-11:30"
+                    if current_time.time() > window_end:
+                        logger.info(
+                            f"Pending {ps['direction'].value.upper()} setup expired "
+                            f"({ps_window} window closed at {window_end.strftime('%H:%M')} ET without breakout). "
+                            f"Trigger was {'above' if ps['direction'].value == 'bullish' else 'below'} "
+                            f"${ps['trigger_price']:,.2f}"
+                        )
+                        self.pending_setup = None
+
+                # Log outside-window status periodically
+                if not self._is_setup_window(current_time):
+                    if loop_count == 1 or loop_count % 20 == 0:
                         windows_str = "9:30-11:30"
                         if self.afternoon_enabled:
                             windows_str += f", {self.afternoon_start.strftime('%H:%M')}-{self.afternoon_end.strftime('%H:%M')}"
@@ -627,27 +645,21 @@ class TradingBot:
         
         return True
     
-    def _check_for_setups(self):
-        """Check for new trading setups and pending breakout triggers.
+    def _update_market_state(self, current_time):
+        """Update market data, build bars, and run parallel strategy checks.
 
-        Per Production Line Trading strategy:
-        1. A pulse bar is a SETUP, not an entry signal.
-        2. Entry triggers when the NEXT bar/tick breaks the setup bar's
-           high (bullish) or low (bearish).
+        Called every cycle during market hours, regardless of setup window.
+        This ensures bars build continuously and parallel strategies (Tag 'n Turn,
+        ORB, B&B) receive data even outside the daily income setup window.
         """
         try:
-            # Redundant market-hours guard - prevents signals if called outside market hours
-            current_time = datetime.now(self.tz)
-            if not self._is_market_open(current_time):
-                logger.warning("_check_for_setups called outside market hours - skipping")
-                return
-
             # Get current SPX price
-            current_price = self.broker.get_current_price("SPX")
-            if current_price == 0:
-                logger.warning("Failed to get SPX price, skipping setup check")
+            self._current_spx_price = self.broker.get_current_price("SPX")
+            if self._current_spx_price == 0:
+                logger.warning("Failed to get SPX price")
                 return
 
+            current_price = self._current_spx_price
             logger.debug(f"SPX price: ${current_price:,.2f}")
 
             # Set day open price for extreme move override (first price of the day)
@@ -669,9 +681,8 @@ class TradingBot:
                 except Exception as e:
                     logger.warning(f"Failed to cache daily open/prev_close: {e}")
 
-            # Update bar builder
-            current_time = datetime.now(self.tz)
-            bar = self.bar_builder.add_price(current_time, current_price)
+            # Update bar builder (runs every cycle so bars build continuously)
+            self._last_completed_bar = self.bar_builder.add_price(current_time, current_price)
 
             # Log current bar building status periodically (with pending setup info)
             if self.bar_builder.current_bar_start and self.bar_builder.tick_count % 5 == 0:
@@ -691,83 +702,8 @@ class TradingBot:
                            f"({self.bar_builder.tick_count} ticks)"
                            f"{setup_str}")
 
-            # --- Check pending setup for breakout trigger ---
-            if self.pending_setup and not self.position_manager.has_open_position():
-                ps = self.pending_setup
-                triggered = False
-
-                if ps['direction'].value == 'bullish' and current_price > ps['trigger_price']:
-                    logger.info(
-                        f"BREAKOUT CONFIRMED: SPX ${current_price:,.2f} > "
-                        f"setup bar high ${ps['trigger_price']:,.2f} "
-                        f"(BULLISH trigger from {ps['bar'].timestamp.strftime('%H:%M')} bar)"
-                    )
-                    triggered = True
-                elif ps['direction'].value == 'bearish' and current_price < ps['trigger_price']:
-                    logger.info(
-                        f"BREAKOUT CONFIRMED: SPX ${current_price:,.2f} < "
-                        f"setup bar low ${ps['trigger_price']:,.2f} "
-                        f"(BEARISH trigger from {ps['bar'].timestamp.strftime('%H:%M')} bar)"
-                    )
-                    triggered = True
-
-                if triggered:
-                    setup_bar = ps['bar']
-                    direction = ps['direction']
-                    self.pending_setup = None
-                    self._execute_setup(setup_bar, current_price, direction, breakout_time=current_time)
-                    return
-
-            # --- Check Tag 'n Turn entry signals (runs in parallel with daily strategy) ---
-            if self.tag_n_turn_enabled and self.tag_n_turn:
-                tnt_signal = self.tag_n_turn.check_entry_signal(current_price)
-                if tnt_signal:
-                    logger.info(
-                        f"TAG 'N TURN SIGNAL: {tnt_signal['direction'].value.upper()} "
-                        f"entry @ ${current_price:,.2f}, "
-                        f"target=${tnt_signal['target_price']:,.2f}"
-                    )
-                    # TODO: Execute Tag 'n Turn trade when live trading is implemented
-                    # For now, just log the signal (multi-day positions need special handling)
-                    self.db.log_event("tag_n_turn_signal", "Tag 'n Turn entry signal", {
-                        "direction": tnt_signal['direction'].value,
-                        "entry_price": current_price,
-                        "target_price": tnt_signal['target_price'],
-                        "stop_price": tnt_signal['stop_price'],
-                    })
-
-                # Check exit conditions for open Tag 'n Turn positions
-                tnt_exit = self.tag_n_turn.check_exit_conditions(current_price)
-                if tnt_exit:
-                    logger.info(
-                        f"TAG 'N TURN EXIT: {tnt_exit['reason']} @ ${current_price:,.2f}"
-                    )
-                    self.db.log_event("tag_n_turn_exit", "Tag 'n Turn exit signal", {
-                        "reason": tnt_exit['reason'],
-                        "exit_price": current_price,
-                    })
-
-            # --- Check ORB breakout signals ---
-            if self.orb_enabled and self.orb_strategy:
-                orb_signal = self.orb_strategy.check_breakout(current_price)
-                if orb_signal:
-                    logger.info(
-                        f"ORB SIGNAL: {orb_signal['direction'].upper()} "
-                        f"entry @ ${current_price:,.2f} ({orb_signal['trigger']})"
-                    )
-                    self.db.log_event("orb_signal", "ORB breakout signal", orb_signal)
-
-            # --- Check B&B entry signals (morning entry from overnight signal) ---
-            if self.bnb_enabled and self.bnb_strategy:
-                bnb_signal = self.bnb_strategy.check_entry_signal(current_price, current_time)
-                if bnb_signal:
-                    logger.info(
-                        f"B&B ENTRY SIGNAL: {bnb_signal['direction'].upper()} "
-                        f"@ ${current_price:,.2f} (from {bnb_signal['signal_date']})"
-                    )
-                    self.db.log_event("bnb_signal", "B&B entry signal", bnb_signal)
-
-            # --- If bar just completed, check for new pulse bar setup ---
+            # Process completed bar through all filters and parallel strategies
+            bar = self._last_completed_bar
             if bar:
                 logger.info(f"New 30-min bar completed: {bar}")
 
@@ -790,45 +726,168 @@ class TradingBot:
                         logger.info(f"B&B ACTION: {bnb_action}")
                         self.db.log_event("bnb_action", "B&B strategy action", bnb_action)
 
-                # Check if we already have an open position
-                if self.position_manager.has_open_position():
-                    logger.debug("Already have open position, skipping setup check")
-                    return
-
-                # Evaluate for pulse bar setup
-                direction = self.strategy.evaluate_setup(bar, current_price)
-
-                if direction:
-                    # Pulse bar detected — store as pending setup, DON'T enter yet
-                    # NOTE: BB filter removed from daily strategy (per plan).
-                    # Tag 'n Turn uses BB for its own reversal detection.
-                    trigger_price = bar.high if direction.value == 'bullish' else bar.low
-                    above_below = 'above' if direction.value == 'bullish' else 'below'
-
-                    if self.pending_setup:
-                        logger.info(
-                            f"Replacing pending {self.pending_setup['direction'].value.upper()} setup "
-                            f"with new {direction.value.upper()} pulse bar"
-                        )
-
-                    active_window = self._get_active_window(current_time)
-                    self.pending_setup = {
-                        'direction': direction,
-                        'bar': bar,
-                        'trigger_price': trigger_price,
-                        'timestamp': current_time,
-                        'window': active_window,
-                    }
-
-                    window_label = f" [{active_window} window]" if active_window != 'morning' else ""
+            # Check parallel strategy tick-level signals (run every cycle, own timing)
+            if self.tag_n_turn_enabled and self.tag_n_turn:
+                tnt_signal = self.tag_n_turn.check_entry_signal(current_price)
+                if tnt_signal:
                     logger.info(
-                        f"PENDING SETUP: {direction.value.upper()} pulse bar at "
-                        f"{bar.timestamp.strftime('%H:%M')} "
-                        f"(H=${bar.high:.2f} L=${bar.low:.2f} C=${bar.close:.2f}). "
-                        f"Entry trigger: price {above_below} ${trigger_price:,.2f}{window_label}"
+                        f"TAG 'N TURN SIGNAL: {tnt_signal['direction'].value.upper()} "
+                        f"entry @ ${current_price:,.2f}, "
+                        f"target=${tnt_signal['target_price']:,.2f}"
                     )
-                else:
-                    logger.debug("No setup detected")
+                    self.db.log_event("tag_n_turn_signal", "Tag 'n Turn entry signal", {
+                        "direction": tnt_signal['direction'].value,
+                        "entry_price": current_price,
+                        "target_price": tnt_signal['target_price'],
+                        "stop_price": tnt_signal['stop_price'],
+                    })
+
+                tnt_exit = self.tag_n_turn.check_exit_conditions(current_price)
+                if tnt_exit:
+                    logger.info(
+                        f"TAG 'N TURN EXIT: {tnt_exit['reason']} @ ${current_price:,.2f}"
+                    )
+                    self.db.log_event("tag_n_turn_exit", "Tag 'n Turn exit signal", {
+                        "reason": tnt_exit['reason'],
+                        "exit_price": current_price,
+                    })
+
+            if self.orb_enabled and self.orb_strategy:
+                orb_signal = self.orb_strategy.check_breakout(current_price)
+                if orb_signal:
+                    logger.info(
+                        f"ORB SIGNAL: {orb_signal['direction'].upper()} "
+                        f"entry @ ${current_price:,.2f} ({orb_signal['trigger']})"
+                    )
+                    self.db.log_event("orb_signal", "ORB breakout signal", orb_signal)
+
+            if self.bnb_enabled and self.bnb_strategy:
+                bnb_signal = self.bnb_strategy.check_entry_signal(current_price, current_time)
+                if bnb_signal:
+                    logger.info(
+                        f"B&B ENTRY SIGNAL: {bnb_signal['direction'].upper()} "
+                        f"@ ${current_price:,.2f} (from {bnb_signal['signal_date']})"
+                    )
+                    self.db.log_event("bnb_signal", "B&B entry signal", bnb_signal)
+
+        except Exception as e:
+            logger.error(f"Error updating market state: {e}", exc_info=True)
+
+    def _check_breakout_trigger(self, current_time):
+        """Check if a pending setup's breakout level has been hit.
+
+        Called every cycle after daily limits check. Separated from
+        _update_market_state so breakout entries respect daily limits.
+        """
+        if not self.pending_setup or self.position_manager.has_open_position():
+            return
+
+        current_price = self._current_spx_price
+        if current_price <= 0:
+            return
+
+        ps = self.pending_setup
+        triggered = False
+
+        if ps['direction'].value == 'bullish' and current_price > ps['trigger_price']:
+            logger.info(
+                f"BREAKOUT CONFIRMED: SPX ${current_price:,.2f} > "
+                f"setup bar high ${ps['trigger_price']:,.2f} "
+                f"(BULLISH trigger from {ps['bar'].timestamp.strftime('%H:%M')} bar)"
+            )
+            triggered = True
+        elif ps['direction'].value == 'bearish' and current_price < ps['trigger_price']:
+            logger.info(
+                f"BREAKOUT CONFIRMED: SPX ${current_price:,.2f} < "
+                f"setup bar low ${ps['trigger_price']:,.2f} "
+                f"(BEARISH trigger from {ps['bar'].timestamp.strftime('%H:%M')} bar)"
+            )
+            triggered = True
+
+        if triggered:
+            setup_bar = ps['bar']
+            direction = ps['direction']
+            self.pending_setup = None
+            self._execute_setup(setup_bar, current_price, direction, breakout_time=current_time)
+
+    def _bar_in_setup_window(self, bar_time) -> bool:
+        """Check if a bar's start time falls within any setup window.
+
+        Uses strict less-than for the end boundary so a bar starting at exactly
+        the window end (e.g. 11:30) is excluded -- it would complete at 12:00,
+        outside the intended window.
+        """
+        if bar_time.tzinfo is None:
+            ct = bar_time.time()
+        else:
+            ct = bar_time.astimezone(self.tz).time()
+
+        morning_start = time(9, 30)
+        morning_end = time(11, 30)
+        if morning_start <= ct < morning_end:
+            return True
+
+        if self.afternoon_enabled:
+            if self.afternoon_start <= ct < self.afternoon_end:
+                return True
+
+        return False
+
+    def _check_for_setups(self):
+        """Evaluate the most recently completed bar for a pulse bar setup.
+
+        Only called when a bar completed whose start time falls within a setup
+        window.  Market state updates (bar building, parallel strategies) happen
+        in _update_market_state() which runs every market-hours cycle.
+        """
+        bar = self._last_completed_bar
+        if not bar:
+            return
+
+        current_price = self._current_spx_price
+        if current_price <= 0:
+            return
+
+        try:
+            # Check if we already have an open position
+            if self.position_manager.has_open_position():
+                logger.debug("Already have open position, skipping setup check")
+                return
+
+            current_time = datetime.now(self.tz)
+
+            # Evaluate for pulse bar setup
+            direction = self.strategy.evaluate_setup(bar, current_price)
+
+            if direction:
+                # Pulse bar detected -- store as pending setup, DON'T enter yet
+                trigger_price = bar.high if direction.value == 'bullish' else bar.low
+                above_below = 'above' if direction.value == 'bullish' else 'below'
+
+                if self.pending_setup:
+                    logger.info(
+                        f"Replacing pending {self.pending_setup['direction'].value.upper()} setup "
+                        f"with new {direction.value.upper()} pulse bar"
+                    )
+
+                active_window = self._get_active_window(current_time)
+                self.pending_setup = {
+                    'direction': direction,
+                    'bar': bar,
+                    'trigger_price': trigger_price,
+                    'timestamp': current_time,
+                    'window': active_window,
+                }
+
+                window_label = f" [{active_window} window]" if active_window != 'morning' else ""
+                logger.info(
+                    f"PENDING SETUP: {direction.value.upper()} pulse bar at "
+                    f"{bar.timestamp.strftime('%H:%M')} "
+                    f"(H=${bar.high:.2f} L=${bar.low:.2f} C=${bar.close:.2f}). "
+                    f"Entry trigger: price {above_below} ${trigger_price:,.2f}{window_label}"
+                )
+            else:
+                logger.debug("No setup detected")
 
         except Exception as e:
             logger.error(f"Error checking for setups: {e}", exc_info=True)
@@ -890,6 +949,18 @@ class TradingBot:
                 max_risk_per_contract=max_risk_per_contract,
                 fixed_contracts=fixed_fallback,
             )
+
+            # Check portfolio risk limits before entry
+            allowed, deny_reason = self.portfolio.can_enter_position(
+                strategy=StrategyType.DAILY_INCOME,
+                contracts=quantity,
+                max_risk_per_contract=max_risk_per_contract,
+                is_0dte=True,
+            )
+            if not allowed:
+                logger.warning(f"Portfolio risk check blocked entry: {deny_reason}")
+                return
+
             sizing_method = self.portfolio.sizing_method.value
             logger.info(
                 f"Position sizing: {sizing_method} -> {quantity} contracts "
@@ -908,6 +979,16 @@ class TradingBot:
                 logger.info(f"Trade executed: {trade.id}")
 
                 self.trades_today += 1
+
+                # Register with portfolio manager for risk tracking
+                self.portfolio.register_position(
+                    position_id=trade.id,
+                    strategy=StrategyType.DAILY_INCOME,
+                    direction=spread.direction.value,
+                    contracts=quantity,
+                    max_risk=max_risk_per_contract * quantity,
+                    is_0dte=True,
+                )
 
                 # Clear pending setup now that we've entered
                 self.pending_setup = None
