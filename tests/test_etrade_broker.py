@@ -572,8 +572,8 @@ class TestMarketData:
             value = broker.get_position_value(sample_spread)
 
             # Put spread: short 6900 mid = 2.75, long 6895 mid = 1.75
-            # Spread value = (2.75 - 1.75) * 100 = 100
-            assert value == 100.0
+            # Spread value = 2.75 - 1.75 = 1.00 (per-share; callers multiply by 100)
+            assert value == 1.0
 
 
 # ============================================================================
