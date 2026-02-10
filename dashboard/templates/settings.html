@@ -388,6 +388,113 @@ header {
   border: 1px solid rgba(59, 130, 246, 0.3);
   color: var(--blue);
 }
+
+/* Trading Mode toggle cards */
+.mode-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.mode-card {
+  position: relative;
+  padding: 16px;
+  background: var(--bg);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.mode-card:hover {
+  border-color: var(--text-dim);
+}
+
+.mode-card.active {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.15);
+}
+
+.mode-card.active.live {
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15);
+}
+
+.mode-card .mode-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 4px;
+}
+
+.mode-card .mode-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.mode-card .mode-radio {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg);
+  transition: border-color 0.2s;
+}
+
+.mode-card.active .mode-radio {
+  border-color: var(--cyan);
+  background: var(--cyan);
+  box-shadow: inset 0 0 0 3px var(--bg);
+}
+
+.mode-card.active.live .mode-radio {
+  border-color: var(--amber);
+  background: var(--amber);
+  box-shadow: inset 0 0 0 3px var(--bg);
+}
+
+.mode-warning {
+  display: none;
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--amber-dim);
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.mode-warning.visible {
+  display: block;
+}
+
+#trading-mode-result {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  display: none;
+}
+
+#trading-mode-result.success {
+  display: block;
+  background: var(--green-dim);
+  border: 1px solid var(--green);
+  color: var(--green);
+}
+
+#trading-mode-result.error {
+  display: block;
+  background: var(--red-dim);
+  border: 1px solid var(--red);
+  color: var(--red);
+}
 </style>
 </head>
 <body>
@@ -406,6 +513,37 @@ header {
   {% if message %}
   <div class="message {{ message_type or 'success' }}">{{ message }}</div>
   {% endif %}
+
+  <!-- Trading Mode -->
+  <div class="panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">Trading Mode</div>
+        <div class="panel-subtitle">Switch between simulated and live order execution</div>
+      </div>
+      <span class="status-badge success" id="trading-mode-badge">Dry Run</span>
+    </div>
+
+    <div class="mode-options">
+      <div class="mode-card active" id="mode-card-dry-run" onclick="selectTradingMode('dry-run')">
+        <div class="mode-radio"></div>
+        <div class="mode-name">Dry Run</div>
+        <div class="mode-desc">Simulated trades only. No real orders are placed. Signals and P&L are logged for review.</div>
+      </div>
+      <div class="mode-card" id="mode-card-live" onclick="selectTradingMode('live')">
+        <div class="mode-radio"></div>
+        <div class="mode-name">Live Trading</div>
+        <div class="mode-desc">Real orders placed through E*TRADE. Requires valid credentials and active connection.</div>
+      </div>
+    </div>
+
+    <div class="mode-warning" id="live-mode-warning">
+      Live trading will place real orders with real money through your E*TRADE account. Make sure your credentials and connection are active before enabling this mode.
+    </div>
+
+    <button type="button" class="btn btn-primary" id="save-trading-mode-btn">Save Trading Mode</button>
+    <div id="trading-mode-result"></div>
+  </div>
 
   <!-- API Credentials -->
   <div class="panel">
@@ -573,6 +711,89 @@ header {
 </div>
 
 <script>
+// ---------------------------------------------------------------------------
+// Trading Mode
+// ---------------------------------------------------------------------------
+
+let selectedMode = 'dry-run';
+
+function selectTradingMode(mode) {
+  selectedMode = mode;
+  const dryCard = document.getElementById('mode-card-dry-run');
+  const liveCard = document.getElementById('mode-card-live');
+  const warning = document.getElementById('live-mode-warning');
+
+  dryCard.classList.toggle('active', mode === 'dry-run');
+  liveCard.classList.toggle('active', mode === 'live');
+  liveCard.classList.toggle('live', mode === 'live');
+
+  if (mode === 'live') {
+    warning.classList.add('visible');
+  } else {
+    warning.classList.remove('visible');
+  }
+}
+
+async function loadTradingMode() {
+  try {
+    const response = await fetch('/api/settings/trading-mode');
+    const data = await response.json();
+    const mode = data.mode || 'dry-run';
+    selectTradingMode(mode);
+    updateTradingModeBadge(mode);
+  } catch (error) {
+    console.error('Failed to load trading mode:', error);
+  }
+}
+
+function updateTradingModeBadge(mode) {
+  const badge = document.getElementById('trading-mode-badge');
+  if (mode === 'live') {
+    badge.className = 'status-badge warning';
+    badge.textContent = 'Live Trading';
+  } else {
+    badge.className = 'status-badge success';
+    badge.textContent = 'Dry Run';
+  }
+}
+
+document.getElementById('save-trading-mode-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('save-trading-mode-btn');
+  const resultDiv = document.getElementById('trading-mode-result');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  resultDiv.style.display = 'none';
+
+  try {
+    const response = await fetch('/api/settings/trading-mode', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mode: selectedMode}),
+    });
+    const data = await response.json();
+
+    if (data.success) {
+      resultDiv.className = 'success';
+      resultDiv.textContent = data.message;
+      resultDiv.style.display = 'block';
+      updateTradingModeBadge(selectedMode);
+    } else {
+      resultDiv.className = 'error';
+      resultDiv.textContent = data.error || 'Failed to save trading mode.';
+      resultDiv.style.display = 'block';
+    }
+  } catch (error) {
+    resultDiv.className = 'error';
+    resultDiv.textContent = 'Error: ' + error.message;
+    resultDiv.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Trading Mode';
+  }
+});
+
+loadTradingMode();
+
 // Test connection
 document.getElementById('test-connection-btn').addEventListener('click', async () => {
   const resultDiv = document.getElementById('test-result');

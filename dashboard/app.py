@@ -30,7 +30,8 @@ SETTINGS_CHANGED_FILE = PROJECT_ROOT / 'database' / '.settings_changed'
 from config.settings import (
     BASE_DIR, DATABASE_PATH, LOG_FILE,
     DASHBOARD_PORT, DASHBOARD_HOST, STRATEGY_PARAMS,
-    ETRADE_CONFIG, is_etrade_configured, save_etrade_credentials, clear_etrade_credentials
+    ETRADE_CONFIG, is_etrade_configured, save_etrade_credentials, clear_etrade_credentials,
+    get_trading_mode, save_trading_mode
 )
 from src.data.yahoo_finance import YahooFinanceProvider
 from src.utils.version import APP_VERSION
@@ -2076,6 +2077,42 @@ def api_events():
     except Exception:
         pass
     return jsonify({'events': events})
+
+
+# ---------------------------------------------------------------------------
+# Trading Mode API
+# ---------------------------------------------------------------------------
+
+@app.route('/api/settings/trading-mode', methods=['GET'])
+def api_get_trading_mode():
+    """Get the current trading mode (dry-run or live)."""
+    return jsonify({'mode': get_trading_mode()})
+
+
+@app.route('/api/settings/trading-mode', methods=['PUT'])
+def api_set_trading_mode():
+    """Set the trading mode (dry-run or live)."""
+    data = request.get_json()
+    if not data or 'mode' not in data:
+        return jsonify({'error': 'mode is required'}), 400
+
+    mode = data['mode']
+    if mode not in ('dry-run', 'live'):
+        return jsonify({'error': 'mode must be "dry-run" or "live"'}), 400
+
+    if mode == 'live' and not is_etrade_configured():
+        return jsonify({
+            'error': 'Cannot enable live trading without E*TRADE credentials configured.'
+        }), 400
+
+    if save_trading_mode(mode):
+        return jsonify({
+            'success': True,
+            'mode': mode,
+            'message': f'Trading mode set to {mode}. Restart the bot for changes to take effect.',
+        })
+    else:
+        return jsonify({'error': 'Failed to save trading mode'}), 500
 
 
 # ---------------------------------------------------------------------------

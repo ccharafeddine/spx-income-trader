@@ -137,6 +137,44 @@ def clear_etrade_credentials() -> bool:
         return False
 
 
+def _get_trading_mode() -> str:
+    """
+    Load trading mode with priority:
+    1. OS Keychain (via keyring)
+    2. Environment variable (TRADING_MODE)
+    3. Default: 'dry-run'
+    """
+    kr_mode = _get_keyring_credential('trading_mode')
+    if kr_mode and kr_mode in ('dry-run', 'live'):
+        return kr_mode
+    return os.getenv('TRADING_MODE', 'dry-run')
+
+
+def get_trading_mode() -> str:
+    """Public accessor for the current trading mode."""
+    return _get_trading_mode()
+
+
+def save_trading_mode(mode: str) -> bool:
+    """
+    Save trading mode to the OS keychain.
+
+    Returns True if successful, False otherwise.
+    """
+    if mode not in ('dry-run', 'live'):
+        return False
+    try:
+        import keyring
+        keyring.set_password(KEYRING_SERVICE, 'trading_mode', mode)
+        return True
+    except ImportError:
+        logger.error("keyring module not installed - cannot save trading mode")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to save trading mode to keyring: {e}")
+        return False
+
+
 # Load credentials
 _creds = _get_etrade_credentials()
 _etrade_sandbox = _creds['sandbox']
@@ -155,7 +193,7 @@ ETRADE_CONFIG = {
 }
 
 # Trading Configuration
-TRADING_MODE = os.getenv('TRADING_MODE', 'dry-run')
+TRADING_MODE = _get_trading_mode()
 
 # Database Configuration
 DATABASE_PATH = os.getenv('DATABASE_PATH', str(DB_PATH))
