@@ -110,6 +110,12 @@ PY2APP_OPTIONS = {
         "engineio",
         "requests",
         "requests_oauthlib",
+        "platformdirs",
+        "dotenv",
+        "pytz",
+        "yfinance",
+        "pystray",
+        "PIL",
     ],
     "includes": [
         "keyring.backends",
