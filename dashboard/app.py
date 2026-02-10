@@ -63,7 +63,7 @@ def check_setup_required():
 # Shared Yahoo Finance provider (has its own 60s cache)
 yahoo = YahooFinanceProvider()
 
-LOCKFILE = BASE_DIR / 'spx_trader.lock'
+LOCKFILE = BASE_DIR / 'bot.lock'
 SIGNAL_LOG = BASE_DIR / 'logs' / 'dry_run_signals.json'
 STARTING_CAPITAL = 50000.00
 MIN_CREDIT_THRESHOLD = 1.00  # Signals below this were before safeguards

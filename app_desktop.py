@@ -110,7 +110,6 @@ class DesktopApp:
         self._shutting_down = False      # Signals the main loop to exit
         self._shutdown_complete = False   # Guards against double-shutdown
         self._webview_window = None       # Set only in native mode
-        self._lockfile = BASE_DIR / 'spx_trader.lock'
 
         # Bot crash tracking
         self._bot_crashed = False
@@ -365,7 +364,7 @@ class DesktopApp:
         """Initialize and run the trading bot (called in daemon thread)."""
         bot = None
         try:
-            from src.main import TradingBot
+            from src.main import TradingBot, BotAlreadyRunningError
             from src.brokers.dry_run_broker import DryRunBroker
             from src.core.strategy import SPXIncomeStrategy
             from database.db_manager import DatabaseManager
@@ -390,12 +389,6 @@ class DesktopApp:
             db_manager = DatabaseManager(DATABASE_PATH)
             notifier = NotificationManager()
 
-            # Write lockfile so the dashboard status indicator works
-            try:
-                self._lockfile.write_text(str(os.getpid()))
-            except OSError:
-                pass
-
             bot = TradingBot(
                 broker, strategy, db_manager, notifier,
                 dry_run=dry_run,
@@ -410,6 +403,13 @@ class DesktopApp:
             # Blocks until bot.running is set to False
             bot.start()
 
+        except BotAlreadyRunningError as e:
+            logger.error(f"Cannot start bot: {e}")
+            with self._bot_lock:
+                self._bot_crashed = True
+                self._bot_crash_error = str(e)
+                self._bot_crash_time = datetime.now()
+            return
         except Exception as e:
             logger.error(f"Bot thread error: {e}", exc_info=True)
         finally:
@@ -429,10 +429,6 @@ class DesktopApp:
                 self._bot_started_at = None
             logger.info("Bot thread exited, status reset to stopped")
             self._update_tray_icon()
-            try:
-                self._lockfile.unlink(missing_ok=True)
-            except OSError:
-                pass
 
     def stop_bot(self):
         """Signal the trading bot to stop. Returns immediately without
@@ -746,7 +742,7 @@ class DesktopApp:
     # ------------------------------------------------------------------
 
     def shutdown(self):
-        """Graceful shutdown: stop bot, flush DB, clean lockfile."""
+        """Graceful shutdown: stop bot, flush DB."""
         if self._shutdown_complete:
             return
         self._shutdown_complete = True
@@ -771,12 +767,6 @@ class DesktopApp:
                 logger.warning("Bot thread did not exit within 10s timeout")
             else:
                 logger.info("Bot thread exited cleanly")
-
-        # Clean up lockfile
-        try:
-            self._lockfile.unlink(missing_ok=True)
-        except OSError:
-            pass
 
         logger.info("Desktop app shutdown complete")
 

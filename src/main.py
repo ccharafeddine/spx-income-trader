@@ -52,6 +52,11 @@ setup_logging(LOG_FILE, LOG_LEVEL)
 logger = logging.getLogger(__name__)
 
 
+class BotAlreadyRunningError(Exception):
+    """Raised when another bot instance is already running."""
+    pass
+
+
 class TradingBot:
     """Main trading bot orchestrator"""
     
@@ -119,6 +124,10 @@ class TradingBot:
         # Token auto-renewal for live broker (E*TRADE tokens expire after 2 hours)
         self._token_renewal_thread = None
         self._token_renewal_stop = threading.Event()
+
+        # Instance lock (file-based, prevents multiple bot instances)
+        self._lock_fd = None
+        self._lockfile_path = BASE_DIR / 'bot.lock'
 
         # Pending setup state (pulse bar detected, waiting for breakout)
         self.pending_setup = None  # {direction, bar, trigger_price, timestamp}
@@ -228,8 +237,119 @@ class TradingBot:
             self._token_renewal_thread.join(timeout=5)
             logger.info("Token auto-renewal stopped")
 
+    def _acquire_instance_lock(self):
+        """Acquire an OS-level exclusive file lock to prevent multiple bot instances.
+
+        Uses msvcrt.locking on Windows, fcntl.flock on Unix.
+        The OS automatically releases the lock when the process exits (even on crash).
+        Raises BotAlreadyRunningError if another instance holds the lock.
+        """
+        self._lock_fd = open(self._lockfile_path, 'a+')
+        try:
+            self._lock_fd.seek(0)
+            if sys.platform == 'win32':
+                import msvcrt
+                # Lock the first byte (non-blocking)
+                try:
+                    msvcrt.locking(self._lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+                except (OSError, IOError):
+                    # Lock failed -- check if the existing PID is alive
+                    self._lock_fd.seek(0)
+                    existing = self._lock_fd.read().strip()
+                    self._lock_fd.close()
+                    self._lock_fd = None
+                    existing_pid = int(existing) if existing.isdigit() else None
+                    if existing_pid and self._is_pid_alive(existing_pid):
+                        raise BotAlreadyRunningError(
+                            f"Another bot instance is running (PID {existing_pid})"
+                        )
+                    # Stale lock -- delete and retry once
+                    try:
+                        self._lockfile_path.unlink()
+                    except OSError:
+                        pass
+                    self._lock_fd = open(self._lockfile_path, 'a+')
+                    self._lock_fd.seek(0)
+                    try:
+                        msvcrt.locking(self._lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+                    except (OSError, IOError):
+                        self._lock_fd.close()
+                        self._lock_fd = None
+                        raise BotAlreadyRunningError(
+                            "Cannot acquire bot lock (retry failed)"
+                        )
+            else:
+                import fcntl
+                try:
+                    fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except (OSError, IOError):
+                    # Lock failed -- check if the existing PID is alive
+                    self._lock_fd.seek(0)
+                    existing = self._lock_fd.read().strip()
+                    self._lock_fd.close()
+                    self._lock_fd = None
+                    existing_pid = int(existing) if existing.isdigit() else None
+                    if existing_pid and self._is_pid_alive(existing_pid):
+                        raise BotAlreadyRunningError(
+                            f"Another bot instance is running (PID {existing_pid})"
+                        )
+                    # Stale lock -- delete and retry once
+                    try:
+                        self._lockfile_path.unlink()
+                    except OSError:
+                        pass
+                    self._lock_fd = open(self._lockfile_path, 'a+')
+                    try:
+                        fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except (OSError, IOError):
+                        self._lock_fd.close()
+                        self._lock_fd = None
+                        raise BotAlreadyRunningError(
+                            "Cannot acquire bot lock (retry failed)"
+                        )
+
+            # Lock acquired -- write our PID
+            self._lock_fd.seek(0)
+            self._lock_fd.truncate()
+            self._lock_fd.write(str(os.getpid()))
+            self._lock_fd.flush()
+            logger.info(f"Instance lock acquired: {self._lockfile_path} (PID {os.getpid()})")
+
+        except BotAlreadyRunningError:
+            raise
+        except Exception as e:
+            if self._lock_fd:
+                self._lock_fd.close()
+                self._lock_fd = None
+            raise BotAlreadyRunningError(f"Failed to acquire instance lock: {e}")
+
+    @staticmethod
+    def _is_pid_alive(pid: int) -> bool:
+        """Check if a process with the given PID is still running."""
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    def _release_instance_lock(self):
+        """Release the OS-level file lock and delete the lockfile."""
+        if self._lock_fd is not None:
+            try:
+                self._lock_fd.close()  # OS releases the lock automatically
+            except OSError:
+                pass
+            self._lock_fd = None
+        # Best-effort removal of the lockfile
+        try:
+            self._lockfile_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        logger.info("Instance lock released")
+
     def start(self):
         """Start the trading bot"""
+        self._acquire_instance_lock()
         self.running = True
         
         logger.info("=" * 60)
@@ -842,6 +962,9 @@ class TradingBot:
         logger.info("Shutting down trading bot...")
         self.running = False
 
+        # Release the instance lock
+        self._release_instance_lock()
+
         # Stop token renewal thread
         self._stop_token_renewal()
 
@@ -867,15 +990,6 @@ class TradingBot:
                 logger.warning(f"Failed to send shutdown notification: {e}")
 
         logger.info("Shutdown complete")
-
-
-def _check_pid_alive(pid: int) -> bool:
-    """Check if a process with the given PID is still running."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
 
 
 def main():
@@ -921,32 +1035,6 @@ def main():
     # Update log level if specified
     if args.log_level != LOG_LEVEL:
         logging.getLogger().setLevel(args.log_level)
-
-    # --- PID Lockfile ---
-    lockfile = BASE_DIR / 'spx_trader.lock'
-
-    if lockfile.exists():
-        try:
-            existing_pid = int(lockfile.read_text().strip())
-            if _check_pid_alive(existing_pid):
-                logger.error(f"Another bot instance is running (PID {existing_pid}). Exiting.")
-                print(f"ERROR: Another bot instance is running (PID {existing_pid}). "
-                      f"Remove {lockfile} if this is stale.")
-                return 1
-            else:
-                logger.warning(f"Stale lockfile found (PID {existing_pid} not running). Removing.")
-                lockfile.unlink()
-        except (ValueError, OSError) as e:
-            logger.warning(f"Invalid lockfile, removing: {e}")
-            lockfile.unlink(missing_ok=True)
-
-    # Write current PID
-    try:
-        lockfile.write_text(str(os.getpid()))
-        logger.info(f"PID lockfile created: {lockfile} (PID {os.getpid()})")
-    except OSError as e:
-        logger.error(f"Failed to create lockfile: {e}")
-        return 1
 
     try:
         # Initialize components
@@ -1045,11 +1133,6 @@ def main():
         def signal_handler(sig, frame):
             logger.info("Interrupt signal received")
             bot.shutdown()
-            # Clean up lockfile
-            try:
-                lockfile.unlink(missing_ok=True)
-            except OSError:
-                pass
             sys.exit(0)
 
         signal.signal(signal.SIGINT, signal_handler)
@@ -1058,17 +1141,14 @@ def main():
         # Start bot
         bot.start()
 
+    except BotAlreadyRunningError as e:
+        logger.error(str(e))
+        print(f"ERROR: {e}")
+        return 1
+
     except Exception as e:
         logger.error(f"Failed to start bot: {e}", exc_info=True)
         return 1
-
-    finally:
-        # Always clean up lockfile on exit
-        try:
-            lockfile.unlink(missing_ok=True)
-            logger.info("PID lockfile removed")
-        except OSError:
-            pass
 
     return 0
 
