@@ -8,11 +8,11 @@
 ; Output: build/Output/SPXIncomeTrader_Setup.exe
 
 #define AppName      "SPX Income Trader"
-#define AppExeName   "SPXIncomeTrader.exe"
+#define AppExeName   "SPX Income Trader.exe"
 #define AppVersion   "1.0.0"
 #define AppPublisher "SPX Income Trader"
 #define AppURL       "https://github.com/your-org/spx-income-trader"
-#define SourceDir    "..\dist\SPXIncomeTrader"
+#define SourceDir    "..\dist\SPX Income Trader"
 #define IconFile     "..\assets\icon.ico"
 
 [Setup]

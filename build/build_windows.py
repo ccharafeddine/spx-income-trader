@@ -13,7 +13,11 @@ Usage:
 import subprocess
 import sys
 import shutil
+import platform
 from pathlib import Path
+
+if platform.system() != "Windows":
+    sys.exit("This build script must be run on Windows.")
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -24,8 +28,12 @@ PROJECT_ROOT = SCRIPT_DIR.parent                      # repo root
 DIST_DIR = PROJECT_ROOT / "dist"
 BUILD_DIR = PROJECT_ROOT / "build" / "_pyinstaller"   # temp build artifacts
 ENTRY_POINT = PROJECT_ROOT / "app_desktop.py"
-ICON = PROJECT_ROOT / "assets" / "icon.ico"
-APP_NAME = "SPXIncomeTrader"
+APP_NAME = "SPX Income Trader"
+VERSION = "1.0.0"
+
+# Icon paths (in order of preference)
+ICON_ICO = PROJECT_ROOT / "assets" / "icon.ico"
+ICON_PNG = PROJECT_ROOT / "assets" / "icon.png"
 
 # ---------------------------------------------------------------------------
 # Data files to bundle  (source_path, dest_folder_in_bundle)
@@ -38,31 +46,117 @@ DATA_FILES = [
     (PROJECT_ROOT / "dashboard" / "templates" / "setup.html",    "dashboard/templates"),
     # Strategy config (bundled default -- user copy lives in AppData)
     (PROJECT_ROOT / "config" / "strategy_params.yaml",           "config"),
-    # App icon
-    (ICON,                                                       "assets"),
 ]
 
-# If dashboard/static exists, include everything in it
+# Include icon in bundle if it exists
+if ICON_ICO.exists():
+    DATA_FILES.append((ICON_ICO, "assets"))
+
+# If dashboard/static exists, include everything in it (preserving subdirs)
 STATIC_DIR = PROJECT_ROOT / "dashboard" / "static"
 if STATIC_DIR.is_dir():
-    DATA_FILES.append((STATIC_DIR, "dashboard/static"))
+    for f in STATIC_DIR.rglob("*"):
+        if f.is_file():
+            rel = f.relative_to(STATIC_DIR)
+            dest = f"dashboard/static/{rel.parent}" if rel.parent != Path(".") else "dashboard/static"
+            DATA_FILES.append((f, dest))
 
 # ---------------------------------------------------------------------------
-# Hidden imports PyInstaller can't detect automatically
+# Hidden imports PyInstaller commonly misses
 # ---------------------------------------------------------------------------
 
 HIDDEN_IMPORTS = [
-    "keyring.backends.Windows",
-    "webview",
-    "engineio.async_drivers.threading",  # only if python-engineio installed
-    # Flask / Jinja internals sometimes missed
+    # Flask ecosystem
+    "flask",
+    "flask.json",
+    "flask.templating",
+    "werkzeug",
+    "werkzeug.serving",
+    "werkzeug.middleware",
+    "jinja2",
     "jinja2.ext",
-    # SQLAlchemy dialects (module path varies by version)
+    # Socket / Engine IO
+    "engineio",
+    "engineio.async_drivers.threading",
+    "socketio",
+    # SQLite / SQLAlchemy
+    "sqlite3",
+    "sqlalchemy",
     "sqlalchemy.dialects.sqlite",
-    # Ensure keyring backend chain works
+    # Keyring (Windows backend)
+    "keyring",
     "keyring.backends",
+    "keyring.backends.Windows",
     "keyring.backends.null",
+    # WebView
+    "webview",
+    # Third-party
+    "platformdirs",
+    "dotenv",
+    "pytz",
+    "yfinance",
+    "pystray",
+    "PIL",
+    "PIL.Image",
+    "PIL.ImageDraw",
+    "requests",
+    "requests_oauthlib",
+    "yaml",
+    "plotly",
 ]
+
+# Packages whose submodules PyInstaller should collect (dynamic imports)
+COLLECT_SUBMODULES = [
+    "flask",
+    "werkzeug",
+    "jinja2",
+    "engineio",
+    "keyring",
+    "pystray",
+]
+
+# Packages to exclude (dev-only, not needed at runtime)
+EXCLUDES = [
+    "pytest",
+    "black",
+    "flake8",
+    "pytest_cov",
+    "tkinter",
+    "matplotlib",
+]
+
+# ---------------------------------------------------------------------------
+# Icon handling
+# ---------------------------------------------------------------------------
+
+
+def _resolve_icon():
+    """Find or convert an icon for the build. Returns path string or None."""
+    if ICON_ICO.exists():
+        print(f"Using icon: {ICON_ICO}")
+        return str(ICON_ICO)
+
+    # Try converting .png to .ico using Pillow
+    if ICON_PNG.exists():
+        print(f"Converting {ICON_PNG} to .ico via Pillow...")
+        try:
+            from PIL import Image
+
+            img = Image.open(str(ICON_PNG))
+            ICON_ICO.parent.mkdir(parents=True, exist_ok=True)
+            img.save(
+                str(ICON_ICO),
+                format="ICO",
+                sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+            )
+            print(f"  Created {ICON_ICO}")
+            return str(ICON_ICO)
+        except Exception as e:
+            print(f"  Conversion failed: {e}")
+
+    print("WARNING: No icon found. Building without an application icon.")
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Build
@@ -80,29 +174,34 @@ def clean():
         spec.unlink()
 
 
-def build(debug: bool = False):
-    """Run PyInstaller."""
+def build(debug=False):
+    """Run PyInstaller to create a single-folder distribution."""
     if not ENTRY_POINT.exists():
         sys.exit(f"Entry point not found: {ENTRY_POINT}")
-    if not ICON.exists():
-        sys.exit(f"Icon not found: {ICON}. Run the placeholder generator first.")
+
+    icon_path = _resolve_icon()
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--name", APP_NAME,
         "--onedir",
-        "--icon", str(ICON),
         "--distpath", str(DIST_DIR),
         "--workpath", str(BUILD_DIR),
         "--specpath", str(PROJECT_ROOT),
+        "--noconfirm",
     ]
 
-    if not debug:
-        cmd.append("--windowed")
+    if icon_path:
+        cmd.extend(["--icon", icon_path])
 
-    # Data files: --add-data "src;dest"
+    # --noconsole hides the terminal window in production
+    if not debug:
+        cmd.append("--noconsole")
+
+    # Data files: --add-data "src;dest" (semicolon separator on Windows)
     for src, dest in DATA_FILES:
-        if not Path(src).exists():
+        src = Path(src)
+        if not src.exists():
             print(f"WARNING: data file missing, skipping: {src}")
             continue
         cmd.extend(["--add-data", f"{src};{dest}"])
@@ -111,8 +210,12 @@ def build(debug: bool = False):
     for imp in HIDDEN_IMPORTS:
         cmd.extend(["--hidden-import", imp])
 
-    # Exclude heavyweight packages not needed at runtime
-    for exc in ["pytest", "black", "flake8", "pytest_cov"]:
+    # Collect submodules for packages with dynamic imports
+    for pkg in COLLECT_SUBMODULES:
+        cmd.extend(["--collect-submodules", pkg])
+
+    # Exclude dev-only packages
+    for exc in EXCLUDES:
         cmd.extend(["--exclude-module", exc])
 
     cmd.append(str(ENTRY_POINT))
@@ -131,23 +234,47 @@ def verify():
     app_dir = DIST_DIR / APP_NAME
     exe = app_dir / f"{APP_NAME}.exe"
 
-    errors = []
+    if not app_dir.exists():
+        sys.exit(f"Build output directory not found: {app_dir}")
 
+    errors = []
+    warnings = []
+
+    # Check executable
     if not exe.exists():
         errors.append(f"Executable missing: {exe}")
 
-    # Check bundled data files
-    expected = [
+    # Check bundled data files (PyInstaller puts them in _internal/)
+    expected_data = [
         "_internal/dashboard/templates/index.html",
         "_internal/dashboard/templates/settings.html",
         "_internal/dashboard/templates/setup.html",
         "_internal/config/strategy_params.yaml",
-        "_internal/assets/icon.ico",
     ]
-    for rel in expected:
+    for rel in expected_data:
         full = app_dir / rel
         if not full.exists():
             errors.append(f"Missing bundled file: {rel}")
+
+    # Check icon (non-fatal)
+    icon_in_bundle = app_dir / "_internal/assets/icon.ico"
+    if not icon_in_bundle.exists():
+        warnings.append("Icon not bundled (non-fatal): _internal/assets/icon.ico")
+
+    # Sanity check: some .pyd or .dll files should exist
+    internal = app_dir / "_internal"
+    if internal.exists():
+        pyd_files = list(internal.rglob("*.pyd"))
+        dll_files = list(internal.rglob("*.dll"))
+        if not pyd_files and not dll_files:
+            errors.append("No .pyd or .dll files in _internal/ -- build may be broken")
+    else:
+        errors.append("_internal/ directory missing -- PyInstaller output is incomplete")
+
+    if warnings:
+        print("\nWarnings:")
+        for w in warnings:
+            print(f"  - {w}")
 
     if errors:
         print("\nVerification FAILED:")
@@ -160,7 +287,7 @@ def verify():
         print(f"  Bundle size: {_dir_size_mb(app_dir):.1f} MB")
 
 
-def _dir_size_mb(path: Path) -> float:
+def _dir_size_mb(path):
     total = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
     return total / (1024 * 1024)
 
