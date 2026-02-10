@@ -16,6 +16,7 @@ ENV/
 
 # Logs
 logs/*.log
+logs/*.json
 
 # IDE
 .vscode/

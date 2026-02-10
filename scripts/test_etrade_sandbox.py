@@ -48,13 +48,15 @@ def check_configuration() -> bool:
 
     # Check credentials
     if ETRADE_CONFIG['consumer_key']:
-        print(f"  Consumer Key:    {ETRADE_CONFIG['consumer_key'][:8]}...  [OK]")
+        key = ETRADE_CONFIG['consumer_key']
+        masked_key = '****' + key[-4:] if len(key) > 4 else '****'
+        print(f"  Consumer Key:    {masked_key}  [OK]")
     else:
         print("  Consumer Key:    NOT SET  [MISSING]")
         config_ok = False
 
     if ETRADE_CONFIG['consumer_secret']:
-        print(f"  Consumer Secret: {ETRADE_CONFIG['consumer_secret'][:4]}****  [OK]")
+        print(f"  Consumer Secret: ********  [OK]")
     else:
         print("  Consumer Secret: NOT SET  [MISSING]")
         config_ok = False
@@ -134,7 +136,9 @@ def test_account_info(broker: ETradeBroker) -> bool:
         accounts = broker.get_accounts()
 
         for i, account in enumerate(accounts, 1):
-            print(f"  {i}. Account ID: {account.get('accountId')}")
+            acct_id = account.get('accountId', '')
+            masked_id = '****' + acct_id[-4:] if len(acct_id) > 4 else acct_id
+            print(f"  {i}. Account ID: {masked_id}")
             print(f"     Type: {account.get('accountType', 'N/A')}")
             print(f"     Status: {account.get('accountStatus', 'N/A')}")
             print()

@@ -155,6 +155,13 @@ class SPXIncomeStrategy:
 
             logger.info(f"Credit: ${credit:.2f} (short=${short_price:.2f}, long=${long_price:.2f})")
 
+            # Guard: credit must be positive (not a debit spread)
+            if credit <= 0:
+                logger.warning(
+                    f"Negative or zero credit ${credit:.2f} - this would be a DEBIT spread. Rejecting."
+                )
+                return None
+
             # Hard floor check - reject spreads with insufficient credit
             if credit < self.min_credit:
                 logger.warning(
@@ -215,9 +222,17 @@ class SPXIncomeStrategy:
         
         Returns: (short_strike, long_strike)
         """
+        # Sanity check: SPX should be in a reasonable range
+        if current_price < 1000 or current_price > 20000:
+            logger.error(
+                f"SPX price ${current_price:,.2f} is outside reasonable range "
+                f"(1000-20000). Possible data error - rejecting setup."
+            )
+            return 0, 0
+
         # Round to nearest $5 strike
         atm_strike = round(current_price / 5) * 5
-        
+
         if direction == TradeDirection.BULLISH:
             # Put credit spread
             short_strike = atm_strike
@@ -226,7 +241,7 @@ class SPXIncomeStrategy:
             # Call credit spread
             short_strike = atm_strike
             long_strike = short_strike + self.spread_width
-        
+
         return short_strike, long_strike
     
     def _validate_credit(

@@ -13,6 +13,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 import sqlite3
+import pytz
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ def is_business_day(d: date) -> bool:
 def get_business_days_ago(n: int, from_date: Optional[date] = None) -> date:
     """Get the date that was N business days ago from from_date (or today)."""
     if from_date is None:
-        from_date = date.today()
+        from_date = datetime.now(pytz.timezone("America/New_York")).date()
 
     count = 0
     current = from_date
@@ -149,8 +150,10 @@ class PDTTracker:
         )
 
     def _get_connection(self):
-        """Get database connection."""
-        return sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        """Get database connection with WAL mode and timeout for concurrent access."""
+        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
 
     def _init_db(self):
         """Initialize PDT tracking table."""
@@ -174,7 +177,7 @@ class PDTTracker:
 
     def _get_current_equity(self) -> float:
         """Get current account equity, with daily caching."""
-        today = date.today()
+        today = datetime.now(pytz.timezone("America/New_York")).date()
 
         # Return cached value if checked today
         if self._cached_equity_date == today and self._cached_equity is not None:
@@ -267,7 +270,7 @@ class PDTTracker:
             List of day trade records
         """
         if from_date is None:
-            from_date = date.today()
+            from_date = datetime.now(pytz.timezone("America/New_York")).date()
 
         window_start = get_rolling_window_start(self.window_days, from_date)
 

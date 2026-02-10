@@ -389,6 +389,14 @@ class TradingBot:
         except Exception as e:
             logger.warning(f"Failed to resolve expired trades: {e}")
 
+        # Restore daily counters from DB (survives mid-day restarts)
+        today = datetime.now(self.tz).date()
+        self.current_trading_date = today
+        self._restore_daily_counters(today)
+
+        # Reconcile broker positions against DB (live mode only)
+        self._reconcile_positions()
+
         # Seed Bollinger filter with historical data
         if self.bollinger_enabled:
             try:
@@ -453,8 +461,7 @@ class TradingBot:
                             f"${self.daily_pnl:.2f} P&L)"
                         )
                     self.current_trading_date = today
-                    self.trades_today = 0
-                    self.daily_pnl = 0.0
+                    self._restore_daily_counters(today)
                     self.pending_setup = None
                     self.bar_builder.reset()
                     self._last_completed_bar = None
@@ -575,17 +582,80 @@ class TradingBot:
                 logger.error(f"Error in main loop ({consecutive_errors}/{max_consecutive_errors}): {e}", 
                             exc_info=True)
             
-                # Stop if too many consecutive errors
+                # Degrade to monitoring-only if too many consecutive errors
                 if consecutive_errors >= max_consecutive_errors:
-                    logger.critical(f"Too many consecutive errors ({consecutive_errors}), shutting down")
-                    self.shutdown(error=True)
-                    break
+                    if self.position_manager.open_trades:
+                        logger.critical(
+                            f"Too many consecutive errors ({consecutive_errors}), but "
+                            f"{len(self.position_manager.open_trades)} open trades remain. "
+                            f"Continuing in MONITORING-ONLY mode (no new entries)."
+                        )
+                        # Don't break - keep monitoring positions
+                        # The daily limits gate will prevent new entries anyway
+                        # since trades_today will be >= max_daily_trades or errors block setup
+                    else:
+                        logger.critical(f"Too many consecutive errors ({consecutive_errors}), no open trades, shutting down")
+                        self.shutdown(error=True)
+                        break
             
                 # Exponential backoff
                 sleep_time = min(60 * (2 ** consecutive_errors), 300)  # Max 5 minutes
                 logger.info(f"Sleeping {sleep_time}s before retry...")
                 self._interruptible_sleep(sleep_time)
     
+    def _restore_daily_counters(self, trade_date):
+        """Restore trades_today and daily_pnl from DB (survives mid-day restarts)."""
+        try:
+            summary = self.db.get_daily_summary(trade_date)
+            self.trades_today = summary['trades_count']
+            self.daily_pnl = summary['realized_pnl']
+            logger.info(
+                f"Restored daily counters from DB: "
+                f"{self.trades_today} trades, ${self.daily_pnl:.2f} P&L"
+            )
+        except Exception as e:
+            logger.warning(f"Could not restore daily counters: {e}")
+            self.trades_today = 0
+            self.daily_pnl = 0.0
+
+    def _reconcile_positions(self):
+        """Compare broker positions against DB active trades.
+
+        Logs warnings for any discrepancies. Does not auto-fix to avoid
+        accidental interference with real positions.
+        """
+        if self.dry_run or not hasattr(self.broker, 'get_open_positions'):
+            return
+
+        try:
+            broker_positions = self.broker.get_open_positions()
+            # Filter to SPX option positions only
+            spx_positions = [p for p in broker_positions if 'SPX' in p.get('symbol', '')]
+
+            db_active = self.db.get_active_trades_raw()
+            db_count = len(db_active)
+            broker_count = len(spx_positions)
+
+            if db_count == 0 and broker_count == 0:
+                logger.info("Position reconciliation: no open positions (broker and DB agree)")
+                return
+
+            if db_count != broker_count:
+                logger.warning(
+                    f"POSITION MISMATCH: DB has {db_count} active trades, "
+                    f"broker has {broker_count} SPX positions. "
+                    f"Manual review required!"
+                )
+                self.db.log_event("reconciliation_mismatch", "Position count mismatch", {
+                    'db_active': db_count,
+                    'broker_positions': broker_count,
+                })
+            else:
+                logger.info(f"Position reconciliation: {db_count} active trades match broker")
+
+        except Exception as e:
+            logger.warning(f"Position reconciliation failed (non-fatal): {e}")
+
     def _is_market_open(self, dt: datetime) -> bool:
         """Check if market is currently open"""
         market_open = time(9, 30)

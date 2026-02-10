@@ -41,6 +41,7 @@ import pytz
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app.secret_key = os.urandom(32)
 ET = pytz.timezone('US/Eastern')
 
 
@@ -251,7 +252,7 @@ def _parse_expiration(exp_str):
 
 def parse_todays_log():
     """Parse today's entries from the trading log file."""
-    today_prefix = date.today().strftime('%Y-%m-%d')
+    today_prefix = datetime.now(ET).date().strftime('%Y-%m-%d')
     bars = []
     pulses = []
     last_heartbeat = None
@@ -338,8 +339,9 @@ def detect_trading_mode():
 
 
 def get_db_connection():
-    """Get a read-only SQLite connection."""
-    conn = sqlite3.connect(DATABASE_PATH)
+    """Get a SQLite connection with WAL mode and timeout for concurrent access."""
+    conn = sqlite3.connect(DATABASE_PATH, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -465,7 +467,7 @@ def compute_account(conn, spx_price):
     realized_pnl = sum(t.get('pnl') or 0 for t in closed_trades)
 
     # Today's realized P&L
-    today_str = date.today().isoformat()
+    today_str = datetime.now(ET).date().isoformat()
     daily_realized = 0.0
     for t in closed_trades:
         exit_t = t.get('exit_time', '') or ''
@@ -573,9 +575,10 @@ def setup():
             else:
                 error = 'Failed to save credentials. Make sure keyring is installed.'
 
+        masked_key = ('****' + consumer_key[-4:]) if len(consumer_key) > 4 else '****'
         return render_template('setup.html',
             error=error,
-            consumer_key=consumer_key,
+            consumer_key=masked_key,
             account_id=account_id,
             environment=environment,
             is_configured=is_etrade_configured()
@@ -954,7 +957,7 @@ def api_status():
     # Today's summary (after market close)
     today_summary = None
     if not market['is_open']:
-        today_str = date.today().isoformat()
+        today_str = datetime.now(ET).date().isoformat()
         today_closed = [
             t for t in account.get('closed_trades', [])
             if (t.get('entry_time', '') or '').startswith(today_str)
@@ -1111,7 +1114,7 @@ def api_status():
 def api_today():
     """Today's activity: bars, pulses, signals, trades, intraday chart data."""
     log_data = parse_todays_log()
-    today_str = date.today().strftime('%Y-%m-%d')
+    today_str = datetime.now(ET).date().strftime('%Y-%m-%d')
 
     # Yahoo intraday bars for candlestick chart
     intraday = yahoo.get_intraday_bars('30m', '1d') or []
@@ -1196,7 +1199,7 @@ def api_today():
 def api_signals():
     """Signal log with optional days filter. Excludes signals outside market hours."""
     days = request.args.get('days', 30, type=int)
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(ET).date() - timedelta(days=days)).isoformat()
 
     all_signals = load_signals()
     filtered = [
@@ -1213,7 +1216,7 @@ def api_signals():
 def api_history():
     """Historical: daily_stats, aggregate metrics, trade history with running total."""
     days = request.args.get('days', 30, type=int)
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(ET).date() - timedelta(days=days)).isoformat()
 
     daily_stats = []
     trades = []
@@ -1298,7 +1301,7 @@ def api_journal():
     day_type_filter = request.args.get('day_type', '')
     exit_reason_filter = request.args.get('exit_reason', '')
 
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(ET).date() - timedelta(days=days)).isoformat()
 
     # Get SPX price and all trades
     spx = yahoo.get_spx_quote() or {}
@@ -1947,7 +1950,7 @@ def _get_market_context(trade, signal=None, log_cache=None):
     spx_open = None
     entry_time = trade.get('entry_time', '')
     trade_date = entry_time[:10] if entry_time else None
-    today_str = date.today().isoformat()
+    today_str = datetime.now(ET).date().isoformat()
 
     if trade_date == today_str:
         try:
@@ -2039,7 +2042,7 @@ def api_stale_positions():
 
     Only flags genuinely orphaned positions, not the current session's trades.
     """
-    today_str = date.today().strftime('%Y-%m-%d')
+    today_str = datetime.now(ET).date().strftime('%Y-%m-%d')
     try:
         conn = get_db_connection()
         rows = conn.execute(

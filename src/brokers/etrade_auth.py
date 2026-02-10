@@ -11,6 +11,7 @@ Tokens can be refreshed/renewed without re-authorization if still valid.
 """
 
 import json
+import logging
 import os
 import time
 import webbrowser
@@ -25,6 +26,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from config.settings import ETRADE_CONFIG
 
+logger = logging.getLogger(__name__)
+
 
 class ETradeAuth:
     """Handles E*TRADE OAuth 1.0a authentication flow"""
@@ -35,6 +38,8 @@ class ETradeAuth:
     RENEW_TOKEN_URL = "/oauth/renew_access_token"
     REVOKE_TOKEN_URL = "/oauth/revoke_access_token"
     AUTHORIZE_URL = "/e/t/etws/authorize"
+
+    REQUEST_TIMEOUT = 30  # seconds per HTTP request
 
     def __init__(
         self,
@@ -91,7 +96,7 @@ class ETradeAuth:
         )
 
         url = f"{self.base_url}{self.REQUEST_TOKEN_URL}"
-        response = oauth.fetch_request_token(url)
+        response = oauth.fetch_request_token(url, timeout=self.REQUEST_TIMEOUT)
 
         return response['oauth_token'], response['oauth_token_secret']
 
@@ -119,7 +124,7 @@ class ETradeAuth:
         )
 
         url = f"{self.base_url}{self.ACCESS_TOKEN_URL}"
-        response = oauth.fetch_access_token(url)
+        response = oauth.fetch_access_token(url, timeout=self.REQUEST_TIMEOUT)
 
         return response['oauth_token'], response['oauth_token_secret']
 
@@ -136,10 +141,10 @@ class ETradeAuth:
         # Try to load and refresh existing tokens
         if self._load_tokens():
             if self._renew_token():
-                print("Existing tokens renewed successfully.")
+                logger.info("Existing tokens renewed successfully.")
                 return True
             else:
-                print("Token renewal failed, need full re-authentication.")
+                logger.warning("Token renewal failed, need full re-authentication.")
 
         # Full authentication flow
         print("\n=== E*TRADE OAuth Authentication ===")
@@ -152,7 +157,7 @@ class ETradeAuth:
             request_token, request_token_secret = self._get_request_token()
             print("  Request token obtained.")
         except Exception as e:
-            print(f"  Error getting request token: {e}")
+            logger.error(f"Error getting request token: {type(e).__name__}")
             return False
 
         # Step 2: User authorization
@@ -187,7 +192,7 @@ class ETradeAuth:
             self._session = None  # Reset session with new tokens
             print("  Access token obtained!")
         except Exception as e:
-            print(f"  Error getting access token: {e}")
+            logger.error(f"Error getting access token: {type(e).__name__}")
             return False
 
         # Save tokens
@@ -209,7 +214,7 @@ class ETradeAuth:
             )
 
             url = f"{self.base_url}{self.RENEW_TOKEN_URL}"
-            response = oauth.get(url)
+            response = oauth.get(url, timeout=self.REQUEST_TIMEOUT)
 
             if response.status_code == 200:
                 self.token_timestamp = time.time()
@@ -217,11 +222,11 @@ class ETradeAuth:
                 self._save_tokens()
                 return True
             else:
-                print(f"Token renewal failed: {response.status_code}")
+                logger.warning(f"Token renewal failed: HTTP {response.status_code}")
                 return False
 
         except Exception as e:
-            print(f"Token renewal error: {e}")
+            logger.error(f"Token renewal error: {type(e).__name__}")
             return False
 
     def revoke_token(self) -> bool:
@@ -231,7 +236,7 @@ class ETradeAuth:
 
         try:
             url = f"{self.base_url}{self.REVOKE_TOKEN_URL}"
-            response = self.session.get(url)
+            response = self.session.get(url, timeout=self.REQUEST_TIMEOUT)
 
             if response.status_code == 200:
                 self.access_token = None
@@ -275,7 +280,7 @@ class ETradeAuth:
 
             # Check sandbox mode matches
             if token_data.get('sandbox') != self.sandbox:
-                print("Token file is for different environment.")
+                logger.warning("Token file is for different environment.")
                 return False
 
             # Check token age (E*TRADE tokens expire at midnight ET or after 2 hours of inactivity)
@@ -283,7 +288,7 @@ class ETradeAuth:
             age_hours = (time.time() - timestamp) / 3600
 
             if age_hours > 1.5:  # Conservative: refresh if over 1.5 hours old
-                print(f"Tokens are {age_hours:.1f} hours old, will try to renew.")
+                logger.info(f"Tokens are {age_hours:.1f} hours old, will try to renew.")
 
             self.access_token = token_data['access_token']
             self.access_token_secret = token_data['access_token_secret']
@@ -293,7 +298,7 @@ class ETradeAuth:
             return True
 
         except Exception as e:
-            print(f"Error loading tokens: {e}")
+            logger.error(f"Error loading tokens: {type(e).__name__}")
             return False
 
     def is_authenticated(self) -> bool:
@@ -315,6 +320,7 @@ if __name__ == "__main__":
         print("Error: E*TRADE credentials not configured.")
         print("Please set ETRADE_SANDBOX_KEY and ETRADE_SANDBOX_SECRET in .env")
     else:
-        print(f"Consumer Key: {auth.consumer_key[:8]}...")
+        masked_key = ('****' + auth.consumer_key[-4:]) if len(auth.consumer_key) > 4 else '****'
+        print(f"Consumer Key: {masked_key}")
         print(f"Sandbox Mode: {auth.sandbox}")
         print(f"Base URL: {auth.base_url}")

@@ -82,8 +82,10 @@ class DryRunBroker(BrokerInterface):
             with open(log_path, 'w') as f:
                 json.dump({"signals": [], "created": datetime.now().isoformat()}, f)
 
+    MAX_SIGNALS = 5000  # Rotate log file after this many signals
+
     def _log_signal(self, signal_type: str, data: dict):
-        """Log a trading signal to file."""
+        """Log a trading signal to file, rotating if too large."""
         try:
             with open(self.log_file, 'r') as f:
                 log_data = json.load(f)
@@ -94,6 +96,15 @@ class DryRunBroker(BrokerInterface):
                 **data
             }
             log_data["signals"].append(signal)
+
+            # Rotate: archive old signals when log exceeds limit
+            if len(log_data["signals"]) > self.MAX_SIGNALS:
+                archive_path = Path(self.log_file).with_suffix('.old.json')
+                with open(archive_path, 'w') as f:
+                    json.dump(log_data, f, indent=2, default=str)
+                # Keep only the most recent signals
+                log_data["signals"] = log_data["signals"][-1000:]
+                logger.info(f"Signal log rotated, archived to {archive_path}")
 
             with open(self.log_file, 'w') as f:
                 json.dump(log_data, f, indent=2, default=str)
@@ -175,7 +186,7 @@ class DryRunBroker(BrokerInterface):
             target = expiration  # expected format: 'YYYY-MM-DD'
             if target not in available:
                 # For 0DTE, try today's date in the available list
-                today_str = date.today().strftime('%Y-%m-%d')
+                today_str = datetime.now(self.tz).strftime('%Y-%m-%d')
                 if today_str in available:
                     target = today_str
                 else:
@@ -278,7 +289,7 @@ class DryRunBroker(BrokerInterface):
 
         # Calculate time to expiration
         exp_date = datetime.strptime(expiration, '%Y-%m-%d').date()
-        today = date.today()
+        today = datetime.now(self.tz).date()
         dte = max(0, (exp_date - today).days)
 
         # For 0DTE, use fraction of day remaining

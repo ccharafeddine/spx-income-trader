@@ -4,6 +4,7 @@ from typing import List, Optional, Dict
 import json
 import logging
 from pathlib import Path
+import pytz
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +24,10 @@ class DatabaseManager:
         logger.info(f"Database initialized at {db_path}")
     
     def _get_connection(self):
-        """Get database connection"""
-        return sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        """Get database connection with WAL mode and timeout for concurrent access."""
+        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
     
     def _init_db(self):
         """Initialize database schema"""
@@ -213,6 +216,23 @@ class DatabaseManager:
             columns = [desc[0] for desc in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
     
+    def get_daily_summary(self, trade_date: date) -> Dict:
+        """Get trade count and realized P&L for a given date.
+
+        Used to restore in-memory counters after a mid-day restart.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as trades_count,
+                    COALESCE(SUM(CASE WHEN status = 'closed' THEN pnl ELSE 0 END), 0.0) as realized_pnl
+                FROM trades
+                WHERE DATE(entry_time) = ?
+            """, (trade_date,))
+            row = cursor.fetchone()
+            return {'trades_count': row[0], 'realized_pnl': row[1]}
+
     def update_daily_stats(self, trade_date: date):
         """Update daily statistics"""
         with self._get_connection() as conn:
@@ -333,7 +353,8 @@ class DatabaseManager:
         This avoids sqlite3's TIMESTAMP converter choking on timezone-aware
         datetime strings like '2026-02-03 00:00:00-05:00'.
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.row_factory = sqlite3.Row
         try:
             rows = conn.execute(
@@ -354,7 +375,7 @@ class DatabaseManager:
     ):
         """Close an orphaned trade directly in the DB (expired while bot was offline)."""
         if exit_time is None:
-            exit_time = datetime.now()
+            exit_time = datetime.now(pytz.timezone("America/New_York"))
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""

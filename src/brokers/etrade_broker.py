@@ -61,10 +61,16 @@ class OrderResult:
 
 class ETradeAPIError(Exception):
     """E*TRADE API error"""
+    MAX_RESPONSE_LENGTH = 200
+
     def __init__(self, message: str, status_code: int = None, response: str = None):
         self.message = message
         self.status_code = status_code
-        self.response = response
+        # Truncate response to avoid leaking sensitive data in logs/tracebacks
+        if response and len(response) > self.MAX_RESPONSE_LENGTH:
+            self.response = response[:self.MAX_RESPONSE_LENGTH] + '...[truncated]'
+        else:
+            self.response = response
         super().__init__(self.message)
 
 
@@ -98,6 +104,7 @@ class ETradeBroker(BrokerInterface):
     ORDER_POLL_INTERVAL = 1.0  # seconds
     MAX_ORDER_POLLS = 10
     DEFAULT_ORDER_TIMEOUT = 30  # seconds
+    REQUEST_TIMEOUT = 30  # seconds per HTTP request
 
     def __init__(
         self,
@@ -146,13 +153,32 @@ class ETradeBroker(BrokerInterface):
 
         try:
             if method.upper() == 'GET':
-                response = session.get(url, params=params, headers=default_headers)
+                response = session.get(url, params=params, headers=default_headers, timeout=self.REQUEST_TIMEOUT)
             elif method.upper() == 'POST':
-                response = session.post(url, params=params, json=json_data, headers=default_headers)
+                response = session.post(url, params=params, json=json_data, headers=default_headers, timeout=self.REQUEST_TIMEOUT)
             elif method.upper() == 'PUT':
-                response = session.put(url, params=params, json=json_data, headers=default_headers)
+                response = session.put(url, params=params, json=json_data, headers=default_headers, timeout=self.REQUEST_TIMEOUT)
             else:
                 raise ValueError(f"Unsupported method: {method}")
+
+            # Handle 401 Unauthorized - token may have expired
+            if response.status_code == 401 and retry_count == 0:
+                logger.warning("HTTP 401 - attempting token renewal before retry")
+                try:
+                    if self.auth._renew_token():
+                        logger.info("Token renewed successfully, retrying request")
+                        return self._request(method, endpoint, params, json_data, headers, retry_count + 1)
+                    else:
+                        logger.error("Token renewal failed - re-authentication required")
+                except Exception as e:
+                    logger.error(f"Token renewal error during 401 recovery: {e}")
+
+            # Handle 429 Too Many Requests - back off and retry
+            if response.status_code == 429 and retry_count < self.MAX_ORDER_RETRIES:
+                delay = self.RETRY_BASE_DELAY * (2 ** (retry_count + 1))  # Start with longer delay
+                logger.warning(f"Rate limited (429), backing off {delay:.1f}s (attempt {retry_count + 1})")
+                time.sleep(delay)
+                return self._request(method, endpoint, params, json_data, headers, retry_count + 1)
 
             # Check for transient errors that can be retried
             if response.status_code in (500, 502, 503, 504) and retry_count < self.MAX_ORDER_RETRIES:
@@ -261,7 +287,9 @@ class ETradeBroker(BrokerInterface):
 
         if not self.account_id_key and accounts:
             self.account_id_key = accounts[0].get('accountIdKey')
-            logger.warning(f"Configured account not found, using: {accounts[0].get('accountId')}")
+            fallback_id = accounts[0].get('accountId', '')
+            masked = f"****{fallback_id[-4:]}" if len(fallback_id) > 4 else '****'
+            logger.warning(f"Configured account not found, using: {masked}")
 
     def get_accounts(self) -> List[Dict]:
         """Get list of all accounts"""
@@ -292,6 +320,37 @@ class ETradeBroker(BrokerInterface):
             'margin_buying_power': float(computed.get('marginBuyingPower', 0))
         }
 
+    def get_open_positions(self) -> List[Dict]:
+        """Fetch open positions from E*TRADE account for reconciliation."""
+        if not self.account_id_key:
+            self._load_accounts()
+
+        endpoint = self.ACCOUNT_PORTFOLIO.format(account_id_key=self.account_id_key)
+        try:
+            response = self._request('GET', endpoint)
+            portfolio_response = response.get('PortfolioResponse', response)
+            account_portfolios = portfolio_response.get('AccountPortfolio', [])
+
+            if not isinstance(account_portfolios, list):
+                account_portfolios = [account_portfolios]
+
+            positions = []
+            for portfolio in account_portfolios:
+                for pos in portfolio.get('Position', []):
+                    product = pos.get('Product', {})
+                    positions.append({
+                        'symbol': product.get('symbol', ''),
+                        'security_type': product.get('securityType', ''),
+                        'quantity': int(pos.get('quantity', 0)),
+                        'market_value': float(pos.get('marketValue', 0)),
+                    })
+            return positions
+        except ETradeAPIError as e:
+            if e.status_code == 204:
+                return []  # No positions
+            logger.error(f"Failed to fetch positions: {e.message}")
+            return []
+
     # =========================================================================
     # MARKET DATA METHODS
     # =========================================================================
@@ -315,25 +374,34 @@ class ETradeBroker(BrokerInterface):
         quote_response = response.get('QuoteResponse', response)
         quote_data = quote_response.get('QuoteData', [])
 
-        if isinstance(quote_data, list) and quote_data:
+        if isinstance(quote_data, list):
+            if not quote_data:
+                logger.warning(f"Empty QuoteData for {symbol}")
+                return {'symbol': symbol, 'lastTrade': 0, 'last': 0, 'bid': 0, 'ask': 0}
             quote_data = quote_data[0]
 
-        all_data = quote_data.get('All', {})
-        product = quote_data.get('Product', {})
+        all_data = quote_data.get('All', {}) if isinstance(quote_data, dict) else {}
+        product = quote_data.get('Product', {}) if isinstance(quote_data, dict) else {}
+
+        def _safe_float(val, default=0):
+            try:
+                return float(val) if val is not None else default
+            except (ValueError, TypeError):
+                return default
 
         return {
             'symbol': product.get('symbol', symbol),
-            'lastTrade': float(all_data.get('lastTrade', 0)),
-            'last': float(all_data.get('lastTrade', 0)),
-            'bid': float(all_data.get('bid', 0)),
-            'ask': float(all_data.get('ask', 0)),
-            'high': float(all_data.get('high', 0)),
-            'low': float(all_data.get('low', 0)),
-            'open': float(all_data.get('open', 0)),
-            'close': float(all_data.get('previousClose', 0)),
-            'volume': int(all_data.get('totalVolume', 0)),
-            'changeClose': float(all_data.get('changeClose', 0)),
-            'changeClosePercentage': float(all_data.get('changeClosePercentage', 0)),
+            'lastTrade': _safe_float(all_data.get('lastTrade', 0)),
+            'last': _safe_float(all_data.get('lastTrade', 0)),
+            'bid': _safe_float(all_data.get('bid', 0)),
+            'ask': _safe_float(all_data.get('ask', 0)),
+            'high': _safe_float(all_data.get('high', 0)),
+            'low': _safe_float(all_data.get('low', 0)),
+            'open': _safe_float(all_data.get('open', 0)),
+            'close': _safe_float(all_data.get('previousClose', 0)),
+            'volume': int(_safe_float(all_data.get('totalVolume', 0))),
+            'changeClose': _safe_float(all_data.get('changeClose', 0)),
+            'changeClosePercentage': _safe_float(all_data.get('changeClosePercentage', 0)),
             'timestamp': all_data.get('dateTimeUTC', '')
         }
 
@@ -348,7 +416,7 @@ class ETradeBroker(BrokerInterface):
         response = self._request('GET', endpoint, params=params)
 
         if debug:
-            logger.debug(f"Raw expiration response: {response}")
+            logger.debug(f"Raw expiration response keys: {list(response.keys()) if isinstance(response, dict) else type(response).__name__}")
 
         expire_response = response.get('OptionExpireDateResponse', response)
         expire_dates = expire_response.get('ExpirationDate', [])
@@ -382,9 +450,16 @@ class ETradeBroker(BrokerInterface):
             symbol = 'SPX'
 
         exp_parts = expiration.split('-')
-        exp_year = exp_parts[0]
-        exp_month = int(exp_parts[1])
-        exp_day = int(exp_parts[2])
+        if len(exp_parts) != 3:
+            logger.error(f"Invalid expiration format: {expiration} (expected YYYY-MM-DD)")
+            return {}
+        try:
+            exp_year = exp_parts[0]
+            exp_month = int(exp_parts[1])
+            exp_day = int(exp_parts[2])
+        except ValueError:
+            logger.error(f"Non-numeric expiration components: {expiration}")
+            return {}
 
         endpoint = self.OPTION_CHAINS
         params = {
@@ -406,26 +481,40 @@ class ETradeBroker(BrokerInterface):
         if not isinstance(option_pairs, list):
             option_pairs = [option_pairs]
 
+        def _sf(val, default=0):
+            """Safe float conversion for API values that may be non-numeric."""
+            try:
+                return float(val) if val is not None else default
+            except (ValueError, TypeError):
+                return default
+
+        def _si(val, default=0):
+            """Safe int conversion."""
+            try:
+                return int(float(val)) if val is not None else default
+            except (ValueError, TypeError):
+                return default
+
         chain = {}
         for pair in option_pairs:
             call = pair.get('Call', {})
             put = pair.get('Put', {})
 
-            strike = float(call.get('strikePrice', 0) or put.get('strikePrice', 0))
+            strike = _sf(call.get('strikePrice') or put.get('strikePrice'))
 
             if strike > 0:
                 chain[strike] = {
-                    'call_bid': float(call.get('bid', 0) or 0),
-                    'call_ask': float(call.get('ask', 0) or 0),
-                    'call_last': float(call.get('lastPrice', 0) or 0),
-                    'call_volume': int(call.get('volume', 0) or 0),
-                    'call_oi': int(call.get('openInterest', 0) or 0),
+                    'call_bid': _sf(call.get('bid')),
+                    'call_ask': _sf(call.get('ask')),
+                    'call_last': _sf(call.get('lastPrice')),
+                    'call_volume': _si(call.get('volume')),
+                    'call_oi': _si(call.get('openInterest')),
                     'call_symbol': call.get('optionSymbol', ''),
-                    'put_bid': float(put.get('bid', 0) or 0),
-                    'put_ask': float(put.get('ask', 0) or 0),
-                    'put_last': float(put.get('lastPrice', 0) or 0),
-                    'put_volume': int(put.get('volume', 0) or 0),
-                    'put_oi': int(put.get('openInterest', 0) or 0),
+                    'put_bid': _sf(put.get('bid')),
+                    'put_ask': _sf(put.get('ask')),
+                    'put_last': _sf(put.get('lastPrice')),
+                    'put_volume': _si(put.get('volume')),
+                    'put_oi': _si(put.get('openInterest')),
                     'put_symbol': put.get('optionSymbol', '')
                 }
 
@@ -644,6 +733,22 @@ class ETradeBroker(BrokerInterface):
                     message=f"Filled at ${fill_price:.2f}"
                 )
 
+            elif order_status == OrderStatus.PARTIAL:
+                filled_qty = status.get('filled_quantity', 0)
+                fill_price = status.get('fill_price', 0)
+                logger.warning(
+                    f"Order {order_id} PARTIALLY filled: {filled_qty} contracts "
+                    f"@ ${fill_price:.2f}. Treating as filled."
+                )
+                return OrderResult(
+                    success=True,
+                    order_id=order_id,
+                    status=OrderStatus.EXECUTED,
+                    fill_price=fill_price,
+                    filled_quantity=filled_qty,
+                    message=f"Partially filled {filled_qty} @ ${fill_price:.2f}"
+                )
+
             elif order_status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.EXPIRED):
                 logger.warning(f"Order {order_id} ended with status: {order_status.value}")
                 return OrderResult(
@@ -657,7 +762,12 @@ class ETradeBroker(BrokerInterface):
 
         # Timeout - cancel the order
         logger.warning(f"Order {order_id} did not fill within {timeout}s, cancelling...")
-        self._cancel_order(order_id)
+        cancelled = self._cancel_order(order_id)
+        if not cancelled:
+            logger.error(
+                f"ALERT: Failed to cancel order {order_id}! "
+                f"Order may still be live on E*TRADE. Manual review required."
+            )
 
         return OrderResult(
             success=False,
@@ -715,8 +825,17 @@ class ETradeBroker(BrokerInterface):
         if not self.account_id_key:
             self._load_accounts()
 
+        # Validate inputs
+        if quantity <= 0:
+            logger.error(f"Invalid quantity: {quantity} (must be positive)")
+            return ''
+
         # Default limit price to the credit received
         limit_price = limit_price if limit_price is not None else spread.credit_received
+
+        if limit_price <= 0:
+            logger.error(f"Invalid limit price: {limit_price} (must be positive)")
+            return ''
 
         # SAFETY: Log full order details before any action
         self._log_order_details('OPEN', spread, quantity, limit_price, dry_run)
@@ -778,6 +897,14 @@ class ETradeBroker(BrokerInterface):
         """
         if not self.account_id_key:
             self._load_accounts()
+
+        # Validate inputs
+        if quantity <= 0:
+            logger.error(f"Invalid close quantity: {quantity}")
+            return ''
+        if limit_price < 0:
+            logger.error(f"Invalid close limit price: {limit_price}")
+            return ''
 
         # SAFETY: Log full order details before any action
         self._log_order_details('CLOSE', spread, quantity, limit_price, dry_run)
