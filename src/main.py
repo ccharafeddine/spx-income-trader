@@ -881,14 +881,21 @@ class TradingBot:
                 logger.info("Trade cancelled by user")
                 return
 
-            # Calculate position size dynamically based on account and risk
-            # max_risk per contract = spread width (max loss if spread goes to max loss)
+            # Calculate position size based on configured method
+            # max_risk per contract = (spread_width - credit) * 100
             max_risk_per_contract = spread.max_risk
             fixed_fallback = STRATEGY_PARAMS['strategy'].get('contracts_per_trade', 5)
             quantity = self.portfolio.calculate_position_size(
                 strategy=StrategyType.DAILY_INCOME,
                 max_risk_per_contract=max_risk_per_contract,
                 fixed_contracts=fixed_fallback,
+            )
+            sizing_method = self.portfolio.sizing_method.value
+            logger.info(
+                f"Position sizing: {sizing_method} -> {quantity} contracts "
+                f"(risk ${max_risk_per_contract:.2f} per contract, "
+                f"max risk ${quantity * max_risk_per_contract:.2f}, "
+                f"account ${self.portfolio.account_size:,.0f})"
             )
             trade = self.position_manager.enter_trade(
                 spread,
