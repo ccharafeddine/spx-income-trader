@@ -333,6 +333,8 @@ class TradingBot:
                     self.daily_pnl = 0.0
                     self.pending_setup = None
                     self.bollinger.day_open = None  # Reset for new day, will set at market open
+                    self.position_manager._day_open = None
+                    self.position_manager._prev_close = None
 
                     # Reset parallel strategies for new day
                     self.portfolio.reset_daily()
@@ -531,6 +533,21 @@ class TradingBot:
             # Set day open price for extreme move override (first price of the day)
             if self.bollinger.day_open is None and current_price > 0:
                 self.bollinger.set_day_open(current_price)
+
+                # Cache day_open and prev_close for trade context
+                try:
+                    md = getattr(self.broker, 'market_data', None)
+                    if md is None:
+                        from src.data.yahoo_finance import YahooFinanceProvider
+                        md = YahooFinanceProvider()
+                    spx_quote = md.get_spx_quote()
+                    if spx_quote:
+                        day_open = spx_quote.get('open', current_price)
+                        prev_close = spx_quote.get('previous_close', 0)
+                        if day_open and day_open > 0:
+                            self.position_manager.set_daily_cache(day_open, prev_close)
+                except Exception as e:
+                    logger.warning(f"Failed to cache daily open/prev_close: {e}")
 
             # Update bar builder
             current_time = datetime.now(self.tz)

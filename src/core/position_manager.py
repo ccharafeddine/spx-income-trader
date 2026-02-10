@@ -1,4 +1,4 @@
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, Optional, Dict, TYPE_CHECKING
 from datetime import datetime
 import logging
 import uuid
@@ -42,11 +42,56 @@ class PositionManager:
         self.open_trades: List[Trade] = []
         self.tz = pytz.timezone("America/New_York")
 
+        # Daily market cache (set once per day by TradingBot)
+        self._day_open: Optional[float] = None
+        self._prev_close: Optional[float] = None
+
         if pdt_tracker:
             logger.info("PositionManager initialized with PDT protection")
         else:
             logger.info("PositionManager initialized (no PDT protection)")
     
+    def set_daily_cache(self, day_open: float, prev_close: float):
+        """Cache the day's open and previous close prices (called once per day by TradingBot)."""
+        self._day_open = day_open
+        self._prev_close = prev_close
+        logger.info(f"Daily cache set: day_open=${day_open:,.2f}, prev_close=${prev_close:,.2f}")
+
+    def _get_vix_price(self) -> Optional[float]:
+        """Best-effort VIX price fetch. Returns None on failure."""
+        try:
+            md = getattr(self.broker, 'market_data', None)
+            if md and hasattr(md, 'get_vix_quote'):
+                vix_quote = md.get_vix_quote()
+                if vix_quote and vix_quote.get('price'):
+                    return float(vix_quote['price'])
+        except Exception:
+            pass
+
+        # Fallback: try yfinance directly
+        try:
+            import yfinance as yf
+            ticker = yf.Ticker('^VIX')
+            hist = ticker.history(period='1d', interval='1d')
+            if not hist.empty:
+                return float(hist['Close'].iloc[-1])
+        except Exception:
+            pass
+
+        return None
+
+    @staticmethod
+    def _classify_day_type(daily_move_pct: float) -> str:
+        """Classify the trading day based on intraday move percentage."""
+        if daily_move_pct > 0.5:
+            return 'trending_up'
+        elif daily_move_pct < -0.5:
+            return 'trending_down'
+        elif -0.2 <= daily_move_pct <= 0.2:
+            return 'flat'
+        else:
+            return 'choppy'
+
     def enter_trade(
         self,
         spread: CreditSpread,
@@ -141,9 +186,28 @@ class PositionManager:
             # Add to open trades
             self.open_trades.append(trade)
             
+            # Build entry context for database analytics
+            entry_context = {}
+            try:
+                spx_price = spread.underlying_price_at_entry
+                entry_context['spx_at_entry'] = round(spx_price, 2)
+                entry_context['vix_at_entry'] = self._get_vix_price()
+                if self._day_open is not None:
+                    entry_context['day_open'] = round(self._day_open, 2)
+                    entry_context['intraday_move_at_entry'] = round(
+                        ((spx_price - self._day_open) / self._day_open) * 100, 4
+                    )
+                if self._day_open is not None and self._prev_close is not None and self._prev_close > 0:
+                    entry_context['gap_pct'] = round(
+                        ((self._day_open - self._prev_close) / self._prev_close) * 100, 4
+                    )
+                logger.debug(f"Entry context: {entry_context}")
+            except Exception as e:
+                logger.warning(f"Failed to build entry context: {e}")
+
             # Save to database
-            self.db.save_trade(trade)
-            
+            self.db.save_trade(trade, context=entry_context)
+
             logger.info(f"✓ Trade entered successfully: {trade.id}")
             logger.info(f"  Entry price: ${trade.entry_price:.2f}")
             logger.info(f"  Max profit: ${spread.max_profit * quantity:.2f}")
@@ -301,6 +365,36 @@ class PositionManager:
             # Update database
             self.db.save_trade(trade)
             self.db.update_daily_stats(trade.entry_time.date())
+
+            # Build and save exit context for analytics
+            try:
+                exit_context: Dict = {}
+                spx_at_exit = self.broker.get_current_price("SPX")
+                exit_context['spx_at_exit'] = round(spx_at_exit, 2)
+
+                # Profit captured as percentage of max profit
+                max_profit = trade.spread.max_profit * trade.quantity
+                if max_profit > 0 and trade.pnl is not None:
+                    exit_context['profit_captured_pct'] = round(
+                        (trade.pnl / max_profit) * 100, 2
+                    )
+
+                # Time in trade
+                if trade.entry_time and trade.exit_time:
+                    exit_context['time_in_trade_minutes'] = int(
+                        (trade.exit_time - trade.entry_time).total_seconds() / 60
+                    )
+
+                # Daily move and day type (requires day_open cache)
+                if self._day_open is not None and self._day_open > 0:
+                    daily_move_pct = ((spx_at_exit - self._day_open) / self._day_open) * 100
+                    exit_context['daily_move_pct'] = round(daily_move_pct, 4)
+                    exit_context['day_type'] = self._classify_day_type(daily_move_pct)
+
+                self.db.update_trade_exit_context(trade.id, exit_context)
+                logger.debug(f"Exit context saved: {exit_context}")
+            except Exception as e:
+                logger.warning(f"Failed to save exit context: {e}")
 
             # Record day trade for PDT tracking (if same-day active close)
             if self.pdt_tracker and trade.entry_time and trade.exit_time:
