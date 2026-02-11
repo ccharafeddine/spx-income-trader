@@ -533,7 +533,7 @@ class DesktopApp:
                     'crashed': False,
                     'mode': self._bot_mode,
                     'uptime_seconds': uptime,
-                    'trades_today': self._bot.trades_today,
+                    'trades_today': self._bot.dte0_trades_today + self._bot.tnt_trades_today,
                     'daily_pnl': self._bot.daily_pnl,
                 }
 
