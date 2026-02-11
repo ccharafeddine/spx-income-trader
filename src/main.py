@@ -117,7 +117,8 @@ class TradingBot:
         self.running = False
         self._shutdown_called = False
         self.tz = pytz.timezone("America/New_York")
-        self.trades_today_by_strategy = {s.value: 0 for s in StrategyType}
+        self.dte0_trades_today = 0   # Shared 0DTE slot (DI/ORB/B&B)
+        self.tnt_trades_today = 0    # TNT swing slot
         self.daily_pnl = 0.0
         self.current_trading_date = None
 
@@ -140,13 +141,6 @@ class TradingBot:
         self._current_spx_price = 0.0
         self._last_completed_bar = None
 
-        # Per-strategy daily trade limits (0 = no limit, portfolio-gated only)
-        self.max_daily_trades_by_strategy = {
-            StrategyType.DAILY_INCOME.value: STRATEGY_PARAMS['strategy']['max_daily_trades'],
-            StrategyType.TAG_N_TURN.value: STRATEGY_PARAMS.get('tag_n_turn', {}).get('max_daily_trades', 0),
-            StrategyType.BNB.value: STRATEGY_PARAMS.get('bnb', {}).get('max_daily_trades', 0),
-            StrategyType.ORB.value: STRATEGY_PARAMS.get('orb', {}).get('max_daily_trades', 1),
-        }
         self.max_daily_loss = STRATEGY_PARAMS['risk']['max_daily_loss']
 
         # Afternoon window (Bed & Breakfast system, p.23-26)
@@ -197,8 +191,8 @@ class TradingBot:
         sizing_cfg = portfolio_cfg.get('position_sizing', {})
         self.portfolio = PortfolioManager(
             account_size=portfolio_cfg.get('account_size', 50000.0),
-            max_total_positions=portfolio_cfg.get('max_total_positions', 3),
-            max_0dte_positions=portfolio_cfg.get('max_0dte_positions', 2),
+            max_total_positions=portfolio_cfg.get('max_total_positions', 2),
+            max_0dte_positions=portfolio_cfg.get('max_0dte_positions', 1),
             max_daily_risk_pct=portfolio_cfg.get('max_daily_risk_pct', 5.0),
             max_daily_loss_pct=portfolio_cfg.get('max_daily_loss_pct', 2.0),
             strategy_priority=portfolio_cfg.get('priority'),
@@ -372,7 +366,7 @@ class TradingBot:
             logger.info("*** DRY RUN MODE - NO ORDERS WILL BE PLACED ***")
             logger.info("Using real market data from Yahoo Finance")
         logger.info(f"Mode: {TRADING_MODE.upper()}")
-        logger.info(f"Daily trade limits: {self.max_daily_trades_by_strategy} (0=unlimited)")
+        logger.info(f"Position limits: 0DTE={self.dte0_trades_today}/1 (DI/ORB/B&B), Swing={self.tnt_trades_today}/1 (TNT)")
         logger.info(f"Max daily loss: ${self.max_daily_loss}")
         logger.info("=" * 60)
 
@@ -389,7 +383,8 @@ class TradingBot:
         # Log system event
         self.db.log_event("bot_started", "Trading bot started", {
             "mode": TRADING_MODE,
-            "daily_limits": self.max_daily_trades_by_strategy
+            "dte0_trades": self.dte0_trades_today,
+            "tnt_trades": self.tnt_trades_today
         })
         
         # Resolve any trades that expired while bot was offline
@@ -464,7 +459,7 @@ class TradingBot:
                 today = current_time.date()
                 if today != self.current_trading_date:
                     if self.current_trading_date is not None:
-                        total_prev = sum(self.trades_today_by_strategy.values())
+                        total_prev = self.dte0_trades_today + self.tnt_trades_today
                         logger.info(
                             f"New trading day: {today}. "
                             f"Resetting counters (prev: {total_prev} trades, "
@@ -545,8 +540,8 @@ class TradingBot:
                     consecutive_errors = 0
                     continue
 
-                # Daily Income per-strategy limit check (only gates DI setups)
-                if not self._check_daily_limits('daily_income'):
+                # Daily Income 0DTE limit check (shared with ORB/B&B)
+                if not self._check_0dte_limit():
                     if self.pending_setup:
                         logger.info("Daily Income limit reached, clearing pending setup")
                         self.pending_setup = None
@@ -620,27 +615,31 @@ class TradingBot:
                 self._interruptible_sleep(sleep_time)
     
     def _restore_daily_counters(self, trade_date):
-        """Restore per-strategy trade counts and daily_pnl from DB (survives mid-day restarts)."""
+        """Restore trade counts and daily_pnl from DB (survives mid-day restarts)."""
         try:
-            # Restore per-strategy counts
             counts = self.db.get_daily_counts_by_strategy(trade_date)
-            self.trades_today_by_strategy = {s.value: 0 for s in StrategyType}
-            for strategy_name, count in counts.items():
-                if strategy_name in self.trades_today_by_strategy:
-                    self.trades_today_by_strategy[strategy_name] = count
+            # DI + ORB + B&B share the 0DTE slot
+            self.dte0_trades_today = (
+                counts.get('daily_income', 0)
+                + counts.get('orb', 0)
+                + counts.get('bnb', 0)
+            )
+            self.tnt_trades_today = counts.get('tag_n_turn', 0)
 
             # Restore daily P&L from summary
             summary = self.db.get_daily_summary(trade_date)
             self.daily_pnl = summary['realized_pnl']
 
-            total = sum(self.trades_today_by_strategy.values())
+            total = self.dte0_trades_today + self.tnt_trades_today
             logger.info(
                 f"Restored daily counters from DB: "
-                f"{total} trades {self.trades_today_by_strategy}, ${self.daily_pnl:.2f} P&L"
+                f"{total} trades (0DTE={self.dte0_trades_today}/1, TNT={self.tnt_trades_today}/1), "
+                f"${self.daily_pnl:.2f} P&L"
             )
         except Exception as e:
             logger.warning(f"Could not restore daily counters: {e}")
-            self.trades_today_by_strategy = {s.value: 0 for s in StrategyType}
+            self.dte0_trades_today = 0
+            self.tnt_trades_today = 0
             self.daily_pnl = 0.0
 
     def _reconcile_positions(self):
@@ -735,22 +734,18 @@ class TradingBot:
             return False
         return True
 
-    def _check_daily_limits(self, strategy: str = 'daily_income') -> bool:
-        """Check if daily trading limits have been reached for a specific strategy.
+    def _check_0dte_limit(self) -> bool:
+        """Shared 0DTE slot: DI/ORB/B&B share 1 trade per day."""
+        if self.dte0_trades_today >= 1:
+            logger.debug(f"0DTE daily limit reached: {self.dte0_trades_today}/1")
+            return False
+        return True
 
-        Args:
-            strategy: Strategy name key (e.g. 'daily_income', 'orb').
-
-        Returns:
-            True if the strategy can still trade today.
-        """
-        max_trades = self.max_daily_trades_by_strategy.get(strategy, 0)
-        # 0 means unlimited (portfolio-gated only)
-        if max_trades > 0:
-            current = self.trades_today_by_strategy.get(strategy, 0)
-            if current >= max_trades:
-                logger.debug(f"Max daily trades reached for {strategy}: {current}/{max_trades}")
-                return False
+    def _check_tnt_limit(self) -> bool:
+        """TNT has its own slot: max 1 per day."""
+        if self.tnt_trades_today >= 1:
+            logger.debug(f"TNT daily limit reached: {self.tnt_trades_today}/1")
+            return False
         return True
     
     def _update_market_state(self, current_time):
@@ -852,9 +847,9 @@ class TradingBot:
                         "target_price": tnt_signal['target_price'],
                         "stop_price": tnt_signal['stop_price'],
                     })
-                    # Execute if daily limit allows and circuit breaker not tripped
+                    # Execute if TNT limit allows and circuit breaker not tripped
                     if (self._check_daily_loss_circuit_breaker()
-                            and self._check_daily_limits(StrategyType.TAG_N_TURN.value)):
+                            and self._check_tnt_limit()):
                         tnt_cfg = STRATEGY_PARAMS.get('tag_n_turn', {})
                         exp_str = self._find_dte_expiration(
                             tnt_cfg.get('min_dte', 3), tnt_cfg.get('max_dte', 7)
@@ -898,9 +893,9 @@ class TradingBot:
                         f"entry @ ${current_price:,.2f} ({orb_signal['trigger']})"
                     )
                     self.db.log_event("orb_signal", "ORB breakout signal", orb_signal)
-                    # Execute if daily limit allows and circuit breaker not tripped
+                    # Execute if 0DTE limit allows and circuit breaker not tripped
                     if (self._check_daily_loss_circuit_breaker()
-                            and self._check_daily_limits(StrategyType.ORB.value)):
+                            and self._check_0dte_limit()):
                         from src.models.spread import TradeDirection as TD
                         orb_dir = TD.BULLISH if orb_signal['direction'] == 'bullish' else TD.BEARISH
                         orb_ok = self._execute_strategy_trade(
@@ -922,9 +917,9 @@ class TradingBot:
                         f"@ ${current_price:,.2f} (from {bnb_signal['signal_date']})"
                     )
                     self.db.log_event("bnb_signal", "B&B entry signal", bnb_signal)
-                    # Execute if daily limit allows and circuit breaker not tripped
+                    # Execute if 0DTE limit allows and circuit breaker not tripped
                     if (self._check_daily_loss_circuit_breaker()
-                            and self._check_daily_limits(StrategyType.BNB.value)):
+                            and self._check_0dte_limit()):
                         from src.models.spread import TradeDirection as TD
                         bnb_dir = TD.BULLISH if bnb_signal['direction'] == 'bullish' else TD.BEARISH
                         bnb_ok = self._execute_strategy_trade(
@@ -1136,9 +1131,10 @@ class TradingBot:
                 return False
 
             # 6. Update counters
-            self.trades_today_by_strategy[strategy_name] = (
-                self.trades_today_by_strategy.get(strategy_name, 0) + 1
-            )
+            if is_0dte:
+                self.dte0_trades_today += 1
+            else:
+                self.tnt_trades_today += 1
 
             # 7. Register with portfolio
             self.portfolio.register_position(
@@ -1390,9 +1386,7 @@ class TradingBot:
             if trade:
                 logger.info(f"Trade executed: {trade.id}")
 
-                self.trades_today_by_strategy['daily_income'] = (
-                    self.trades_today_by_strategy.get('daily_income', 0) + 1
-                )
+                self.dte0_trades_today += 1
 
                 # Register with portfolio manager for risk tracking
                 self.portfolio.register_position(
@@ -1542,7 +1536,7 @@ class TradingBot:
         # Send notification
         if self.notifier:
             try:
-                total_trades = sum(self.trades_today_by_strategy.values())
+                total_trades = self.dte0_trades_today + self.tnt_trades_today
                 self.notifier.send(
                     "Trading Bot Stopped",
                     f"Trades today: {total_trades}\n"

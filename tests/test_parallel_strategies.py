@@ -1,12 +1,13 @@
 """
-Tests for parallel strategy execution and per-strategy daily limits.
+Tests for parallel strategy execution and shared-slot position limits.
 
 Covers:
-- Per-strategy daily limits (DI limit=1 doesn't block ORB)
+- Shared 0DTE slot (DI/ORB/B&B share 1 trade per day)
+- Independent TNT swing slot (1 per day)
 - Global circuit breaker blocks all strategies
 - _execute_strategy_trade() with mocked broker
 - _construct_strategy_spread() with different widths and expirations
-- _restore_daily_counters() with mixed strategy trades
+- _restore_daily_counters() summing DI+ORB+B&B into dte0_trades_today
 - _find_dte_expiration() helper
 - DI not blocked by ORB/TNT/B&B open positions
 """
@@ -59,13 +60,8 @@ def _make_mock_bot(dry_run=True, daily_pnl=0.0):
     bot.dry_run = dry_run
     bot.daily_pnl = daily_pnl
     bot.max_daily_loss = 1000.0
-    bot.trades_today_by_strategy = {s.value: 0 for s in StrategyType}
-    bot.max_daily_trades_by_strategy = {
-        'daily_income': 1,
-        'tag_n_turn': 0,  # unlimited
-        'bnb': 0,         # unlimited
-        'orb': 1,
-    }
+    bot.dte0_trades_today = 0   # Shared 0DTE slot (DI/ORB/B&B)
+    bot.tnt_trades_today = 0    # TNT swing slot
     bot.notifier = None
 
     # Mock broker
@@ -112,52 +108,58 @@ def _make_mock_bot(dry_run=True, daily_pnl=0.0):
 # TESTS: Per-Strategy Daily Limits
 # ============================================================================
 
-class TestPerStrategyDailyLimits:
-    """Test that per-strategy limits are independent."""
+class TestShared0DTELimit:
+    """Test that DI/ORB/B&B share a single 0DTE slot and TNT has its own."""
 
-    def test_di_limit_does_not_block_orb(self):
-        """DI max_daily_trades=1 reached should NOT block ORB."""
+    def test_0dte_blocks_after_1(self):
+        """Once any 0DTE strategy trades, all 0DTE strategies are blocked."""
         from src.main import TradingBot
 
         bot = _make_mock_bot()
-        bot.trades_today_by_strategy['daily_income'] = 1  # DI limit reached
+        bot.dte0_trades_today = 1  # One 0DTE trade already done
 
-        # Bind the real method
-        result = TradingBot._check_daily_limits(bot, 'daily_income')
-        assert result is False, "DI should be blocked"
+        result = TradingBot._check_0dte_limit(bot)
+        assert result is False, "0DTE should be blocked after 1 trade"
 
-        result = TradingBot._check_daily_limits(bot, 'orb')
-        assert result is True, "ORB should NOT be blocked by DI limit"
-
-    def test_orb_limit_blocks_after_1(self):
-        """ORB max_daily_trades=1 should block after 1 trade."""
+    def test_0dte_allows_first_trade(self):
+        """First 0DTE trade of the day should be allowed."""
         from src.main import TradingBot
 
         bot = _make_mock_bot()
-        bot.trades_today_by_strategy['orb'] = 1
+        assert bot.dte0_trades_today == 0
 
-        result = TradingBot._check_daily_limits(bot, 'orb')
-        assert result is False, "ORB should be blocked after 1 trade"
+        result = TradingBot._check_0dte_limit(bot)
+        assert result is True, "First 0DTE trade should be allowed"
 
-    def test_unlimited_strategy_never_blocked(self):
-        """Strategies with max_daily_trades=0 are never blocked by trade count."""
+    def test_tnt_independent_of_0dte(self):
+        """TNT should not be blocked by 0DTE limit."""
         from src.main import TradingBot
 
         bot = _make_mock_bot()
-        bot.trades_today_by_strategy['tag_n_turn'] = 10  # 10 trades
+        bot.dte0_trades_today = 1  # 0DTE slot used
 
-        result = TradingBot._check_daily_limits(bot, 'tag_n_turn')
-        assert result is True, "TNT (limit=0) should never be count-blocked"
+        result = TradingBot._check_tnt_limit(bot)
+        assert result is True, "TNT should NOT be blocked by 0DTE limit"
 
-    def test_bnb_unlimited(self):
-        """B&B with max_daily_trades=0 should never be count-blocked."""
+    def test_tnt_blocks_after_1(self):
+        """TNT should block after its own slot is used."""
         from src.main import TradingBot
 
         bot = _make_mock_bot()
-        bot.trades_today_by_strategy['bnb'] = 5
+        bot.tnt_trades_today = 1
 
-        result = TradingBot._check_daily_limits(bot, 'bnb')
-        assert result is True
+        result = TradingBot._check_tnt_limit(bot)
+        assert result is False, "TNT should be blocked after 1 trade"
+
+    def test_0dte_independent_of_tnt(self):
+        """0DTE should not be blocked by TNT limit."""
+        from src.main import TradingBot
+
+        bot = _make_mock_bot()
+        bot.tnt_trades_today = 1  # TNT slot used
+
+        result = TradingBot._check_0dte_limit(bot)
+        assert result is True, "0DTE should NOT be blocked by TNT limit"
 
 
 # ============================================================================
@@ -326,7 +328,7 @@ class TestExecuteStrategyTrade:
         )
 
         assert result is True
-        assert bot.trades_today_by_strategy['orb'] == 1
+        assert bot.dte0_trades_today == 1  # ORB is 0DTE
         bot.portfolio.register_position.assert_called_once()
         bot.position_manager.enter_trade.assert_called_once()
 
@@ -352,7 +354,7 @@ class TestExecuteStrategyTrade:
         )
 
         assert result is True
-        assert bot.trades_today_by_strategy['tag_n_turn'] == 1
+        assert bot.tnt_trades_today == 1  # TNT is swing (not 0DTE)
 
         # Verify is_0dte=False passed to portfolio
         call_kwargs = bot.portfolio.register_position.call_args[1]
@@ -374,7 +376,7 @@ class TestExecuteStrategyTrade:
         )
 
         assert result is True
-        assert bot.trades_today_by_strategy['bnb'] == 1
+        assert bot.dte0_trades_today == 1  # B&B is 0DTE
 
     def test_portfolio_risk_blocks_trade(self):
         """Portfolio risk gate should prevent execution."""
@@ -391,7 +393,7 @@ class TestExecuteStrategyTrade:
         )
 
         assert result is False
-        assert bot.trades_today_by_strategy['orb'] == 0
+        assert bot.dte0_trades_today == 0
         bot.position_manager.enter_trade.assert_not_called()
 
     def test_empty_chain_fails_gracefully(self):
@@ -425,7 +427,7 @@ class TestExecuteStrategyTrade:
         )
 
         assert result is False
-        assert bot.trades_today_by_strategy['orb'] == 0
+        assert bot.dte0_trades_today == 0
 
 
 # ============================================================================
@@ -433,10 +435,10 @@ class TestExecuteStrategyTrade:
 # ============================================================================
 
 class TestRestoreDailyCounters:
-    """Test restoring per-strategy trade counts from DB."""
+    """Test restoring trade counts from DB into shared-slot model."""
 
     def test_restore_mixed_strategies(self):
-        """Restore counts with trades from multiple strategies."""
+        """DI+ORB+B&B sum into dte0_trades_today, TNT into tnt_trades_today."""
         from src.main import TradingBot
 
         bot = _make_mock_bot()
@@ -449,10 +451,8 @@ class TestRestoreDailyCounters:
 
         TradingBot._restore_daily_counters(bot, date(2026, 2, 11))
 
-        assert bot.trades_today_by_strategy['daily_income'] == 1
-        assert bot.trades_today_by_strategy['orb'] == 1
-        assert bot.trades_today_by_strategy['tag_n_turn'] == 2
-        assert bot.trades_today_by_strategy['bnb'] == 0
+        assert bot.dte0_trades_today == 2  # DI(1) + ORB(1) + B&B(0)
+        assert bot.tnt_trades_today == 2
         assert bot.daily_pnl == -150.0
 
     def test_restore_empty_day(self):
@@ -465,7 +465,8 @@ class TestRestoreDailyCounters:
 
         TradingBot._restore_daily_counters(bot, date(2026, 2, 11))
 
-        assert all(v == 0 for v in bot.trades_today_by_strategy.values())
+        assert bot.dte0_trades_today == 0
+        assert bot.tnt_trades_today == 0
         assert bot.daily_pnl == 0.0
 
     def test_restore_handles_db_error(self):
@@ -477,7 +478,8 @@ class TestRestoreDailyCounters:
 
         TradingBot._restore_daily_counters(bot, date(2026, 2, 11))
 
-        assert all(v == 0 for v in bot.trades_today_by_strategy.values())
+        assert bot.dte0_trades_today == 0
+        assert bot.tnt_trades_today == 0
         assert bot.daily_pnl == 0.0
 
 
@@ -673,7 +675,8 @@ class TestTNTResetOnFailure:
         # Execution will fail
         bot._execute_strategy_trade = MagicMock(return_value=False)
         bot._check_daily_loss_circuit_breaker = MagicMock(return_value=True)
-        bot._check_daily_limits = MagicMock(return_value=True)
+        bot._check_tnt_limit = MagicMock(return_value=True)
+        bot._check_0dte_limit = MagicMock(return_value=True)
 
         # Wire real _update_market_state but mock inner calls
         bot.orb_enabled = False

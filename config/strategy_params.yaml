@@ -4,8 +4,8 @@
 # ============================================
 portfolio:
   account_size: 50000.0        # Starting account size for risk calculations
-  max_total_positions: 3       # Max concurrent positions (all strategies)
-  max_0dte_positions: 2        # Max same-day expiration positions
+  max_total_positions: 2       # Max concurrent positions (1 daily 0DTE + 1 swing)
+  max_0dte_positions: 1        # Max same-day expiration positions (DI/ORB/B&B share slot)
   max_daily_risk_pct: 5.0      # Max % of account at risk at any time
   max_daily_loss_pct: 2.0      # Circuit breaker at 2% REALIZED loss
   # At $50k: 2% = $1000 max loss
@@ -44,9 +44,6 @@ strategy:
 
   # Profit target as % of max profit
   profit_target_pct: 80.0
-
-  # Maximum number of trades per day
-  max_daily_trades: 1
 
   # Number of contracts per trade
   contracts_per_trade: 5
@@ -124,7 +121,6 @@ filters:
 # Separate from daily income strategy - can run in parallel
 tag_n_turn:
   enabled: true  # Start disabled, enable when ready to test
-  max_daily_trades: 0  # 0 = no limit, gated by portfolio position limits only
 
   # Bollinger Band parameters (50-period, 2 std on 30-min bars)
   bb_period: 50
@@ -158,7 +154,6 @@ tag_n_turn:
 # Detects end-of-day pulse setups for next-day morning entry
 bnb:
   enabled: true  # Enable when ready to test
-  max_daily_trades: 0  # 0 = no limit, gated by portfolio position limits only
 
   # Pulse bar detection threshold
   pulse_threshold: 10.0
@@ -182,8 +177,6 @@ orb:
 
   # Position sizing
   contracts_per_trade: 3
-
-  max_daily_trades: 1  # 1 ORB trade per day
 
 # ============================================
 # PDT (Pattern Day Trader) RULE PROTECTION

@@ -87,8 +87,8 @@ class PortfolioManager:
     def __init__(
         self,
         account_size: float = 50000.0,
-        max_total_positions: int = 3,
-        max_0dte_positions: int = 2,
+        max_total_positions: int = 2,
+        max_0dte_positions: int = 1,
         max_daily_risk_pct: float = 5.0,
         max_daily_loss_pct: float = 2.0,
         strategy_priority: Optional[List[str]] = None,
@@ -134,7 +134,8 @@ class PortfolioManager:
         self.active_positions: Dict[str, PositionSlot] = {}
         self.daily_realized_pnl: float = 0.0
         self.daily_risk_used: float = 0.0
-        self.trades_today: Dict[str, int] = {s.value: 0 for s in StrategyType}
+        self.dte0_trades_today: int = 0   # Shared 0DTE slot (DI/ORB/B&B)
+        self.tnt_trades_today: int = 0    # TNT swing slot
         self.circuit_breaker_triggered: bool = False
 
         # Persistence
@@ -192,7 +193,8 @@ class PortfolioManager:
                 'active_positions': {k: v.to_dict() for k, v in self.active_positions.items()},
                 'daily_realized_pnl': self.daily_realized_pnl,
                 'daily_risk_used': self.daily_risk_used,
-                'trades_today': self.trades_today,
+                'dte0_trades_today': self.dte0_trades_today,
+                'tnt_trades_today': self.tnt_trades_today,
                 'circuit_breaker_triggered': self.circuit_breaker_triggered,
                 'last_updated': datetime.now().isoformat(),
             }
@@ -282,7 +284,10 @@ class PortfolioManager:
         )
 
         self.daily_risk_used += max_risk
-        self.trades_today[strategy.value] = self.trades_today.get(strategy.value, 0) + 1
+        if is_0dte:
+            self.dte0_trades_today += 1
+        else:
+            self.tnt_trades_today += 1
 
         logger.info(
             f"Portfolio: Registered {strategy.value} position {position_id}, "
@@ -368,7 +373,8 @@ class PortfolioManager:
         """
         self.daily_realized_pnl = 0.0
         self.daily_risk_used = 0.0
-        self.trades_today = {s.value: 0 for s in StrategyType}
+        self.dte0_trades_today = 0
+        self.tnt_trades_today = 0
         self.circuit_breaker_triggered = False
 
         # Remove any stale 0DTE positions (shouldn't exist if bot ran correctly)
@@ -403,7 +409,8 @@ class PortfolioManager:
             'max_daily_loss_pct': self.max_daily_loss_pct,
             'max_daily_loss_dollars': round(self.max_daily_loss, 2),
             'circuit_breaker': self.circuit_breaker_triggered,
-            'trades_today': self.trades_today.copy(),
+            'dte0_trades_today': self.dte0_trades_today,
+            'tnt_trades_today': self.tnt_trades_today,
             'positions': {k: v.to_dict() for k, v in self.active_positions.items()},
             'position_sizing': self.get_position_sizing_summary(),
         }

@@ -994,11 +994,7 @@ def api_status():
         'pulse_threshold': strat.get('pulse_threshold', 10),
         'spread_width': strat.get('spread_width', 5),
         'profit_target_pct': strat.get('profit_target_pct', 80),
-        'max_daily_trades': strat.get('max_daily_trades', 1),
         'contracts': strat.get('contracts_per_trade', 5),
-        'tnt_max_daily': tnt_cfg.get('max_daily_trades', 0),
-        'bnb_max_daily': bnb_cfg.get('max_daily_trades', 0),
-        'orb_max_daily': orb_cfg.get('max_daily_trades', 1),
     }
 
     # Tag 'n Turn status (read from persistence file if enabled)
@@ -1074,16 +1070,17 @@ def api_status():
             max_daily_loss_dollars = account_size * (max_daily_loss_pct / 100)
             portfolio_status = {
                 'active_positions': len(port_data.get('active_positions', {})),
-                'max_total_positions': portfolio_cfg.get('max_total_positions', 3),
+                'max_total_positions': portfolio_cfg.get('max_total_positions', 2),
                 '0dte_positions': sum(1 for p in port_data.get('active_positions', {}).values() if p.get('is_0dte', True)),
-                'max_0dte_positions': portfolio_cfg.get('max_0dte_positions', 2),
+                'max_0dte_positions': portfolio_cfg.get('max_0dte_positions', 1),
                 'daily_risk_used': port_data.get('daily_risk_used', 0),
                 'max_daily_risk': max_daily_risk,
                 'daily_realized_pnl': port_data.get('daily_realized_pnl', port_data.get('daily_pnl', 0)),
                 'max_daily_loss_pct': max_daily_loss_pct,
                 'max_daily_loss_dollars': max_daily_loss_dollars,
                 'circuit_breaker': port_data.get('circuit_breaker_triggered', False),
-                'trades_today': port_data.get('trades_today', {}),
+                'dte0_trades_today': port_data.get('dte0_trades_today', 0),
+                'tnt_trades_today': port_data.get('tnt_trades_today', 0),
             }
     except Exception:
         pass
@@ -1516,7 +1513,6 @@ def api_journal():
         'pulse_threshold': strat.get('pulse_threshold', 10),
         'spread_width': strat.get('spread_width', 5),
         'profit_target_pct': strat.get('profit_target_pct', 80),
-        'max_daily_trades': strat.get('max_daily_trades', 1),
         'contracts': strat.get('contracts_per_trade', 5),
         'min_credit': MIN_CREDIT_THRESHOLD,
         'morning_start': timing.get('morning_start', '09:30'),
@@ -1665,7 +1661,7 @@ def _reconstruct_entry_reasons(trade, signal, strat, timing, risk, portfolio):
         'id': 'daily_trade_limit',
         'label': 'Daily trade limit not reached',
         'met': True,  # Trade exists, so limit wasn't reached
-        'detail': f'Limit: {strat.get("max_daily_trades", 1)} per day',
+        'detail': '0DTE limit: 1 per day (shared DI/ORB/B&B)',
     })
 
     # 6. Daily loss limit (portfolio-level, percentage-based)

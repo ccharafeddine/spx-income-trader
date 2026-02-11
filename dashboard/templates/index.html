@@ -1817,10 +1817,10 @@ header::after {
       <div class="setting-row">
         <label>Max Positions</label>
         <div class="slider-with-value">
-          <input type="range" id="set-max-pos" min="1" max="5" step="1" value="3"
+          <input type="range" id="set-max-pos" min="1" max="3" step="1" value="2"
                  oninput="document.getElementById('max-pos-val').textContent = this.value"
                  onchange="updateSetting('portfolio.max_total_positions', parseInt(this.value))">
-          <span id="max-pos-val">3</span>
+          <span id="max-pos-val">2</span>
         </div>
       </div>
       <div class="setting-row">
@@ -1831,34 +1831,6 @@ header::after {
                  onchange="updateSetting('strategy.profit_target_pct', parseFloat(this.value))">
           <span id="profit-target-val">80%</span>
         </div>
-      </div>
-    </div>
-
-    <!-- Daily Trade Limits -->
-    <div class="settings-section">
-      <div class="section-title">Daily Trade Limits</div>
-      <div class="setting-row">
-        <label>Daily Income</label>
-        <input type="number" id="set-di-max-daily" min="0" max="10" value="1"
-               onchange="updateSetting('strategy.max_daily_trades', parseInt(this.value))">
-      </div>
-      <div class="setting-row">
-        <label>Tag 'n Turn</label>
-        <input type="number" id="set-tnt-max-daily" min="0" max="10" value="0"
-               onchange="updateSetting('tag_n_turn.max_daily_trades', parseInt(this.value))">
-      </div>
-      <div class="setting-row">
-        <label>B&B</label>
-        <input type="number" id="set-bnb-max-daily" min="0" max="10" value="0"
-               onchange="updateSetting('bnb.max_daily_trades', parseInt(this.value))">
-      </div>
-      <div class="setting-row">
-        <label>ORB</label>
-        <input type="number" id="set-orb-max-daily" min="0" max="10" value="1"
-               onchange="updateSetting('orb.max_daily_trades', parseInt(this.value))">
-      </div>
-      <div class="setting-description">
-        0 = unlimited (portfolio-gated only)
       </div>
     </div>
 
@@ -2635,17 +2607,15 @@ async function updateStatus() {
   const pg = document.getElementById('params-grid');
   if (d.strategy) {
     const p = d.strategy;
-    const trades = d.portfolio?.trades_today || {};
-    const fmtLimit = (count, max) => count + '/' + (max === 0 ? '\u221E' : max);
+    const dte0 = d.portfolio?.dte0_trades_today || 0;
+    const tnt = d.portfolio?.tnt_trades_today || 0;
     pg.innerHTML =
       '<span class="status-label">Pulse</span><span class="status-value">' + p.pulse_threshold + '%</span>' +
       '<span class="status-label">Width</span><span class="status-value">$' + p.spread_width + '</span>' +
       '<span class="status-label">Target</span><span class="status-value">' + p.profit_target_pct + '%</span>' +
       '<span class="status-label">Contracts</span><span class="status-value">' + p.contracts + '</span>' +
-      '<span class="status-label">DI</span><span class="status-value">' + fmtLimit(trades.daily_income || 0, p.max_daily_trades) + '</span>' +
-      '<span class="status-label">TNT</span><span class="status-value">' + fmtLimit(trades.tag_n_turn || 0, p.tnt_max_daily) + '</span>' +
-      '<span class="status-label">B&B</span><span class="status-value">' + fmtLimit(trades.bnb || 0, p.bnb_max_daily) + '</span>' +
-      '<span class="status-label">ORB</span><span class="status-value">' + fmtLimit(trades.orb || 0, p.orb_max_daily) + '</span>';
+      '<span class="status-label">0DTE</span><span class="status-value">' + dte0 + '/1 (DI/ORB/B&B)</span>' +
+      '<span class="status-label">Swing</span><span class="status-value">' + tnt + '/1 (TNT)</span>';
   }
 
   // Strategy Statuses
@@ -4049,19 +4019,13 @@ async function loadCurrentSettings() {
   document.getElementById('set-max-loss').value = maxLoss;
   document.getElementById('max-loss-val').textContent = maxLoss + '%';
 
-  const maxPos = data.portfolio?.max_total_positions ?? 3;
+  const maxPos = data.portfolio?.max_total_positions ?? 2;
   document.getElementById('set-max-pos').value = maxPos;
   document.getElementById('max-pos-val').textContent = maxPos;
 
   const profitTarget = data.strategy?.profit_target_pct ?? 80;
   document.getElementById('set-profit-target').value = profitTarget;
   document.getElementById('profit-target-val').textContent = profitTarget + '%';
-
-  // Daily trade limits
-  document.getElementById('set-di-max-daily').value = data.strategy?.max_daily_trades ?? 1;
-  document.getElementById('set-tnt-max-daily').value = data.tag_n_turn?.max_daily_trades ?? 0;
-  document.getElementById('set-bnb-max-daily').value = data.bnb?.max_daily_trades ?? 0;
-  document.getElementById('set-orb-max-daily').value = data.orb?.max_daily_trades ?? 1;
 
   // B&B options
   document.getElementById('set-bnb-roll').checked = data.bnb?.aggressive_roll ?? true;
