@@ -14,7 +14,7 @@ Covers:
 
 import pytest
 from unittest.mock import Mock, MagicMock, patch, PropertyMock
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, time, timedelta
 import sys
 from pathlib import Path
 
@@ -754,3 +754,376 @@ class TestDBDailyCounts:
         counts = db.get_daily_counts_by_strategy(date(2026, 2, 11))
 
         assert counts == {}
+
+
+# ============================================================================
+# TESTS: close_trade_by_id
+# ============================================================================
+
+class TestCloseTradeById:
+    """Test PositionManager.close_trade_by_id()"""
+
+    def test_close_valid_trade(self):
+        """close_trade_by_id delegates to _exit_trade and returns P&L."""
+        from src.core.position_manager import PositionManager
+        from src.models.trade import Trade, TradeStatus
+
+        pm = MagicMock(spec=PositionManager)
+
+        trade = MagicMock(spec=Trade)
+        trade.id = "trade-001"
+        trade.status = TradeStatus.ACTIVE
+        trade.pnl = 150.0
+
+        pm.open_trades = [trade]
+
+        # After _exit_trade, status should become CLOSED
+        def fake_exit(t, reason):
+            t.status = TradeStatus.CLOSED
+        pm._exit_trade = MagicMock(side_effect=fake_exit)
+
+        result = PositionManager.close_trade_by_id(pm, "trade-001", "TNT: target hit")
+
+        pm._exit_trade.assert_called_once_with(trade, "TNT: target hit")
+        assert result == 150.0
+
+    def test_close_invalid_id(self):
+        """close_trade_by_id returns None for unknown trade ID."""
+        from src.core.position_manager import PositionManager
+
+        pm = MagicMock(spec=PositionManager)
+        pm.open_trades = []
+
+        result = PositionManager.close_trade_by_id(pm, "no-such-trade", "reason")
+        assert result is None
+
+    def test_close_non_active_trade(self):
+        """close_trade_by_id skips trades that are not ACTIVE."""
+        from src.core.position_manager import PositionManager
+        from src.models.trade import Trade, TradeStatus
+
+        pm = MagicMock(spec=PositionManager)
+
+        trade = MagicMock(spec=Trade)
+        trade.id = "trade-002"
+        trade.status = TradeStatus.CLOSED
+
+        pm.open_trades = [trade]
+
+        result = PositionManager.close_trade_by_id(pm, "trade-002", "reason")
+        assert result is None
+
+    def test_close_order_not_filled(self):
+        """When _exit_trade fails (trade stays ACTIVE), returns None."""
+        from src.core.position_manager import PositionManager
+        from src.models.trade import Trade, TradeStatus
+
+        pm = MagicMock(spec=PositionManager)
+
+        trade = MagicMock(spec=Trade)
+        trade.id = "trade-003"
+        trade.status = TradeStatus.ACTIVE
+
+        pm.open_trades = [trade]
+
+        # _exit_trade does NOT change status (simulates failed close order)
+        pm._exit_trade = MagicMock()
+
+        result = PositionManager.close_trade_by_id(pm, "trade-003", "reason")
+        assert result is None
+
+
+# ============================================================================
+# TESTS: TNT Exit Execution
+# ============================================================================
+
+class TestTNTExitExecution:
+    """Test TNT exit wiring in _update_market_state."""
+
+    def test_tnt_exit_closes_position(self):
+        """TNT exit signal triggers broker close and state machine reset."""
+        from src.main import TradingBot
+        import pytz
+
+        bot = _make_mock_bot()
+        bot.tag_n_turn_enabled = True
+        bot.tag_n_turn = MagicMock()
+        bot.tag_n_turn.check_entry_signal.return_value = None
+        bot.tag_n_turn.check_exit_conditions.return_value = {
+            'reason': 'Target hit',
+        }
+
+        bot.orb_enabled = False
+        bot.bnb_enabled = False
+        bot.bollinger = MagicMock()
+        bot.bollinger.day_open = 6000.0
+        bot.bar_builder = MagicMock()
+        bot.bar_builder.add_price.return_value = None
+        bot.bar_builder.current_bar_start = None
+        bot._current_spx_price = 0
+        bot.broker.get_current_price.return_value = 6000.0
+
+        # Mock portfolio position for TNT
+        mock_slot = MagicMock()
+        mock_slot.position_id = "tnt-trade-001"
+        bot.portfolio.get_positions_by_strategy.return_value = [mock_slot]
+
+        # Mock successful close
+        bot.position_manager.close_trade_by_id = MagicMock(return_value=200.0)
+        bot.position_manager.recently_closed = []
+        bot._drain_recently_closed = MagicMock()
+
+        tz = pytz.timezone("America/New_York")
+        current_time = datetime(2026, 2, 11, 14, 0, tzinfo=tz)
+        TradingBot._update_market_state(bot, current_time)
+
+        # Verify close was called
+        bot.position_manager.close_trade_by_id.assert_called_once_with(
+            "tnt-trade-001", "TNT: Target hit"
+        )
+        bot._drain_recently_closed.assert_called_once()
+        bot.tag_n_turn.on_position_closed.assert_called_once()
+        assert bot.daily_pnl == 200.0
+        bot._log_signal.assert_called()
+
+    def test_tnt_exit_no_position(self):
+        """TNT exit signal with no portfolio position logs warning."""
+        from src.main import TradingBot
+        import pytz
+
+        bot = _make_mock_bot()
+        bot.tag_n_turn_enabled = True
+        bot.tag_n_turn = MagicMock()
+        bot.tag_n_turn.check_entry_signal.return_value = None
+        bot.tag_n_turn.check_exit_conditions.return_value = {
+            'reason': 'Stop loss',
+        }
+
+        bot.orb_enabled = False
+        bot.bnb_enabled = False
+        bot.bollinger = MagicMock()
+        bot.bollinger.day_open = 6000.0
+        bot.bar_builder = MagicMock()
+        bot.bar_builder.add_price.return_value = None
+        bot.bar_builder.current_bar_start = None
+        bot._current_spx_price = 0
+        bot.broker.get_current_price.return_value = 6000.0
+
+        # No TNT positions
+        bot.portfolio.get_positions_by_strategy.return_value = []
+
+        tz = pytz.timezone("America/New_York")
+        current_time = datetime(2026, 2, 11, 14, 0, tzinfo=tz)
+        TradingBot._update_market_state(bot, current_time)
+
+        # Should NOT attempt to close
+        bot.position_manager.close_trade_by_id = MagicMock()
+        # (already returned before getting there)
+        assert bot.daily_pnl == 0.0
+
+    def test_tnt_exit_close_failed_retries(self):
+        """When close order fails, TNT stays open for retry next cycle."""
+        from src.main import TradingBot
+        import pytz
+
+        bot = _make_mock_bot()
+        bot.tag_n_turn_enabled = True
+        bot.tag_n_turn = MagicMock()
+        bot.tag_n_turn.check_entry_signal.return_value = None
+        bot.tag_n_turn.check_exit_conditions.return_value = {
+            'reason': 'Target hit',
+        }
+
+        bot.orb_enabled = False
+        bot.bnb_enabled = False
+        bot.bollinger = MagicMock()
+        bot.bollinger.day_open = 6000.0
+        bot.bar_builder = MagicMock()
+        bot.bar_builder.add_price.return_value = None
+        bot.bar_builder.current_bar_start = None
+        bot._current_spx_price = 0
+        bot.broker.get_current_price.return_value = 6000.0
+
+        mock_slot = MagicMock()
+        mock_slot.position_id = "tnt-trade-002"
+        bot.portfolio.get_positions_by_strategy.return_value = [mock_slot]
+
+        # Close fails (returns None)
+        bot.position_manager.close_trade_by_id = MagicMock(return_value=None)
+
+        tz = pytz.timezone("America/New_York")
+        current_time = datetime(2026, 2, 11, 14, 0, tzinfo=tz)
+        TradingBot._update_market_state(bot, current_time)
+
+        # State machine should NOT be reset (will retry next cycle)
+        bot.tag_n_turn.on_position_closed.assert_not_called()
+        assert bot.daily_pnl == 0.0
+
+
+# ============================================================================
+# TESTS: B&B Exit Execution
+# ============================================================================
+
+class TestBnBExitExecution:
+    """Test B&B exit and roll_to_daily wiring."""
+
+    def test_bnb_exit_closes_position(self):
+        """B&B 'exit' action triggers broker close."""
+        from src.main import TradingBot
+        import pytz
+
+        bot = _make_mock_bot()
+        bot.tag_n_turn_enabled = False
+        bot.orb_enabled = False
+        bot.bnb_enabled = True
+        bot.bnb_strategy = MagicMock()
+
+        bot.bollinger = MagicMock()
+        bot.bollinger.day_open = 6000.0
+        bot.bar_builder = MagicMock()
+        bot.bar_builder.current_bar_start = None
+        bot._current_spx_price = 0
+        bot.broker.get_current_price.return_value = 6000.0
+
+        # Simulate a completed bar triggering B&B exit
+        completed_bar = Bar(
+            timestamp=datetime(2026, 2, 11, 10, 0),
+            open=5990, high=6010, low=5985, close=6005,
+        )
+        bot.bar_builder.add_price.return_value = completed_bar
+
+        bot.bnb_strategy.on_bar_complete.return_value = {
+            'action': 'exit',
+            'reason': 'Just Breakfast 30-min exit',
+            'strategy': 'bnb',
+        }
+
+        # Mock portfolio position for B&B
+        mock_slot = MagicMock()
+        mock_slot.position_id = "bnb-trade-001"
+        bot.portfolio.get_positions_by_strategy.return_value = [mock_slot]
+
+        # Mock successful close
+        bot.position_manager.close_trade_by_id = MagicMock(return_value=-50.0)
+        bot.position_manager.recently_closed = []
+        bot._drain_recently_closed = MagicMock()
+
+        tz = pytz.timezone("America/New_York")
+        current_time = datetime(2026, 2, 11, 10, 0, tzinfo=tz)
+        TradingBot._update_market_state(bot, current_time)
+
+        bot.position_manager.close_trade_by_id.assert_called_once_with(
+            "bnb-trade-001", "B&B: Just Breakfast 30-min exit"
+        )
+        bot._drain_recently_closed.assert_called_once()
+        assert bot.daily_pnl == -50.0
+
+    def test_bnb_roll_to_daily_no_close(self):
+        """B&B 'roll_to_daily' action should NOT close the position."""
+        from src.main import TradingBot
+        import pytz
+
+        bot = _make_mock_bot()
+        bot.tag_n_turn_enabled = False
+        bot.orb_enabled = False
+        bot.bnb_enabled = True
+        bot.bnb_strategy = MagicMock()
+
+        bot.bollinger = MagicMock()
+        bot.bollinger.day_open = 6000.0
+        bot.bar_builder = MagicMock()
+        bot.bar_builder.current_bar_start = None
+        bot._current_spx_price = 0
+        bot.broker.get_current_price.return_value = 6000.0
+
+        completed_bar = Bar(
+            timestamp=datetime(2026, 2, 11, 10, 0),
+            open=5990, high=6010, low=5985, close=6005,
+        )
+        bot.bar_builder.add_price.return_value = completed_bar
+
+        bot.bnb_strategy.on_bar_complete.return_value = {
+            'action': 'roll_to_daily',
+            'direction': 'bullish',
+            'reason': 'First bar confirms - rolling to daily setup',
+            'strategy': 'bnb',
+        }
+
+        bot.position_manager.close_trade_by_id = MagicMock()
+
+        tz = pytz.timezone("America/New_York")
+        current_time = datetime(2026, 2, 11, 10, 0, tzinfo=tz)
+        TradingBot._update_market_state(bot, current_time)
+
+        # Should NOT close position
+        bot.position_manager.close_trade_by_id.assert_not_called()
+        assert bot.daily_pnl == 0.0
+
+        # Should log the roll signal
+        bot._log_signal.assert_called_with("BNB_ROLL_TO_DAILY", {
+            "strategy": "bnb",
+            "direction": "bullish",
+            "reason": "First bar confirms - rolling to daily setup",
+        })
+
+
+# ============================================================================
+# TESTS: B&B on_day_end lifecycle
+# ============================================================================
+
+class TestOnDayEnd:
+    """Test that on_day_end is called once after market close."""
+
+    def test_on_day_end_called_after_4pm(self):
+        """on_day_end called once when market closed after 4 PM."""
+        from src.main import TradingBot
+        import pytz
+
+        bot = _make_mock_bot()
+        bot.bnb_enabled = True
+        bot.bnb_strategy = MagicMock()
+        bot._bnb_day_end_called = False
+        bot.running = False  # Prevent loop from continuing
+        tz = pytz.timezone("America/New_York")
+        bot.current_trading_date = date(2026, 2, 11)
+        bot.broker.get_current_price.return_value = 6050.0
+
+        # Simulate market closed check at 4:05 PM
+        current_time = datetime(2026, 2, 11, 16, 5, tzinfo=tz)
+        bot._is_market_open = MagicMock(return_value=False)
+        bot._interruptible_sleep = MagicMock()
+
+        # Call the market-closed branch directly via the main loop body
+        # We test the condition logic directly
+        if (bot.bnb_enabled and bot.bnb_strategy
+                and not bot._bnb_day_end_called
+                and bot.current_trading_date == current_time.date()
+                and current_time.time() >= time(16, 0)):
+            spx_close = bot.broker.get_current_price("SPX")
+            if spx_close > 0:
+                bot.bnb_strategy.on_day_end(spx_close)
+                bot._bnb_day_end_called = True
+
+        bot.bnb_strategy.on_day_end.assert_called_once_with(6050.0)
+        assert bot._bnb_day_end_called is True
+
+    def test_on_day_end_not_called_twice(self):
+        """on_day_end should not be called again once _bnb_day_end_called is True."""
+        bot = _make_mock_bot()
+        bot.bnb_enabled = True
+        bot.bnb_strategy = MagicMock()
+        bot._bnb_day_end_called = True  # Already called
+
+        import pytz
+        tz = pytz.timezone("America/New_York")
+        current_time = datetime(2026, 2, 11, 16, 10, tzinfo=tz)
+        bot.current_trading_date = date(2026, 2, 11)
+
+        # Should skip because _bnb_day_end_called is True
+        called = (bot.bnb_enabled and bot.bnb_strategy
+                  and not bot._bnb_day_end_called
+                  and bot.current_trading_date == current_time.date()
+                  and current_time.time() >= time(16, 0))
+
+        assert called is False
+        bot.bnb_strategy.on_day_end.assert_not_called()

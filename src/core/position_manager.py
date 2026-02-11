@@ -435,7 +435,27 @@ class PositionManager:
     def get_open_trades(self) -> List[Trade]:
         """Get all open trades"""
         return self.open_trades.copy()
-    
+
+    def close_trade_by_id(self, trade_id: str, reason: str) -> Optional[float]:
+        """Close a specific trade by ID. Used by parallel strategies for custom exits.
+
+        Returns realized P&L if closed, None if not found or close failed.
+        """
+        trade = next(
+            (t for t in self.open_trades if t.id == trade_id and t.status == TradeStatus.ACTIVE),
+            None,
+        )
+        if not trade:
+            logger.warning(f"close_trade_by_id: Trade {trade_id} not found or not active")
+            return None
+
+        self._exit_trade(trade, reason)
+
+        # _exit_trade removes trade from open_trades on success; check status
+        if trade.status == TradeStatus.CLOSED:
+            return trade.pnl
+        return None
+
     def resolve_expired_trades(self):
         """Resolve trades still marked 'active' in the DB that have already expired.
 

@@ -134,6 +134,9 @@ class TradingBot:
         self._signal_log_path = BASE_DIR / 'logs' / 'signals.json'
         self._init_signal_log()
 
+        # B&B on_day_end lifecycle (called once per day at market close)
+        self._bnb_day_end_called = False
+
         # Pending setup state (pulse bar detected, waiting for breakout)
         self.pending_setup = None  # {direction, bar, trigger_price, timestamp}
 
@@ -475,6 +478,7 @@ class TradingBot:
                     self.position_manager._prev_close = None
 
                     # Reset parallel strategies for new day
+                    self._bnb_day_end_called = False
                     self.portfolio.reset_daily()
                     if self.orb_enabled and self.orb_strategy:
                         self.orb_strategy.reset_daily()
@@ -509,6 +513,20 @@ class TradingBot:
 
                 # Check if market is open
                 if not self._is_market_open(current_time):
+                    # B&B: Finalize overnight signal once at market close
+                    if (self.bnb_enabled and self.bnb_strategy
+                            and not self._bnb_day_end_called
+                            and self.current_trading_date == current_time.date()
+                            and current_time.time() >= time(16, 0)):
+                        try:
+                            spx_close = self.broker.get_current_price("SPX")
+                            if spx_close > 0:
+                                self.bnb_strategy.on_day_end(spx_close)
+                                self._bnb_day_end_called = True
+                                logger.info(f"B&B on_day_end: SPX close ${spx_close:,.2f}")
+                        except Exception as e:
+                            logger.warning(f"B&B on_day_end failed: {e}")
+
                     logger.info(f"Market closed ({current_time.strftime('%a %H:%M')} ET). Next check in 60s...")
                     self._interruptible_sleep(60)
                     consecutive_errors = 0  # Reset error counter
@@ -521,9 +539,7 @@ class TradingBot:
                     logger.info(f"Daily P&L updated: ${self.daily_pnl:.2f} (trade closed: ${closed_pnl:+.2f})")
 
                 # Update portfolio risk tracking for closed trades
-                for closed in self.position_manager.recently_closed:
-                    self.portfolio.close_position(closed['id'], closed['pnl'])
-                self.position_manager.recently_closed.clear()
+                self._drain_recently_closed()
 
                 # Update market state: build bars, feed parallel strategies
                 # (runs every cycle during market hours, NOT gated by setup window)
@@ -747,7 +763,13 @@ class TradingBot:
             logger.debug(f"TNT daily limit reached: {self.tnt_trades_today}/1")
             return False
         return True
-    
+
+    def _drain_recently_closed(self):
+        """Process recently_closed trades into portfolio manager."""
+        for closed in self.position_manager.recently_closed:
+            self.portfolio.close_position(closed['id'], closed['pnl'])
+        self.position_manager.recently_closed.clear()
+
     def _update_market_state(self, current_time):
         """Update market data, build bars, and run parallel strategy checks.
 
@@ -829,6 +851,51 @@ class TradingBot:
                         logger.info(f"B&B ACTION: {bnb_action}")
                         self.db.log_event("bnb_action", "B&B strategy action", bnb_action)
 
+                        if bnb_action['action'] == 'exit':
+                            # Just Breakfast 30-minute exit
+                            bnb_positions = self.portfolio.get_positions_by_strategy(
+                                StrategyType.BNB
+                            )
+                            if bnb_positions:
+                                trade_id = bnb_positions[0].position_id
+                                realized = self.position_manager.close_trade_by_id(
+                                    trade_id, f"B&B: {bnb_action['reason']}"
+                                )
+                                if realized is not None:
+                                    self._drain_recently_closed()
+                                    self.daily_pnl += realized
+                                    logger.info(
+                                        f"B&B trade closed (Just Breakfast), "
+                                        f"P&L: ${realized:+.2f}"
+                                    )
+                                    self._log_signal("BNB_EXIT", {
+                                        "trade_id": trade_id,
+                                        "strategy": "bnb",
+                                        "reason": bnb_action['reason'],
+                                        "exit_price": current_price,
+                                        "pnl": realized,
+                                    })
+                                else:
+                                    logger.warning(
+                                        "B&B exit: close not filled, "
+                                        "generic rules will handle"
+                                    )
+                            else:
+                                logger.warning(
+                                    "B&B exit signal but no B&B position in portfolio"
+                                )
+
+                        elif bnb_action['action'] == 'roll_to_daily':
+                            # First bar confirms -- keep position open, DI generic rules manage it
+                            logger.info(
+                                "B&B rolled to daily: position stays open under DI exit rules"
+                            )
+                            self._log_signal("BNB_ROLL_TO_DAILY", {
+                                "strategy": "bnb",
+                                "direction": bnb_action['direction'],
+                                "reason": bnb_action['reason'],
+                            })
+
             # Check parallel strategy tick-level signals (run every cycle, own timing)
             # These execute BEFORE the Daily Income limit gate so they're never
             # blocked by DI's max_daily_trades=1.
@@ -878,12 +945,48 @@ class TradingBot:
                 tnt_exit = self.tag_n_turn.check_exit_conditions(current_price)
                 if tnt_exit:
                     logger.info(
-                        f"TAG 'N TURN EXIT: {tnt_exit['reason']} @ ${current_price:,.2f}"
+                        f"TAG 'N TURN EXIT SIGNAL: {tnt_exit['reason']} @ ${current_price:,.2f}"
                     )
                     self.db.log_event("tag_n_turn_exit", "Tag 'n Turn exit signal", {
                         "reason": tnt_exit['reason'],
                         "exit_price": current_price,
                     })
+
+                    # Execute the close
+                    tnt_positions = self.portfolio.get_positions_by_strategy(StrategyType.TAG_N_TURN)
+                    if tnt_positions:
+                        trade_id = tnt_positions[0].position_id
+                        realized = self.position_manager.close_trade_by_id(
+                            trade_id, f"TNT: {tnt_exit['reason']}"
+                        )
+                        if realized is not None:
+                            self._drain_recently_closed()
+                            self.daily_pnl += realized
+                            logger.info(
+                                f"TNT trade closed, P&L: ${realized:+.2f}, "
+                                f"daily: ${self.daily_pnl:.2f}"
+                            )
+                            self.tag_n_turn.on_position_closed({
+                                'reason': tnt_exit['reason'],
+                                'exit_price': current_price,
+                                'exit_time': datetime.now(self.tz).isoformat(),
+                                'pnl': realized,
+                            })
+                            self._log_signal("TNT_EXIT", {
+                                "trade_id": trade_id,
+                                "strategy": "tag_n_turn",
+                                "reason": tnt_exit['reason'],
+                                "exit_price": current_price,
+                                "pnl": realized,
+                            })
+                        else:
+                            logger.warning(
+                                "TNT exit: close order not filled, will retry next cycle"
+                            )
+                    else:
+                        logger.warning(
+                            "TNT exit signal but no TNT position found in portfolio"
+                        )
 
             if self.orb_enabled and self.orb_strategy:
                 orb_signal = self.orb_strategy.check_breakout(current_price)
