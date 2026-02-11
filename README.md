@@ -112,7 +112,7 @@ SQLite Database + Flask Dashboard
 
 ```bash
 # Clone and install
-git clone https://github.com/your-username/spx-income-trader.git
+git clone https://github.com/ccharafeddine/spx-income-trader.git
 cd spx-income-trader
 pip install -r requirements.txt
 
