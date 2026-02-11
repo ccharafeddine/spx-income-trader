@@ -88,8 +88,11 @@ HIDDEN_IMPORTS = [
     "keyring.backends",
     "keyring.backends.Windows",
     "keyring.backends.null",
-    # WebView
+    # WebView + pythonnet backend
     "webview",
+    "pythonnet",
+    "clr",
+    "clr_loader",
     # Third-party
     "platformdirs",
     "dotenv",
@@ -113,6 +116,8 @@ COLLECT_SUBMODULES = [
     "engineio",
     "keyring",
     "pystray",
+    "webview",
+    "clr_loader",
 ]
 
 # Packages to exclude (dev-only, not needed at runtime)
