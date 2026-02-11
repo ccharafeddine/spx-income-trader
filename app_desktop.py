@@ -21,34 +21,50 @@ Usage:
 
 import sys
 import os
-import signal
-import socket
-import threading
-import time
-import logging
-import argparse
-import urllib.request
-import urllib.error
-from pathlib import Path
-from datetime import datetime
+import traceback
 
-# Add project root to path
-PROJECT_ROOT = Path(__file__).parent
-sys.path.insert(0, str(PROJECT_ROOT))
+# PyInstaller windowed mode (runw.exe) sets sys.stdout/stderr to None.
+# Redirect to devnull before any library import that might write to them.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, 'w')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, 'w')
 
-# Default to dry-run mode to avoid E*TRADE credential validation on import
-os.environ.setdefault('TRADING_MODE', 'dry-run')
+_CRASH_LOG = os.path.join(os.path.expanduser('~'), 'spx_crash.log')
 
-from config.settings import (
-    BASE_DIR, DATABASE_PATH, LOG_FILE, LOG_LEVEL,
-    DASHBOARD_PORT, STRATEGY_PARAMS,
-)
-from src.utils.logging import setup_logging
-from src.utils.version import APP_VERSION, check_for_updates
+try:
+    import signal
+    import socket
+    import threading
+    import time
+    import logging
+    import argparse
+    import urllib.request
+    import urllib.error
+    from pathlib import Path
+    from datetime import datetime
 
-# Configure logging
-setup_logging(LOG_FILE, LOG_LEVEL)
-logger = logging.getLogger(__name__)
+    # Add project root to path
+    PROJECT_ROOT = Path(__file__).parent
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+    # Default to dry-run mode to avoid E*TRADE credential validation on import
+    os.environ.setdefault('TRADING_MODE', 'dry-run')
+
+    from config.settings import (
+        BASE_DIR, DATABASE_PATH, LOG_FILE, LOG_LEVEL,
+        DASHBOARD_PORT, STRATEGY_PARAMS,
+    )
+    from src.utils.logging import setup_logging
+    from src.utils.version import APP_VERSION, check_for_updates
+
+    # Configure logging
+    setup_logging(LOG_FILE, LOG_LEVEL)
+    logger = logging.getLogger(__name__)
+except Exception:
+    with open(_CRASH_LOG, 'w') as f:
+        f.write(traceback.format_exc())
+    raise
 
 
 # ----------------------------------------------------------------------
@@ -845,4 +861,10 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception:
+        with open(_CRASH_LOG, 'a') as f:
+            f.write('\n--- main() crash ---\n')
+            f.write(traceback.format_exc())
+        raise
