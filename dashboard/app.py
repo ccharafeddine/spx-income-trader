@@ -987,16 +987,21 @@ def api_status():
 
     # Strategy params summary
     strat = STRATEGY_PARAMS.get('strategy', {})
+    tnt_cfg = STRATEGY_PARAMS.get('tag_n_turn', {})
+    bnb_cfg = STRATEGY_PARAMS.get('bnb', {})
+    orb_cfg = STRATEGY_PARAMS.get('orb', {})
     params_summary = {
         'pulse_threshold': strat.get('pulse_threshold', 10),
         'spread_width': strat.get('spread_width', 5),
         'profit_target_pct': strat.get('profit_target_pct', 80),
         'max_daily_trades': strat.get('max_daily_trades', 1),
         'contracts': strat.get('contracts_per_trade', 5),
+        'tnt_max_daily': tnt_cfg.get('max_daily_trades', 0),
+        'bnb_max_daily': bnb_cfg.get('max_daily_trades', 0),
+        'orb_max_daily': orb_cfg.get('max_daily_trades', 1),
     }
 
     # Tag 'n Turn status (read from persistence file if enabled)
-    tnt_cfg = STRATEGY_PARAMS.get('tag_n_turn', {})
     tag_n_turn_status = {'enabled': tnt_cfg.get('enabled', False)}
     if tnt_cfg.get('enabled', False):
         try:
@@ -1019,7 +1024,6 @@ def api_status():
             pass
 
     # B&B status (read from persistence file if enabled)
-    bnb_cfg = STRATEGY_PARAMS.get('bnb', {})
     bnb_status = {'enabled': bnb_cfg.get('enabled', False)}
     if bnb_cfg.get('enabled', False):
         try:
@@ -1038,7 +1042,6 @@ def api_status():
             pass
 
     # ORB status (read from persistence file if enabled)
-    orb_cfg = STRATEGY_PARAMS.get('orb', {})
     orb_status = {'enabled': orb_cfg.get('enabled', False)}
     if orb_cfg.get('enabled', False):
         try:

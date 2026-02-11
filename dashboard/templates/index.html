@@ -1834,6 +1834,34 @@ header::after {
       </div>
     </div>
 
+    <!-- Daily Trade Limits -->
+    <div class="settings-section">
+      <div class="section-title">Daily Trade Limits</div>
+      <div class="setting-row">
+        <label>Daily Income</label>
+        <input type="number" id="set-di-max-daily" min="0" max="10" value="1"
+               onchange="updateSetting('strategy.max_daily_trades', parseInt(this.value))">
+      </div>
+      <div class="setting-row">
+        <label>Tag 'n Turn</label>
+        <input type="number" id="set-tnt-max-daily" min="0" max="10" value="0"
+               onchange="updateSetting('tag_n_turn.max_daily_trades', parseInt(this.value))">
+      </div>
+      <div class="setting-row">
+        <label>B&B</label>
+        <input type="number" id="set-bnb-max-daily" min="0" max="10" value="0"
+               onchange="updateSetting('bnb.max_daily_trades', parseInt(this.value))">
+      </div>
+      <div class="setting-row">
+        <label>ORB</label>
+        <input type="number" id="set-orb-max-daily" min="0" max="10" value="1"
+               onchange="updateSetting('orb.max_daily_trades', parseInt(this.value))">
+      </div>
+      <div class="setting-description">
+        0 = unlimited (portfolio-gated only)
+      </div>
+    </div>
+
     <!-- B&B Options -->
     <div class="settings-section">
       <div class="section-title">B&B Options</div>
@@ -2607,12 +2635,17 @@ async function updateStatus() {
   const pg = document.getElementById('params-grid');
   if (d.strategy) {
     const p = d.strategy;
+    const trades = d.portfolio?.trades_today || {};
+    const fmtLimit = (count, max) => count + '/' + (max === 0 ? '\u221E' : max);
     pg.innerHTML =
       '<span class="status-label">Pulse</span><span class="status-value">' + p.pulse_threshold + '%</span>' +
       '<span class="status-label">Width</span><span class="status-value">$' + p.spread_width + '</span>' +
       '<span class="status-label">Target</span><span class="status-value">' + p.profit_target_pct + '%</span>' +
-      '<span class="status-label">Max/Day</span><span class="status-value">' + p.max_daily_trades + '</span>' +
-      '<span class="status-label">Contracts</span><span class="status-value">' + p.contracts + '</span>';
+      '<span class="status-label">Contracts</span><span class="status-value">' + p.contracts + '</span>' +
+      '<span class="status-label">DI</span><span class="status-value">' + fmtLimit(trades.daily_income || 0, p.max_daily_trades) + '</span>' +
+      '<span class="status-label">TNT</span><span class="status-value">' + fmtLimit(trades.tag_n_turn || 0, p.tnt_max_daily) + '</span>' +
+      '<span class="status-label">B&B</span><span class="status-value">' + fmtLimit(trades.bnb || 0, p.bnb_max_daily) + '</span>' +
+      '<span class="status-label">ORB</span><span class="status-value">' + fmtLimit(trades.orb || 0, p.orb_max_daily) + '</span>';
   }
 
   // Strategy Statuses
@@ -4023,6 +4056,12 @@ async function loadCurrentSettings() {
   const profitTarget = data.strategy?.profit_target_pct ?? 80;
   document.getElementById('set-profit-target').value = profitTarget;
   document.getElementById('profit-target-val').textContent = profitTarget + '%';
+
+  // Daily trade limits
+  document.getElementById('set-di-max-daily').value = data.strategy?.max_daily_trades ?? 1;
+  document.getElementById('set-tnt-max-daily').value = data.tag_n_turn?.max_daily_trades ?? 0;
+  document.getElementById('set-bnb-max-daily').value = data.bnb?.max_daily_trades ?? 0;
+  document.getElementById('set-orb-max-daily').value = data.orb?.max_daily_trades ?? 1;
 
   // B&B options
   document.getElementById('set-bnb-roll').checked = data.bnb?.aggressive_roll ?? true;
