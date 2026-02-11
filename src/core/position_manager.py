@@ -98,7 +98,8 @@ class PositionManager:
         spread: CreditSpread,
         setup_bar: Bar,
         quantity: int,
-        breakout_time: Optional[datetime] = None
+        breakout_time: Optional[datetime] = None,
+        strategy_type: str = 'daily_income'
     ) -> Optional[Trade]:
         """
         Enter a new trade
@@ -108,6 +109,7 @@ class PositionManager:
             setup_bar: Bar that triggered the setup
             quantity: Number of contracts
             breakout_time: When the breakout was confirmed (None if legacy immediate entry)
+            strategy_type: Strategy identifier for DB tagging (default: 'daily_income')
 
         Returns:
             Trade object if successful, None otherwise
@@ -188,7 +190,7 @@ class PositionManager:
             self.open_trades.append(trade)
             
             # Build entry context for database analytics
-            entry_context = {}
+            entry_context = {'strategy_type': strategy_type}
             try:
                 spx_price = spread.underlying_price_at_entry
                 entry_context['spx_at_entry'] = round(spx_price, 2)

@@ -117,7 +117,7 @@ class TradingBot:
         self.running = False
         self._shutdown_called = False
         self.tz = pytz.timezone("America/New_York")
-        self.trades_today = 0
+        self.trades_today_by_strategy = {s.value: 0 for s in StrategyType}
         self.daily_pnl = 0.0
         self.current_trading_date = None
 
@@ -140,8 +140,13 @@ class TradingBot:
         self._current_spx_price = 0.0
         self._last_completed_bar = None
 
-        # Parameters
-        self.max_daily_trades = STRATEGY_PARAMS['strategy']['max_daily_trades']
+        # Per-strategy daily trade limits (0 = no limit, portfolio-gated only)
+        self.max_daily_trades_by_strategy = {
+            StrategyType.DAILY_INCOME.value: STRATEGY_PARAMS['strategy']['max_daily_trades'],
+            StrategyType.TAG_N_TURN.value: STRATEGY_PARAMS.get('tag_n_turn', {}).get('max_daily_trades', 0),
+            StrategyType.BNB.value: STRATEGY_PARAMS.get('bnb', {}).get('max_daily_trades', 0),
+            StrategyType.ORB.value: STRATEGY_PARAMS.get('orb', {}).get('max_daily_trades', 1),
+        }
         self.max_daily_loss = STRATEGY_PARAMS['risk']['max_daily_loss']
 
         # Afternoon window (Bed & Breakfast system, p.23-26)
@@ -367,7 +372,7 @@ class TradingBot:
             logger.info("*** DRY RUN MODE - NO ORDERS WILL BE PLACED ***")
             logger.info("Using real market data from Yahoo Finance")
         logger.info(f"Mode: {TRADING_MODE.upper()}")
-        logger.info(f"Max daily trades: {self.max_daily_trades}")
+        logger.info(f"Daily trade limits: {self.max_daily_trades_by_strategy} (0=unlimited)")
         logger.info(f"Max daily loss: ${self.max_daily_loss}")
         logger.info("=" * 60)
 
@@ -384,7 +389,7 @@ class TradingBot:
         # Log system event
         self.db.log_event("bot_started", "Trading bot started", {
             "mode": TRADING_MODE,
-            "max_daily_trades": self.max_daily_trades
+            "daily_limits": self.max_daily_trades_by_strategy
         })
         
         # Resolve any trades that expired while bot was offline
@@ -459,9 +464,10 @@ class TradingBot:
                 today = current_time.date()
                 if today != self.current_trading_date:
                     if self.current_trading_date is not None:
+                        total_prev = sum(self.trades_today_by_strategy.values())
                         logger.info(
                             f"New trading day: {today}. "
-                            f"Resetting counters (prev: {self.trades_today} trades, "
+                            f"Resetting counters (prev: {total_prev} trades, "
                             f"${self.daily_pnl:.2f} P&L)"
                         )
                     self.current_trading_date = today
@@ -528,19 +534,25 @@ class TradingBot:
                 # (runs every cycle during market hours, NOT gated by setup window)
                 self._update_market_state(current_time)
 
-                # Check daily limits (for new entries only - monitoring always runs above)
-                if not self._check_daily_limits():
+                # Global circuit breaker - blocks ALL strategies
+                if not self._check_daily_loss_circuit_breaker():
                     if self.pending_setup:
-                        logger.info("Daily limits reached, clearing pending setup")
+                        logger.info("Daily loss circuit breaker active, clearing pending setup")
                         self.pending_setup = None
                     else:
-                        logger.info("Daily limits reached, monitoring only")
+                        logger.info("Daily loss circuit breaker active, monitoring only")
                     self._interruptible_sleep(300)
                     consecutive_errors = 0
                     continue
 
-                # Check pending breakout triggers (after daily limits gate)
-                self._check_breakout_trigger(current_time)
+                # Daily Income per-strategy limit check (only gates DI setups)
+                if not self._check_daily_limits('daily_income'):
+                    if self.pending_setup:
+                        logger.info("Daily Income limit reached, clearing pending setup")
+                        self.pending_setup = None
+                else:
+                    # Check pending breakout triggers (only when DI can still trade)
+                    self._check_breakout_trigger(current_time)
 
                 # Evaluate completed bars for new pulse setups (bar must have started in a window)
                 if self._last_completed_bar and self._bar_in_setup_window(self._last_completed_bar.timestamp):
@@ -608,18 +620,27 @@ class TradingBot:
                 self._interruptible_sleep(sleep_time)
     
     def _restore_daily_counters(self, trade_date):
-        """Restore trades_today and daily_pnl from DB (survives mid-day restarts)."""
+        """Restore per-strategy trade counts and daily_pnl from DB (survives mid-day restarts)."""
         try:
+            # Restore per-strategy counts
+            counts = self.db.get_daily_counts_by_strategy(trade_date)
+            self.trades_today_by_strategy = {s.value: 0 for s in StrategyType}
+            for strategy_name, count in counts.items():
+                if strategy_name in self.trades_today_by_strategy:
+                    self.trades_today_by_strategy[strategy_name] = count
+
+            # Restore daily P&L from summary
             summary = self.db.get_daily_summary(trade_date)
-            self.trades_today = summary['trades_count']
             self.daily_pnl = summary['realized_pnl']
+
+            total = sum(self.trades_today_by_strategy.values())
             logger.info(
                 f"Restored daily counters from DB: "
-                f"{self.trades_today} trades, ${self.daily_pnl:.2f} P&L"
+                f"{total} trades {self.trades_today_by_strategy}, ${self.daily_pnl:.2f} P&L"
             )
         except Exception as e:
             logger.warning(f"Could not restore daily counters: {e}")
-            self.trades_today = 0
+            self.trades_today_by_strategy = {s.value: 0 for s in StrategyType}
             self.daily_pnl = 0.0
 
     def _reconcile_positions(self):
@@ -702,21 +723,34 @@ class TradingBot:
 
         return 'none'
     
-    def _check_daily_limits(self) -> bool:
-        """Check if daily trading limits have been reached"""
-        if self.trades_today >= self.max_daily_trades:
-            logger.warning(f"Max daily trades reached: {self.trades_today}/{self.max_daily_trades}")
-            return False
-        
+    def _check_daily_loss_circuit_breaker(self) -> bool:
+        """Check global daily loss circuit breaker. Blocks ALL strategies."""
         if self.daily_pnl <= -self.max_daily_loss:
             logger.warning(f"Max daily loss reached: ${self.daily_pnl:.2f}")
             if self.notifier:
                 self.notifier.send(
-                    "⚠️ Daily Loss Limit Reached",
+                    "Daily Loss Limit Reached",
                     f"Daily P&L: ${self.daily_pnl:.2f}\nStopping new trades."
                 )
             return False
-        
+        return True
+
+    def _check_daily_limits(self, strategy: str = 'daily_income') -> bool:
+        """Check if daily trading limits have been reached for a specific strategy.
+
+        Args:
+            strategy: Strategy name key (e.g. 'daily_income', 'orb').
+
+        Returns:
+            True if the strategy can still trade today.
+        """
+        max_trades = self.max_daily_trades_by_strategy.get(strategy, 0)
+        # 0 means unlimited (portfolio-gated only)
+        if max_trades > 0:
+            current = self.trades_today_by_strategy.get(strategy, 0)
+            if current >= max_trades:
+                logger.debug(f"Max daily trades reached for {strategy}: {current}/{max_trades}")
+                return False
         return True
     
     def _update_market_state(self, current_time):
@@ -801,6 +835,9 @@ class TradingBot:
                         self.db.log_event("bnb_action", "B&B strategy action", bnb_action)
 
             # Check parallel strategy tick-level signals (run every cycle, own timing)
+            # These execute BEFORE the Daily Income limit gate so they're never
+            # blocked by DI's max_daily_trades=1.
+
             if self.tag_n_turn_enabled and self.tag_n_turn:
                 tnt_signal = self.tag_n_turn.check_entry_signal(current_price)
                 if tnt_signal:
@@ -815,6 +852,33 @@ class TradingBot:
                         "target_price": tnt_signal['target_price'],
                         "stop_price": tnt_signal['stop_price'],
                     })
+                    # Execute if daily limit allows and circuit breaker not tripped
+                    if (self._check_daily_loss_circuit_breaker()
+                            and self._check_daily_limits(StrategyType.TAG_N_TURN.value)):
+                        tnt_cfg = STRATEGY_PARAMS.get('tag_n_turn', {})
+                        exp_str = self._find_dte_expiration(
+                            tnt_cfg.get('min_dte', 3), tnt_cfg.get('max_dte', 7)
+                        )
+                        success = self._execute_strategy_trade(
+                            strategy_type=StrategyType.TAG_N_TURN,
+                            direction=tnt_signal['direction'],
+                            current_price=current_price,
+                            is_0dte=False,
+                            spread_width=tnt_cfg.get('spread_width', 10.0),
+                            min_credit=tnt_cfg.get('min_credit', 2.00),
+                            expiration_str=exp_str,
+                        )
+                        if success:
+                            self.tag_n_turn.on_position_opened({
+                                'direction': tnt_signal['direction'].value,
+                                'entry_price': current_price,
+                                'target_price': tnt_signal['target_price'],
+                                'stop_price': tnt_signal['stop_price'],
+                                'entry_time': datetime.now(self.tz).isoformat(),
+                            })
+                        else:
+                            # Reset state machine so it can re-signal on next tick
+                            self.tag_n_turn._reset_to_idle("Trade execution failed")
 
                 tnt_exit = self.tag_n_turn.check_exit_conditions(current_price)
                 if tnt_exit:
@@ -834,6 +898,21 @@ class TradingBot:
                         f"entry @ ${current_price:,.2f} ({orb_signal['trigger']})"
                     )
                     self.db.log_event("orb_signal", "ORB breakout signal", orb_signal)
+                    # Execute if daily limit allows and circuit breaker not tripped
+                    if (self._check_daily_loss_circuit_breaker()
+                            and self._check_daily_limits(StrategyType.ORB.value)):
+                        from src.models.spread import TradeDirection as TD
+                        orb_dir = TD.BULLISH if orb_signal['direction'] == 'bullish' else TD.BEARISH
+                        orb_ok = self._execute_strategy_trade(
+                            strategy_type=StrategyType.ORB,
+                            direction=orb_dir,
+                            current_price=current_price,
+                            is_0dte=True,
+                            spread_width=5.0,
+                        )
+                        if not orb_ok:
+                            # Rollback premature state set by check_breakout()
+                            self.orb_strategy.rollback_entry()
 
             if self.bnb_enabled and self.bnb_strategy:
                 bnb_signal = self.bnb_strategy.check_entry_signal(current_price, current_time)
@@ -843,9 +922,264 @@ class TradingBot:
                         f"@ ${current_price:,.2f} (from {bnb_signal['signal_date']})"
                     )
                     self.db.log_event("bnb_signal", "B&B entry signal", bnb_signal)
+                    # Execute if daily limit allows and circuit breaker not tripped
+                    if (self._check_daily_loss_circuit_breaker()
+                            and self._check_daily_limits(StrategyType.BNB.value)):
+                        from src.models.spread import TradeDirection as TD
+                        bnb_dir = TD.BULLISH if bnb_signal['direction'] == 'bullish' else TD.BEARISH
+                        bnb_ok = self._execute_strategy_trade(
+                            strategy_type=StrategyType.BNB,
+                            direction=bnb_dir,
+                            current_price=current_price,
+                            is_0dte=True,
+                            spread_width=5.0,
+                        )
+                        if not bnb_ok:
+                            # Rollback premature state set by check_entry_signal()
+                            self.bnb_strategy.rollback_entry()
 
         except Exception as e:
             logger.error(f"Error updating market state: {e}", exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Parallel strategy execution helpers
+    # ------------------------------------------------------------------
+
+    def _find_dte_expiration(self, min_dte: int, max_dte: int) -> str:
+        """Find an expiration date in the given DTE range, skipping weekends.
+
+        Returns YYYY-MM-DD string for the midpoint DTE.
+        """
+        from datetime import timedelta
+        now = datetime.now(self.tz)
+        target_dte = (min_dte + max_dte) // 2
+        exp_date = now.date() + timedelta(days=target_dte)
+        # Skip weekends
+        while exp_date.weekday() >= 5:  # 5=Sat, 6=Sun
+            exp_date += timedelta(days=1)
+        return exp_date.strftime("%Y-%m-%d")
+
+    def _construct_strategy_spread(
+        self,
+        current_price: float,
+        direction,
+        options_chain,
+        spread_width: float = 5.0,
+        min_credit: float = 1.00,
+        expiration_str: str = None,
+    ):
+        """Construct a credit spread with configurable parameters.
+
+        Like SPXIncomeStrategy.construct_spread() but accepts variable
+        spread_width, min_credit, and expiration. Reuses ATM strike logic.
+
+        Returns:
+            CreditSpread or None
+        """
+        from src.models.spread import CreditSpread, OptionLeg, TradeDirection
+
+        try:
+            # Round to nearest $5 strike (same as strategy._select_strikes)
+            if current_price < 1000 or current_price > 20000:
+                logger.error(f"SPX price ${current_price:,.2f} outside range")
+                return None
+
+            atm_strike = round(current_price / 5) * 5
+
+            if direction == TradeDirection.BULLISH:
+                short_strike = atm_strike
+                long_strike = short_strike - spread_width
+                option_type = 'put'
+            else:
+                short_strike = atm_strike
+                long_strike = short_strike + spread_width
+                option_type = 'call'
+
+            if short_strike not in options_chain or long_strike not in options_chain:
+                logger.warning(f"Strikes ${short_strike}/${long_strike} not in chain")
+                return None
+
+            if direction == TradeDirection.BULLISH:
+                short_price = options_chain[short_strike]['put_bid']
+                long_price = options_chain[long_strike]['put_ask']
+            else:
+                short_price = options_chain[short_strike]['call_bid']
+                long_price = options_chain[long_strike]['call_ask']
+
+            credit = short_price - long_price
+            if credit <= 0:
+                logger.warning(f"Non-positive credit ${credit:.2f}, rejecting")
+                return None
+            if credit < min_credit:
+                logger.warning(f"Credit ${credit:.2f} below min ${min_credit:.2f}")
+                return None
+
+            short_leg = OptionLeg(
+                strike=short_strike, option_type=option_type,
+                action='sell', price=short_price,
+            )
+            long_leg = OptionLeg(
+                strike=long_strike, option_type=option_type,
+                action='buy', price=long_price,
+            )
+
+            now = datetime.now(self.tz)
+            if expiration_str:
+                exp_date = datetime.strptime(expiration_str, "%Y-%m-%d")
+                expiration = self.tz.localize(
+                    exp_date.replace(hour=16, minute=0, second=0, microsecond=0)
+                )
+            else:
+                expiration = now.replace(hour=16, minute=0, second=0, microsecond=0)
+
+            spread = CreditSpread(
+                direction=direction,
+                short_leg=short_leg,
+                long_leg=long_leg,
+                credit_received=credit,
+                entry_time=now,
+                expiration=expiration,
+                underlying_price_at_entry=current_price,
+            )
+
+            logger.info(
+                f"Spread constructed: {spread.direction.value.upper()} "
+                f"${short_strike}/{long_strike}, credit=${credit:.2f}, "
+                f"width=${spread_width}"
+            )
+            return spread
+
+        except Exception as e:
+            logger.error(f"Failed to construct strategy spread: {e}", exc_info=True)
+            return None
+
+    def _execute_strategy_trade(
+        self,
+        strategy_type: StrategyType,
+        direction,
+        current_price: float,
+        is_0dte: bool = True,
+        spread_width: float = 5.0,
+        min_credit: float = 1.00,
+        expiration_str: str = None,
+    ) -> bool:
+        """Generic execution for any parallel strategy trade.
+
+        Steps: get chain -> construct spread -> size position -> risk gate ->
+        enter trade -> register -> log.
+
+        Returns True if trade executed successfully.
+        """
+        from src.models.spread import TradeDirection
+
+        strategy_name = strategy_type.value
+        logger.info(f"Executing {strategy_name.upper()} trade: {direction.value.upper()} @ ${current_price:,.2f}")
+
+        try:
+            # 1. Get options chain
+            if expiration_str:
+                chain_exp = expiration_str
+            else:
+                chain_exp = datetime.now(self.tz).strftime("%Y-%m-%d")
+            options_chain = self.broker.get_options_chain("SPX", chain_exp)
+            if not options_chain:
+                logger.warning(f"{strategy_name}: No options chain for {chain_exp}")
+                return False
+
+            # 2. Construct spread
+            spread = self._construct_strategy_spread(
+                current_price, direction, options_chain,
+                spread_width=spread_width,
+                min_credit=min_credit,
+                expiration_str=expiration_str,
+            )
+            if not spread:
+                logger.warning(f"{strategy_name}: Failed to construct spread")
+                return False
+
+            # 3. Position sizing
+            strategy_cfg = STRATEGY_PARAMS.get(strategy_name, {})
+            fixed_fallback = strategy_cfg.get('contracts_per_trade', 3)
+            max_risk_per_contract = spread.max_risk
+            quantity = self.portfolio.calculate_position_size(
+                strategy=strategy_type,
+                max_risk_per_contract=max_risk_per_contract,
+                fixed_contracts=fixed_fallback,
+            )
+
+            # 4. Portfolio risk gate
+            allowed, deny_reason = self.portfolio.can_enter_position(
+                strategy=strategy_type,
+                contracts=quantity,
+                max_risk_per_contract=max_risk_per_contract,
+                is_0dte=is_0dte,
+            )
+            if not allowed:
+                logger.warning(f"{strategy_name}: Portfolio risk blocked: {deny_reason}")
+                return False
+
+            # 5. Enter trade (auto-confirm for parallel strategies)
+            # Use a dummy bar since parallel strategies don't use pulse bar setup
+            from src.models.bar import Bar
+            dummy_bar = Bar(
+                timestamp=datetime.now(self.tz),
+                open=current_price, high=current_price,
+                low=current_price, close=current_price,
+            )
+
+            trade = self.position_manager.enter_trade(
+                spread, dummy_bar, quantity,
+                strategy_type=strategy_name,
+            )
+            if not trade:
+                logger.error(f"{strategy_name}: Trade execution failed")
+                return False
+
+            # 6. Update counters
+            self.trades_today_by_strategy[strategy_name] = (
+                self.trades_today_by_strategy.get(strategy_name, 0) + 1
+            )
+
+            # 7. Register with portfolio
+            self.portfolio.register_position(
+                position_id=trade.id,
+                strategy=strategy_type,
+                direction=spread.direction.value,
+                contracts=quantity,
+                max_risk=max_risk_per_contract * quantity,
+                is_0dte=is_0dte,
+            )
+
+            # 8. Log signal
+            self._log_signal(f"{strategy_name.upper()}_ENTRY", {
+                "trade_id": trade.id,
+                "strategy": strategy_name,
+                "direction": spread.direction.value,
+                "short_strike": spread.short_leg.strike,
+                "long_strike": spread.long_leg.strike,
+                "quantity": quantity,
+                "credit_received": spread.credit_received,
+                "max_risk": spread.max_risk * quantity,
+                "underlying_price": current_price,
+                "expiration": spread.expiration.isoformat() if spread.expiration else None,
+                "is_0dte": is_0dte,
+            })
+
+            # 9. Notification
+            if self.notifier:
+                self.notifier.send(
+                    f"{strategy_name.upper()} Trade: {spread.direction.value.upper()}",
+                    f"Strikes: ${spread.short_leg.strike}/${spread.long_leg.strike}\n"
+                    f"Credit: ${spread.credit_received:.2f}\n"
+                    f"Contracts: {quantity}"
+                )
+
+            logger.info(f"{strategy_name}: Trade entered {trade.id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"{strategy_name}: Execution error: {e}", exc_info=True)
+            return False
 
     def _check_breakout_trigger(self, current_time):
         """Check if a pending setup's breakout level has been hit.
@@ -853,7 +1187,10 @@ class TradingBot:
         Called every cycle after daily limits check. Separated from
         _update_market_state so breakout entries respect daily limits.
         """
-        if not self.pending_setup or self.position_manager.has_open_position():
+        if not self.pending_setup:
+            return
+        # Only block on Daily Income's own positions (not ORB/TNT/B&B)
+        if self.portfolio.has_position_for_strategy(StrategyType.DAILY_INCOME):
             return
 
         current_price = self._current_spx_price
@@ -923,9 +1260,9 @@ class TradingBot:
             return
 
         try:
-            # Check if we already have an open position
-            if self.position_manager.has_open_position():
-                logger.debug("Already have open position, skipping setup check")
+            # Only block on Daily Income's own positions
+            if self.portfolio.has_position_for_strategy(StrategyType.DAILY_INCOME):
+                logger.debug("Daily Income already has open position, skipping setup check")
                 return
 
             current_time = datetime.now(self.tz)
@@ -1046,13 +1383,16 @@ class TradingBot:
                 spread,
                 setup_bar,
                 quantity,
-                breakout_time=breakout_time
+                breakout_time=breakout_time,
+                strategy_type='daily_income'
             )
 
             if trade:
                 logger.info(f"Trade executed: {trade.id}")
 
-                self.trades_today += 1
+                self.trades_today_by_strategy['daily_income'] = (
+                    self.trades_today_by_strategy.get('daily_income', 0) + 1
+                )
 
                 # Register with portfolio manager for risk tracking
                 self.portfolio.register_position(
@@ -1202,9 +1542,10 @@ class TradingBot:
         # Send notification
         if self.notifier:
             try:
+                total_trades = sum(self.trades_today_by_strategy.values())
                 self.notifier.send(
                     "Trading Bot Stopped",
-                    f"Trades today: {self.trades_today}\n"
+                    f"Trades today: {total_trades}\n"
                     f"Daily P&L: ${self.daily_pnl:.2f}"
                 )
             except Exception as e:

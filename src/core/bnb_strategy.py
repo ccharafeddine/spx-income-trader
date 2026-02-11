@@ -261,6 +261,18 @@ class BnBStrategy:
 
         return None
 
+    def rollback_entry(self):
+        """Rollback premature state changes when trade execution fails.
+
+        check_entry_signal() sets position_open=True BEFORE returning the
+        signal dict. If the caller's execution pipeline fails, call this to
+        restore the strategy so it can retry on the next tick.
+        """
+        self.position_open = False
+        self.entry_price = None
+        self._save_signals()
+        logger.info("B&B: Entry rolled back (execution failed), will retry on next tick")
+
     def on_day_end(self, spx_close: float):
         """Called at market close to finalize B&B signal"""
         if self.pending_signal:

@@ -240,6 +240,21 @@ class ORBStrategy:
 
         return None
 
+    def rollback_entry(self):
+        """Rollback premature state changes when trade execution fails.
+
+        check_breakout() sets triggered_today/position_open BEFORE returning
+        the signal dict. If the caller's execution pipeline fails (bad spread,
+        portfolio block, broker reject), call this to restore the strategy to
+        a retryable state.
+        """
+        self.triggered_today = False
+        self.position_open = False
+        self.entry_price = None
+        self.entry_direction = None
+        self._save_state()
+        logger.info("ORB: Entry rolled back (execution failed), will retry on next tick")
+
     def on_position_closed(self, exit_price: float, reason: str):
         """Called when ORB position is closed"""
         if self.position_open:

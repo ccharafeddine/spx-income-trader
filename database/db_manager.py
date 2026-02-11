@@ -216,6 +216,23 @@ class DatabaseManager:
             columns = [desc[0] for desc in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
     
+    def get_daily_counts_by_strategy(self, trade_date: date) -> Dict[str, int]:
+        """Get trade counts grouped by strategy_type for a given date.
+
+        Returns:
+            Dict mapping strategy name to trade count, e.g.
+            {'daily_income': 1, 'orb': 0, 'tag_n_turn': 0, 'bnb': 0}
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT strategy_type, COUNT(*) as cnt
+                FROM trades
+                WHERE DATE(entry_time) = ?
+                GROUP BY strategy_type
+            """, (trade_date,))
+            return {row[0]: row[1] for row in cursor.fetchall()}
+
     def get_daily_summary(self, trade_date: date) -> Dict:
         """Get trade count and realized P&L for a given date.
 

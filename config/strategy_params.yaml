@@ -124,6 +124,7 @@ filters:
 # Separate from daily income strategy - can run in parallel
 tag_n_turn:
   enabled: true  # Start disabled, enable when ready to test
+  max_daily_trades: 0  # 0 = no limit, gated by portfolio position limits only
 
   # Bollinger Band parameters (50-period, 2 std on 30-min bars)
   bb_period: 50
@@ -157,6 +158,7 @@ tag_n_turn:
 # Detects end-of-day pulse setups for next-day morning entry
 bnb:
   enabled: true  # Enable when ready to test
+  max_daily_trades: 0  # 0 = no limit, gated by portfolio position limits only
 
   # Pulse bar detection threshold
   pulse_threshold: 10.0
@@ -181,8 +183,7 @@ orb:
   # Position sizing
   contracts_per_trade: 3
 
-  # ORB trades don't count against daily income limit
-  separate_daily_limit: true
+  max_daily_trades: 1  # 1 ORB trade per day
 
 # ============================================
 # PDT (Pattern Day Trader) RULE PROTECTION
