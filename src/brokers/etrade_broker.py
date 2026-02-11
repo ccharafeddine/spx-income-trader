@@ -140,6 +140,18 @@ class ETradeBroker(BrokerInterface):
         if not self.auth.is_authenticated():
             raise ETradeAPIError("Not authenticated")
 
+        # Proactive token renewal if approaching expiry (2-hour limit).
+        # 110 minutes gives a 10-minute buffer before the hard 120-minute
+        # timeout, reducing reliance on reactive 401 recovery.
+        if retry_count == 0 and getattr(self.auth, 'token_timestamp', None):
+            token_age = time.time() - self.auth.token_timestamp
+            if token_age > 110 * 60:
+                logger.info(f"Token age {token_age / 60:.0f}min, proactively renewing")
+                try:
+                    self.auth._renew_token()
+                except Exception as e:
+                    logger.warning(f"Proactive token renewal failed: {e}")
+
         url = f"{self.base_url}{endpoint}"
 
         default_headers = {

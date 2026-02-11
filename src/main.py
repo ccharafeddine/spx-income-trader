@@ -129,6 +129,10 @@ class TradingBot:
         self._lock_fd = None
         self._lockfile_path = BASE_DIR / 'bot.lock'
 
+        # Signal log (shared by both dry-run and live modes for dashboard)
+        self._signal_log_path = BASE_DIR / 'logs' / 'signals.json'
+        self._init_signal_log()
+
         # Pending setup state (pulse bar detected, waiting for breakout)
         self.pending_setup = None  # {direction, bar, trigger_price, timestamp}
 
@@ -1060,6 +1064,20 @@ class TradingBot:
                     is_0dte=True,
                 )
 
+                # Log signal for dashboard (works in both dry-run and live)
+                self._log_signal("TRADE_ENTRY", {
+                    "trade_id": trade.id,
+                    "direction": spread.direction.value,
+                    "short_strike": spread.short_leg.strike,
+                    "long_strike": spread.long_leg.strike,
+                    "quantity": quantity,
+                    "credit_received": spread.credit_received,
+                    "max_risk": spread.max_risk * quantity,
+                    "underlying_price": current_price,
+                    "expiration": spread.expiration.isoformat() if spread.expiration else None,
+                    "sizing_method": sizing_method,
+                })
+
                 # Clear pending setup now that we've entered
                 self.pending_setup = None
 
@@ -1110,6 +1128,51 @@ class TradingBot:
             response = input("Execute this trade? (yes/no): ").strip().lower()
         return response in ['yes', 'y']
     
+    # ------------------------------------------------------------------
+    # Signal logging (unified for dry-run and live modes)
+    # ------------------------------------------------------------------
+
+    MAX_SIGNALS = 5000
+
+    def _init_signal_log(self):
+        """Ensure the signal log file exists."""
+        self._signal_log_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self._signal_log_path.exists():
+            with open(self._signal_log_path, 'w') as f:
+                json.dump({"signals": [], "created": datetime.now(self.tz).isoformat()}, f)
+
+    def _log_signal(self, signal_type: str, data: dict):
+        """Log a trading signal to the unified signals.json file.
+
+        Called from _execute_setup() on both entry and exit so the
+        dashboard /api/signals endpoint works in all modes.
+        """
+        try:
+            with open(self._signal_log_path, 'r') as f:
+                log_data = json.load(f)
+
+            signal = {
+                "timestamp": datetime.now(self.tz).isoformat(),
+                "type": signal_type,
+                "mode": "dry-run" if self.dry_run else "live",
+                **data,
+            }
+            log_data["signals"].append(signal)
+
+            # Rotate when log gets too large
+            if len(log_data["signals"]) > self.MAX_SIGNALS:
+                archive = self._signal_log_path.with_suffix('.old.json')
+                with open(archive, 'w') as f:
+                    json.dump(log_data, f, indent=2, default=str)
+                log_data["signals"] = log_data["signals"][-1000:]
+                logger.info(f"Signal log rotated, archived to {archive}")
+
+            with open(self._signal_log_path, 'w') as f:
+                json.dump(log_data, f, indent=2, default=str)
+
+        except Exception as e:
+            logger.error(f"Failed to log signal: {e}")
+
     def shutdown(self, error: bool = False):
         """Shutdown the trading bot. Safe to call multiple times."""
         if self._shutdown_called:

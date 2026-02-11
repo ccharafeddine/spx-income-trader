@@ -65,7 +65,9 @@ def check_setup_required():
 yahoo = YahooFinanceProvider()
 
 LOCKFILE = BASE_DIR / 'bot.lock'
-SIGNAL_LOG = BASE_DIR / 'logs' / 'dry_run_signals.json'
+SIGNAL_LOG = BASE_DIR / 'logs' / 'signals.json'
+# Legacy path for backward compatibility with older dry-run logs
+_LEGACY_SIGNAL_LOG = BASE_DIR / 'logs' / 'dry_run_signals.json'
 STARTING_CAPITAL = 50000.00
 MIN_CREDIT_THRESHOLD = 1.00  # Signals below this were before safeguards
 
@@ -324,17 +326,12 @@ def parse_todays_log():
 
 
 def detect_trading_mode():
-    """Detect if the bot is running in dry-run mode from recent log lines."""
-    try:
-        with open(LOG_FILE, 'r', encoding='utf-8', errors='replace') as f:
-            lines = f.readlines()[-200:]
-        for line in reversed(lines):
-            if 'DRY RUN MODE' in line:
-                return 'DRY RUN'
-            if 'LIVE MODE' in line:
-                return 'LIVE'
-    except FileNotFoundError:
-        pass
+    """Return the configured trading mode from keyring / env."""
+    mode = get_trading_mode()  # from config.settings (keyring -> env -> 'dry-run')
+    if mode == 'live':
+        return 'LIVE'
+    if mode == 'dry-run':
+        return 'DRY RUN'
     return 'UNKNOWN'
 
 
@@ -363,13 +360,16 @@ def _ensure_journal_notes_table(conn):
 
 
 def load_signals():
-    """Load all signals from the dry-run signals JSON file."""
-    try:
-        with open(SIGNAL_LOG, 'r') as f:
-            data = json.load(f)
-        return data.get('signals', [])
-    except (FileNotFoundError, json.JSONDecodeError):
-        return []
+    """Load signals from both the unified log and the legacy dry-run log."""
+    signals = []
+    for path in (SIGNAL_LOG, _LEGACY_SIGNAL_LOG):
+        try:
+            with open(path, 'r') as f:
+                data = json.load(f)
+            signals.extend(data.get('signals', []))
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+    return signals
 
 
 def get_all_trades(conn):
