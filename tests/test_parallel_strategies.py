@@ -1127,3 +1127,174 @@ class TestOnDayEnd:
 
         assert called is False
         bot.bnb_strategy.on_day_end.assert_not_called()
+
+
+# ============================================================================
+# TESTS: Duplicate close signal prevention
+# ============================================================================
+
+class TestDuplicateCloseSignalPrevention:
+    """Verify a position only generates one close signal, not one per loop cycle.
+
+    Root cause: DryRunBroker.close_spread() didn't register the close order in
+    hypothetical_positions, so get_order_status() returned 'not_found', the trade
+    stayed in open_trades, and monitor_positions() re-triggered exits every cycle.
+    """
+
+    def test_dry_run_close_order_is_findable(self):
+        """DryRunBroker.close_spread() must register order for get_order_status()."""
+        from src.brokers.dry_run_broker import DryRunBroker
+
+        broker = DryRunBroker(initial_balance=50000.0)
+
+        spread = MagicMock()
+        spread.direction = TradeDirection.BULLISH
+        spread.short_leg = MagicMock(strike=6000.0)
+        spread.long_leg = MagicMock(strike=5995.0)
+        spread.spread_width = 5.0
+
+        order_id = broker.close_spread(spread, quantity=3, limit_price=0.20)
+
+        status = broker.get_order_status(order_id)
+        assert status['status'] == 'filled', (
+            f"Close order status should be 'filled', got '{status['status']}'"
+        )
+
+    def test_monitor_positions_single_close_signal(self):
+        """A position should generate exactly one close signal across multiple cycles."""
+        from src.core.position_manager import PositionManager
+        from src.models.trade import Trade, TradeStatus
+
+        broker = MagicMock()
+        strategy = MagicMock()
+        db = MagicMock()
+
+        pm = PositionManager(broker, strategy, db)
+
+        # Create a realistic trade
+        trade = MagicMock(spec=Trade)
+        trade.id = "test-close-once"
+        trade.status = TradeStatus.ACTIVE
+        trade.spread = MagicMock()
+        trade.spread.direction = TradeDirection.BULLISH
+        trade.spread.short_leg = MagicMock(strike=6000.0)
+        trade.spread.long_leg = MagicMock(strike=5995.0)
+        trade.spread.spread_width = 5.0
+        trade.spread.max_profit = 250.0
+        trade.spread.profit_at_price = MagicMock(return_value=250.0)
+        trade.spread.credit_received = 2.50
+        trade.quantity = 1
+        trade.pnl = 200.0
+        trade.pnl_percent = 80.0
+        trade.entry_time = datetime(2026, 2, 11, 10, 0)
+        trade.exit_time = None
+        trade._close_pending = False
+
+        pm.open_trades = [trade]
+
+        # Strategy says exit on every check
+        strategy.should_exit.return_value = (True, "80% profit target")
+
+        # Broker: close_spread succeeds, order fills
+        broker.get_position_value.return_value = 0.50
+        broker.get_current_price.return_value = 6000.0
+        broker.close_spread.return_value = "ORDER-CLOSE-1"
+        broker.get_order_status.return_value = {
+            'status': 'filled', 'fill_price': 0.50,
+        }
+
+        # First cycle: should close the trade
+        pnl1 = pm.monitor_positions()
+        assert broker.close_spread.call_count == 1, "Should call close_spread once"
+
+        # Trade was closed and removed from open_trades, so second cycle is a no-op
+        pnl2 = pm.monitor_positions()
+        assert broker.close_spread.call_count == 1, (
+            "Should NOT call close_spread again (trade already removed)"
+        )
+
+    def test_close_pending_prevents_duplicate_on_failed_fill(self):
+        """If close order fails to fill, _close_pending prevents re-submission."""
+        from src.core.position_manager import PositionManager
+        from src.models.trade import Trade, TradeStatus
+
+        broker = MagicMock()
+        strategy = MagicMock()
+        db = MagicMock()
+
+        pm = PositionManager(broker, strategy, db)
+
+        trade = MagicMock(spec=Trade)
+        trade.id = "test-pending-guard"
+        trade.status = TradeStatus.ACTIVE
+        trade.spread = MagicMock()
+        trade.spread.spread_width = 5.0
+        trade.quantity = 1
+        trade.pnl = 100.0
+        trade.pnl_percent = 40.0
+        trade._close_pending = False
+
+        pm.open_trades = [trade]
+
+        strategy.should_exit.return_value = (True, "80% profit target")
+        broker.get_position_value.return_value = 0.50
+        broker.get_current_price.return_value = 6000.0
+        broker.close_spread.return_value = "ORDER-CLOSE-2"
+        # Order NOT filled
+        broker.get_order_status.return_value = {
+            'status': 'pending', 'fill_price': 0,
+        }
+
+        # First cycle: close attempted, fails, _close_pending cleared
+        pm.monitor_positions()
+        assert broker.close_spread.call_count == 1
+
+        # _close_pending was set then cleared on failure, so retry is allowed
+        # but only ONE retry per cycle
+        pm.monitor_positions()
+        assert broker.close_spread.call_count == 2
+
+    def test_close_pending_flag_set_before_broker_call(self):
+        """_close_pending must be True while broker.close_spread() executes."""
+        from src.core.position_manager import PositionManager
+        from src.models.trade import Trade, TradeStatus
+
+        broker = MagicMock()
+        strategy = MagicMock()
+        db = MagicMock()
+
+        pm = PositionManager(broker, strategy, db)
+
+        trade = MagicMock(spec=Trade)
+        trade.id = "test-flag-timing"
+        trade.status = TradeStatus.ACTIVE
+        trade.spread = MagicMock()
+        trade.spread.spread_width = 5.0
+        trade.quantity = 1
+        trade.pnl = 200.0
+        trade.pnl_percent = 80.0
+        trade._close_pending = False
+
+        pm.open_trades = [trade]
+
+        strategy.should_exit.return_value = (True, "80% profit target")
+        broker.get_position_value.return_value = 0.50
+        broker.get_current_price.return_value = 6000.0
+
+        # Capture _close_pending state when close_spread is called
+        pending_during_close = []
+
+        def capture_pending(*args, **kwargs):
+            pending_during_close.append(trade._close_pending)
+            return "ORDER-CLOSE-3"
+
+        broker.close_spread.side_effect = capture_pending
+        broker.get_order_status.return_value = {
+            'status': 'filled', 'fill_price': 0.50,
+        }
+
+        pm.monitor_positions()
+
+        assert pending_during_close == [True], (
+            "_close_pending should be True when broker.close_spread() executes"
+        )

@@ -239,11 +239,16 @@ class PositionManager:
         for trade in self.open_trades.copy():
             if trade.status != TradeStatus.ACTIVE:
                 continue
-            
+
+            # Skip trades that already have a close order pending
+            if getattr(trade, '_close_pending', False):
+                logger.debug(f"Trade {trade.id[:8]}: close already pending, skipping")
+                continue
+
             try:
                 # Get current spread value
                 current_value = self.broker.get_position_value(trade.spread)
-                
+
                 # Update P&L
                 trade.update_pnl(current_value)
 
@@ -338,6 +343,9 @@ class PositionManager:
                 max_debit = trade.spread.spread_width
                 limit_price = min(current_value + 0.10, max_debit)
 
+                # Mark close pending so monitor_positions() won't re-trigger
+                trade._close_pending = True
+
                 order_id = self.broker.close_spread(
                     trade.spread,
                     trade.quantity,
@@ -346,6 +354,7 @@ class PositionManager:
 
                 if not order_id:
                     logger.error(f"Close order failed for trade {trade.id}, will retry next cycle")
+                    trade._close_pending = False
                     return
 
                 # Wait for fill
@@ -358,6 +367,7 @@ class PositionManager:
                         f"Close order {order_id} not filled (status: {order_status['status']}), "
                         f"will retry next cycle"
                     )
+                    trade._close_pending = False
                     return
 
                 exit_price = order_status['fill_price']

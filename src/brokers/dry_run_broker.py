@@ -474,6 +474,16 @@ class DryRunBroker(BrokerInterface):
 
         self._log_signal("WOULD_CLOSE_SPREAD", signal_data)
 
+        # Register so get_order_status() can look it up as "filled"
+        self.hypothetical_positions.append({
+            "order_id": order_id,
+            "spread": spread,
+            "quantity": quantity,
+            "entry_price": limit_price,
+            "entry_time": datetime.now(self.tz),
+            "status": "closed",
+        })
+
         # Update hypothetical balance
         debit = limit_price * quantity * 100
         self.balance -= debit
