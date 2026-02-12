@@ -94,6 +94,11 @@ def is_etrade_configured() -> bool:
     return bool(creds['consumer_key'] and creds['consumer_secret'])
 
 
+def get_etrade_credentials() -> dict:
+    """Public accessor for E*TRADE credential details."""
+    return _get_etrade_credentials()
+
+
 def save_etrade_credentials(
     consumer_key: str,
     consumer_secret: str,

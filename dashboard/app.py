@@ -31,7 +31,7 @@ from config.settings import (
     BASE_DIR, DATABASE_PATH, LOG_FILE,
     DASHBOARD_PORT, DASHBOARD_HOST, STRATEGY_PARAMS,
     ETRADE_CONFIG, is_etrade_configured, save_etrade_credentials, clear_etrade_credentials,
-    get_trading_mode, save_trading_mode
+    get_trading_mode, save_trading_mode, get_etrade_credentials
 )
 from src.data.yahoo_finance import YahooFinanceProvider
 from src.utils.version import APP_VERSION
@@ -2115,6 +2115,159 @@ def api_set_trading_mode():
         })
     else:
         return jsonify({'error': 'Failed to save trading mode'}), 500
+
+
+@app.route('/api/settings/validate-live', methods=['POST'])
+def api_validate_live():
+    """Run pre-live validation checks before switching to live trading."""
+    checks = []
+    settings = _load_settings()
+    portfolio_cfg = settings.get('portfolio', {})
+    sizing_cfg = portfolio_cfg.get('position_sizing', {})
+
+    # --- Check 1: Credentials ---
+    creds = get_etrade_credentials()
+    creds_ok = bool(
+        creds.get('consumer_key')
+        and creds.get('consumer_secret')
+        and creds.get('account_id')
+    )
+    checks.append({
+        'id': 'credentials',
+        'label': 'API Credentials Set',
+        'severity': 'critical',
+        'passed': creds_ok,
+        'detail': 'All credentials configured' if creds_ok
+                  else 'Missing consumer_key, consumer_secret, or account_id',
+    })
+
+    # --- Check 2: Environment is Production ---
+    sandbox = creds.get('sandbox', True)
+    env_ok = not sandbox
+    checks.append({
+        'id': 'environment',
+        'label': 'Environment is Production',
+        'severity': 'warning',
+        'passed': env_ok,
+        'detail': 'Production environment' if env_ok
+                  else 'Sandbox mode is enabled - live orders will hit the sandbox API',
+    })
+
+    # --- Checks 3-4 require credentials ---
+    broker = None
+    balance_data = None
+    if creds_ok:
+        try:
+            from src.brokers.etrade_broker import ETradeBroker
+            broker = ETradeBroker()
+            connected = broker.connect()
+        except Exception as e:
+            connected = False
+            logger.error(f"Validate-live broker connect failed: {e}")
+
+        # Check 3: Connection
+        if connected:
+            try:
+                balance_data = broker.get_account_balance()
+                conn_ok = True
+                conn_detail = f"Connected - account value ${balance_data.get('net_account_value', 0):,.2f}"
+            except Exception as e:
+                conn_ok = False
+                conn_detail = f'Balance fetch failed: {e}'
+        else:
+            conn_ok = False
+            conn_detail = 'Could not connect to E*TRADE API - check tokens'
+
+        checks.append({
+            'id': 'connection',
+            'label': 'E*TRADE API Connection',
+            'severity': 'critical',
+            'passed': conn_ok,
+            'detail': conn_detail,
+        })
+
+        # Check 4: SPX Options Permissions
+        if conn_ok:
+            try:
+                expirations = broker.get_option_expirations('SPX')
+                opts_ok = len(expirations) > 0
+                opts_detail = (f'{len(expirations)} expiration dates available'
+                               if opts_ok
+                               else 'No SPX option expirations returned - options may not be enabled')
+            except Exception as e:
+                opts_ok = False
+                opts_detail = f'Options query failed: {e}'
+        else:
+            opts_ok = False
+            opts_detail = 'Skipped - API connection failed'
+
+        checks.append({
+            'id': 'options',
+            'label': 'SPX Options Permissions',
+            'severity': 'critical',
+            'passed': opts_ok,
+            'detail': opts_detail,
+        })
+    else:
+        # Credentials missing - skip connection checks
+        checks.append({
+            'id': 'connection',
+            'label': 'E*TRADE API Connection',
+            'severity': 'critical',
+            'passed': False,
+            'detail': 'Skipped - credentials not configured',
+        })
+        checks.append({
+            'id': 'options',
+            'label': 'SPX Options Permissions',
+            'severity': 'critical',
+            'passed': False,
+            'detail': 'Skipped - credentials not configured',
+        })
+
+    # --- Check 5: Max Contracts ---
+    max_contracts = sizing_cfg.get('max_contracts', 20)
+    contracts_ok = max_contracts <= 2
+    checks.append({
+        'id': 'contracts',
+        'label': 'Max Contracts Setting',
+        'severity': 'warning',
+        'passed': contracts_ok,
+        'detail': f'max_contracts = {max_contracts}'
+                  + ('' if contracts_ok else ' (consider lowering for initial live trading)'),
+    })
+
+    # --- Check 6: Account Size ---
+    config_size = portfolio_cfg.get('account_size', 50000)
+    if balance_data and balance_data.get('net_account_value'):
+        actual_size = balance_data['net_account_value']
+        diff_pct = abs(config_size - actual_size) / max(actual_size, 1) * 100
+        size_ok = diff_pct <= 10
+        checks.append({
+            'id': 'account_size',
+            'label': 'Account Size Matches Actual',
+            'severity': 'warning',
+            'passed': size_ok,
+            'detail': f'Config ${config_size:,.0f} vs actual ${actual_size:,.2f} ({diff_pct:.1f}% diff)'
+                      + ('' if size_ok else ' - risk sizing may be inaccurate'),
+        })
+    else:
+        checks.append({
+            'id': 'account_size',
+            'label': 'Account Size Matches Actual',
+            'severity': 'warning',
+            'passed': False,
+            'detail': 'Skipped - could not fetch actual account value',
+        })
+
+    can_proceed = all(c['passed'] for c in checks if c['severity'] == 'critical')
+    all_passed = all(c['passed'] for c in checks)
+
+    return jsonify({
+        'checks': checks,
+        'can_proceed': can_proceed,
+        'all_passed': all_passed,
+    })
 
 
 # ---------------------------------------------------------------------------
