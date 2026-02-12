@@ -463,13 +463,14 @@ def compute_account(conn, spx_price):
     open_positions, closed_trades = classify_trades(conn, spx_price)
     now = datetime.now(ET)
 
-    # Realized P&L from all closed/expired trades
-    realized_pnl = sum(t.get('pnl') or 0 for t in closed_trades)
+    # Realized P&L from valid closed/expired trades (exclude flagged)
+    valid_closed = [t for t in closed_trades if not t.get('flag')]
+    realized_pnl = sum(t.get('pnl') or 0 for t in valid_closed)
 
-    # Today's realized P&L
+    # Today's realized P&L (also exclude flagged)
     today_str = datetime.now(ET).date().isoformat()
     daily_realized = 0.0
-    for t in closed_trades:
+    for t in valid_closed:
         exit_t = t.get('exit_time', '') or ''
         entry_t = t.get('entry_time', '') or ''
         if exit_t.startswith(today_str) or entry_t.startswith(today_str):
