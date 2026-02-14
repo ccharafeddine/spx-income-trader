@@ -1,4 +1,16 @@
 # ============================================
+# BROKER CONFIGURATION
+# ============================================
+broker:
+  active: "dry_run"          # Options: "dry_run", "etrade", "schwab"
+  schwab:
+    app_key: ""              # From developer.schwab.com - fill in after approval
+    app_secret: ""           # From developer.schwab.com - fill in after approval
+    callback_url: "https://127.0.0.1"
+    token_path: "database/schwab_token.json"
+    account_number: ""       # Your Schwab account number
+
+# ============================================
 # PORTFOLIO-WIDE SETTINGS
 # Coordinates all parallel strategies
 # ============================================

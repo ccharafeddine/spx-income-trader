@@ -32,6 +32,7 @@ from config.settings import (
 from src.brokers.dry_run_broker import DryRunBroker
 from src.brokers.etrade_broker import ETradeBroker
 from src.brokers.etrade_auth import ETradeAuth
+from src.brokers.broker_factory import get_broker
 from src.core.strategy import SPXIncomeStrategy
 from src.core.position_manager import PositionManager
 from src.core.bar_builder import BarBuilder
@@ -1717,7 +1718,7 @@ def main():
         # Initialize broker based on mode
         if args.dry_run or args.mode == 'dry-run':
             logger.info("*** DRY RUN MODE - Using real market data, no orders will be placed ***")
-            broker = DryRunBroker(initial_balance=50000.0)
+            broker = DryRunBroker(initial_balance=STRATEGY_PARAMS.get('portfolio', {}).get('account_size', 50000.0))
             skip_confirm = args.no_confirm
         else:
             # --- LIVE TRADING MODE ---
@@ -1731,17 +1732,34 @@ def main():
 
             logger.info("*** LIVE TRADING MODE - Real orders will be placed ***")
 
-            # Authenticate with E*TRADE
-            etrade_auth = ETradeAuth()
-            logger.info("Authenticating with E*TRADE...")
-            if not etrade_auth.authenticate():
-                logger.error("E*TRADE authentication failed. Cannot start live trading.")
-                print("ERROR: E*TRADE authentication failed. Check your credentials and try again.")
-                return 1
-            logger.info("E*TRADE authentication successful")
+            # Determine active broker from config (default to etrade for backward compat)
+            active_broker = STRATEGY_PARAMS.get('broker', {}).get('active', 'etrade')
 
-            # Create live broker
-            broker = ETradeBroker(auth=etrade_auth)
+            if active_broker == 'schwab':
+                # Schwab broker via factory
+                broker = get_broker(STRATEGY_PARAMS)
+                # Verify authentication
+                from src.brokers.schwab_auth import SchwabAuth
+                if not broker.auth.is_authenticated():
+                    logger.error("Schwab authentication failed. Run: python -m src.brokers.schwab_auth")
+                    print("ERROR: Schwab not authenticated. Run the auth script first.")
+                    return 1
+                # Check token expiry
+                token_status = broker.auth.get_token_status()
+                if token_status.get('expiring_soon'):
+                    hrs = token_status.get('hours_remaining', 0)
+                    logger.warning(f"Schwab token expiring in {hrs:.1f} hours - re-auth soon")
+                logger.info("Schwab authentication verified")
+            else:
+                # E*TRADE broker (original flow)
+                etrade_auth = ETradeAuth()
+                logger.info("Authenticating with E*TRADE...")
+                if not etrade_auth.authenticate():
+                    logger.error("E*TRADE authentication failed. Cannot start live trading.")
+                    print("ERROR: E*TRADE authentication failed. Check your credentials and try again.")
+                    return 1
+                logger.info("E*TRADE authentication successful")
+                broker = ETradeBroker(auth=etrade_auth)
 
             # Pre-flight checks: verify broker connectivity before starting the bot
             logger.info("Running pre-flight checks...")

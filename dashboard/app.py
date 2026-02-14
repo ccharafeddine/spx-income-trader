@@ -1103,10 +1103,14 @@ def api_status():
     except Exception:
         pass
 
+    # Active broker name for header badge
+    active_broker = STRATEGY_PARAMS.get('broker', {}).get('active', 'dry_run')
+
     return jsonify({
         'version': APP_VERSION,
         'bot': bot,
         'mode': mode,
+        'active_broker': active_broker,
         'market': market,
         'spx': {
             'price': spx_price,
@@ -1124,6 +1128,38 @@ def api_status():
         'portfolio': portfolio_status,
         'etrade_token': etrade_token,
     })
+
+
+@app.route('/api/schwab-auth-status')
+def api_schwab_auth_status():
+    """Schwab token/auth status for dashboard display."""
+    active = STRATEGY_PARAMS.get('broker', {}).get('active', 'dry_run')
+    if active != 'schwab':
+        return jsonify({'configured': False})
+
+    try:
+        from src.brokers.schwab_auth import SchwabAuth
+        schwab_cfg = STRATEGY_PARAMS.get('broker', {}).get('schwab', {})
+        auth = SchwabAuth(
+            app_key=schwab_cfg.get('app_key', ''),
+            app_secret=schwab_cfg.get('app_secret', ''),
+            callback_url=schwab_cfg.get('callback_url', 'https://127.0.0.1'),
+            token_path=schwab_cfg.get('token_path', 'database/schwab_token.json'),
+        )
+        authenticated = auth.is_authenticated()
+        token_status = auth.get_token_status()
+        return jsonify({
+            'configured': True,
+            'authenticated': authenticated,
+            'token_status': token_status,
+        })
+    except Exception as e:
+        logger.error(f"Schwab auth status check failed: {e}")
+        return jsonify({
+            'configured': True,
+            'authenticated': False,
+            'token_status': {'valid': False, 'hours_remaining': 0, 'expiring_soon': True},
+        })
 
 
 @app.route('/api/today')

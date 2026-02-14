@@ -105,6 +105,16 @@ header::after {
 }
 .mode-badge.dry { background: rgba(245,158,11,0.15); color: var(--amber); border: 1px solid var(--amber); }
 .mode-badge.live { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+.broker-badge {
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: bold;
+  font-family: var(--font-ui);
+  background: var(--border);
+}
+.broker-badge.etrade { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid #60a5fa; }
+.broker-badge.schwab { background: rgba(6,182,212,0.15); color: var(--cyan); border: 1px solid var(--cyan); }
 .pdt-badge {
   padding: 2px 8px;
   border-radius: 3px;
@@ -1833,6 +1843,7 @@ header::after {
       <span id="bot-status-text">--</span>
     </div>
     <span class="mode-badge" id="mode-badge">--</span>
+    <span class="broker-badge" id="broker-badge" style="display:none">--</span>
     <a href="/settings" class="pdt-badge" id="pdt-badge" title="PDT Rule Status - Click for settings">PDT: -/-</a>
     <div class="bot-controls" id="bot-controls" style="display:none">
       <select id="bot-mode-select" class="bot-mode-select">
@@ -1859,6 +1870,10 @@ header::after {
 
 <!-- E*TRADE token warning banner -->
 <div id="etrade-token-banner" style="display:none; padding:10px 24px; font-size:13px; text-align:center; cursor:pointer;"
+     onclick="window.location='/settings'"></div>
+
+<!-- Schwab token status banner -->
+<div id="schwab-token-banner" style="display:none; padding:10px 24px; font-size:13px; text-align:center; cursor:pointer;"
      onclick="window.location='/settings'"></div>
 
 <!-- Update available banner -->
@@ -2004,6 +2019,18 @@ header::after {
       </div>
       <div class="setting-description">
         If first bar confirms B&B direction, roll into daily income trade instead of exiting at 10:00
+      </div>
+    </div>
+
+    <!-- Schwab Re-Auth Section (hidden unless schwab is active broker) -->
+    <div class="settings-section" id="schwab-settings-section" style="display:none">
+      <div class="section-title">Schwab Authentication</div>
+      <div id="schwab-token-info" style="font-size:13px; color:var(--text-dim); line-height:1.6;">
+        Loading token status...
+      </div>
+      <div style="margin-top:8px; font-size:12px; color:var(--text-dim);">
+        To re-authenticate, run:<br>
+        <code style="color:var(--cyan); background:rgba(6,182,212,0.1); padding:2px 6px; border-radius:3px;">python -m src.brokers.schwab_auth</code>
       </div>
     </div>
 
@@ -2723,6 +2750,21 @@ async function updateStatus() {
   badge.textContent = d.mode || 'UNKNOWN';
   badge.className = 'mode-badge' + (d.mode === 'DRY RUN' ? ' dry' : d.mode === 'LIVE' ? ' live' : '');
 
+  // Broker badge
+  const brokerBadge = document.getElementById('broker-badge');
+  const ab = d.active_broker || 'dry_run';
+  if (ab === 'etrade') {
+    brokerBadge.textContent = 'E*TRADE';
+    brokerBadge.className = 'broker-badge etrade';
+    brokerBadge.style.display = '';
+  } else if (ab === 'schwab') {
+    brokerBadge.textContent = 'SCHWAB';
+    brokerBadge.className = 'broker-badge schwab';
+    brokerBadge.style.display = '';
+  } else {
+    brokerBadge.style.display = 'none';
+  }
+
   // PDT badge (async, don't block status update)
   updatePDTBadge();
 
@@ -2976,6 +3018,36 @@ async function updateStatus() {
     }
   } else {
     tokenBanner.style.display = 'none';
+  }
+
+  // Schwab token status banner (only when schwab is active)
+  const schwabBanner = document.getElementById('schwab-token-banner');
+  if (d.active_broker === 'schwab') {
+    fetchJSON('/api/schwab-auth-status').then(s => {
+      if (!s || !s.configured) { schwabBanner.style.display = 'none'; return; }
+      const ts = s.token_status || {};
+      if (!ts.valid) {
+        schwabBanner.style.display = 'block';
+        schwabBanner.style.background = 'rgba(239, 68, 68, 0.15)';
+        schwabBanner.style.borderBottom = '1px solid var(--red)';
+        schwabBanner.style.color = 'var(--red)';
+        schwabBanner.innerHTML = '\u25cf Token Expired - Re-auth Required. Run: <code>python -m src.brokers.schwab_auth</code>';
+      } else if (ts.expiring_soon) {
+        schwabBanner.style.display = 'block';
+        schwabBanner.style.background = 'rgba(245, 158, 11, 0.15)';
+        schwabBanner.style.borderBottom = '1px solid var(--amber)';
+        schwabBanner.style.color = 'var(--amber)';
+        schwabBanner.textContent = '\u25cf Schwab Token Expiring Soon (' + Math.round(ts.hours_remaining) + 'h remaining)';
+      } else {
+        schwabBanner.style.display = 'block';
+        schwabBanner.style.background = 'rgba(34, 197, 94, 0.08)';
+        schwabBanner.style.borderBottom = '1px solid var(--green)';
+        schwabBanner.style.color = 'var(--green)';
+        schwabBanner.textContent = '\u25cf Schwab Token Valid (' + Math.round(ts.hours_remaining / 24) + ' days remaining)';
+      }
+    });
+  } else {
+    schwabBanner.style.display = 'none';
   }
 }
 
@@ -4395,6 +4467,30 @@ async function loadCurrentSettings() {
 
   // B&B options
   document.getElementById('set-bnb-roll').checked = data.bnb?.aggressive_roll ?? true;
+
+  // Schwab section: show if schwab is active broker
+  const activeBroker = data.broker?.active || 'dry_run';
+  const schwabSection = document.getElementById('schwab-settings-section');
+  if (activeBroker === 'schwab') {
+    schwabSection.style.display = '';
+    fetchJSON('/api/schwab-auth-status').then(s => {
+      const infoEl = document.getElementById('schwab-token-info');
+      if (!s || !s.configured) {
+        infoEl.textContent = 'Schwab not configured.';
+        return;
+      }
+      const ts = s.token_status || {};
+      if (!ts.valid) {
+        infoEl.innerHTML = '<span style="color:var(--red)">\u25cf Token Expired</span> - Re-authentication required.';
+      } else if (ts.expiring_soon) {
+        infoEl.innerHTML = '<span style="color:var(--amber)">\u25cf Expiring Soon</span> - ' + Math.round(ts.hours_remaining) + ' hours remaining.';
+      } else {
+        infoEl.innerHTML = '<span style="color:var(--green)">\u25cf Token Valid</span> - ' + Math.round(ts.hours_remaining / 24) + ' days remaining (expires ' + (ts.expires_at || '').slice(0, 10) + ').';
+      }
+    });
+  } else {
+    schwabSection.style.display = 'none';
+  }
 
   pendingChanges = {};
 }
