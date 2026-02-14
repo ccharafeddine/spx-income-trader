@@ -995,7 +995,7 @@ def api_status():
         'pulse_threshold': strat.get('pulse_threshold', 10),
         'spread_width': strat.get('spread_width', 5),
         'profit_target_pct': strat.get('profit_target_pct', 80),
-        'contracts': strat.get('contracts_per_trade', 5),
+        'contracts': strat.get('max_contracts_override', 5),
     }
 
     # Tag 'n Turn status (read from persistence file if enabled)
@@ -1089,6 +1089,20 @@ def api_status():
     # E*TRADE token status + auto-renewal
     etrade_token = _try_renew_etrade_token()
 
+    # VIX
+    vix_data = None
+    try:
+        vix_quote = yahoo.get_vix_quote()
+        if vix_quote and vix_quote.get('price'):
+            from src.data.vix_provider import classify_vix
+            vix_level = vix_quote['price']
+            vix_data = {
+                'level': round(vix_level, 2),
+                'regime': classify_vix(vix_level),
+            }
+    except Exception:
+        pass
+
     return jsonify({
         'version': APP_VERSION,
         'bot': bot,
@@ -1099,6 +1113,7 @@ def api_status():
             'change': spx.get('change'),
             'change_pct': spx.get('change_pct'),
         },
+        'vix': vix_data,
         'heartbeat': log_data['last_heartbeat'],
         'strategy': params_summary,
         'account': account,
@@ -1425,6 +1440,7 @@ def api_journal():
             'spx_at_entry': trade.get('spx_at_entry') or trade.get('underlying_price_at_entry'),
             'spx_at_exit': trade.get('spx_at_exit'),
             'vix_at_entry': trade.get('vix_at_entry'),
+            'vix_regime': trade.get('vix_regime'),
             'day_open': trade.get('day_open'),
             'gap_pct': trade.get('gap_pct'),
             'intraday_move_at_entry': trade.get('intraday_move_at_entry'),
@@ -1432,6 +1448,24 @@ def api_journal():
             'time_in_trade_minutes': trade.get('time_in_trade_minutes'),
             'day_type': trade.get('day_type'),
             'daily_move_pct': trade.get('daily_move_pct'),
+            'theoretical_credit': trade.get('theoretical_credit'),
+            'actual_credit': trade.get('actual_credit'),
+            'slippage': trade.get('slippage'),
+            'slippage_pct': trade.get('slippage_pct'),
+            'economic_events': trade.get('economic_events'),
+            # Market metadata
+            'day_of_week': trade.get('day_of_week'),
+            'day_of_week_name': trade.get('day_of_week_name'),
+            'entry_time_bucket': trade.get('entry_time_bucket'),
+            'sma50': trade.get('sma50'),
+            'sma200': trade.get('sma200'),
+            'spx_vs_sma50': trade.get('spx_vs_sma50'),
+            'spx_vs_sma50_pct': trade.get('spx_vs_sma50_pct'),
+            'spx_vs_sma200': trade.get('spx_vs_sma200'),
+            'spx_vs_sma200_pct': trade.get('spx_vs_sma200_pct'),
+            'prior_day_high': trade.get('prior_day_high'),
+            'prior_day_low': trade.get('prior_day_low'),
+            'spx_vs_prior_range': trade.get('spx_vs_prior_range'),
         }
 
         # Apply filters
@@ -1514,7 +1548,7 @@ def api_journal():
         'pulse_threshold': strat.get('pulse_threshold', 10),
         'spread_width': strat.get('spread_width', 5),
         'profit_target_pct': strat.get('profit_target_pct', 80),
-        'contracts': strat.get('contracts_per_trade', 5),
+        'contracts': strat.get('max_contracts_override', 5),
         'min_credit': MIN_CREDIT_THRESHOLD,
         'morning_start': timing.get('morning_start', '09:30'),
         'morning_end': timing.get('morning_end', '11:30'),
@@ -1981,11 +2015,21 @@ def _get_market_context(trade, signal=None, log_cache=None):
         except Exception:
             pass
 
+    # Classify VIX regime
+    vix_regime = None
+    if vix_level is not None:
+        try:
+            from src.data.vix_provider import classify_vix
+            vix_regime = classify_vix(vix_level)
+        except Exception:
+            pass
+
     return {
         'spx_price': spx_price,
         'spx_open': spx_open,
         'spx_at_signal': spx_at_signal,
         'vix_level': vix_level,
+        'vix_regime': vix_regime,
     }
 
 
@@ -2080,6 +2124,123 @@ def api_events():
     except Exception:
         pass
     return jsonify({'events': events})
+
+
+@app.route('/api/risk-status')
+def api_risk_status():
+    """Risk management status: daily circuit breaker + layered drawdown."""
+    portfolio_cfg = STRATEGY_PARAMS.get('portfolio', {})
+    account_size = portfolio_cfg.get('account_size', 50000)
+    max_daily_loss_pct = portfolio_cfg.get('max_daily_loss_pct', 2.0)
+    max_daily_loss_dollars = account_size * (max_daily_loss_pct / 100)
+
+    # Daily circuit breaker from portfolio_state.json
+    daily = {
+        'realized_pnl': 0.0,
+        'max_loss_pct': max_daily_loss_pct,
+        'max_loss_dollars': round(max_daily_loss_dollars, 2),
+        'breaker_triggered': False,
+    }
+    try:
+        port_path = BASE_DIR / 'database' / 'portfolio_state.json'
+        if port_path.exists():
+            import json
+            with open(port_path, 'r') as f:
+                port_data = json.load(f)
+            daily['realized_pnl'] = round(
+                port_data.get('daily_realized_pnl', port_data.get('daily_pnl', 0)), 2
+            )
+            daily['breaker_triggered'] = port_data.get('circuit_breaker_triggered', False)
+    except Exception:
+        pass
+
+    # Drawdown (weekly/monthly/consecutive) from drawdown_state.json
+    dd_cfg = portfolio_cfg.get('drawdown_limits', {})
+    weekly_cfg = dd_cfg.get('weekly', {})
+    monthly_cfg = dd_cfg.get('monthly', {})
+    consec_cfg = dd_cfg.get('consecutive_losses', {})
+
+    weekly = {
+        'enabled': weekly_cfg.get('enabled', False),
+        'realized_pnl': 0.0,
+        'max_loss_pct': weekly_cfg.get('max_loss_pct', 4.0),
+        'max_loss_dollars': round(account_size * (weekly_cfg.get('max_loss_pct', 4.0) / 100), 2),
+        'breaker_triggered': False,
+        'period_label': '',
+    }
+    monthly = {
+        'enabled': monthly_cfg.get('enabled', False),
+        'realized_pnl': 0.0,
+        'max_loss_pct': monthly_cfg.get('max_loss_pct', 8.0),
+        'max_loss_dollars': round(account_size * (monthly_cfg.get('max_loss_pct', 8.0) / 100), 2),
+        'breaker_triggered': False,
+        'period_label': '',
+    }
+    consecutive = {
+        'enabled': consec_cfg.get('enabled', False),
+        'count': 0,
+        'max_consecutive': consec_cfg.get('max_consecutive', 5),
+        'paused': False,
+        'resume_time': None,
+    }
+
+    try:
+        dd_path = BASE_DIR / 'database' / 'drawdown_state.json'
+        if dd_path.exists():
+            import json
+            from datetime import date as _date, datetime as _dt
+            with open(dd_path, 'r') as f:
+                dd = json.load(f)
+
+            today = _date.today()
+            iso_year, iso_week, _ = today.isocalendar()
+
+            # Weekly (only if period matches)
+            if dd.get('current_iso_year') == iso_year and dd.get('current_iso_week') == iso_week:
+                weekly['realized_pnl'] = round(dd.get('weekly_realized_pnl', 0.0), 2)
+                weekly['breaker_triggered'] = dd.get('weekly_breaker_triggered', False)
+            weekly['period_label'] = f'W{iso_week}'
+
+            # Monthly (only if period matches)
+            if dd.get('current_month_year') == today.year and dd.get('current_month') == today.month:
+                monthly['realized_pnl'] = round(dd.get('monthly_realized_pnl', 0.0), 2)
+                monthly['breaker_triggered'] = dd.get('monthly_breaker_triggered', False)
+            monthly['period_label'] = today.strftime('%b %Y')
+
+            # Consecutive losses (always current)
+            consecutive['count'] = dd.get('consecutive_losses', 0)
+            pause_str = dd.get('consec_pause_until')
+            if pause_str:
+                pause_dt = _dt.fromisoformat(pause_str)
+                if _dt.now() < pause_dt:
+                    consecutive['paused'] = True
+                    consecutive['resume_time'] = pause_str
+    except Exception:
+        pass
+
+    return jsonify({
+        'daily': daily,
+        'weekly': weekly,
+        'monthly': monthly,
+        'consecutive': consecutive,
+    })
+
+
+@app.route('/api/economic-events')
+def api_economic_events():
+    """Today's and upcoming economic calendar events."""
+    try:
+        from src.data.economic_calendar import get_today_events, get_upcoming_events, is_high_impact_day
+        today_events = get_today_events()
+        upcoming = get_upcoming_events(days=7)
+        return jsonify({
+            'today': today_events,
+            'is_high_impact': is_high_impact_day(),
+            'upcoming': upcoming,
+        })
+    except Exception as e:
+        logger.warning(f"Economic calendar API error: {e}")
+        return jsonify({'today': [], 'is_high_impact': False, 'upcoming': []})
 
 
 # ---------------------------------------------------------------------------

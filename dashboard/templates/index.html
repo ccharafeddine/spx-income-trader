@@ -861,6 +861,23 @@ header::after {
   color: var(--amber);
   border: 1px solid rgba(245,158,11,0.3);
 }
+/* VIX regime badge */
+.vix-badge {
+  display: inline-block;
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: bold;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.vix-badge.low { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+.vix-badge.normal { background: rgba(96,165,250,0.15); color: #60a5fa; border: 1px solid rgba(96,165,250,0.3); }
+.vix-badge.elevated { background: rgba(245,158,11,0.15); color: var(--amber); border: 1px solid rgba(245,158,11,0.3); }
+.vix-badge.high { background: rgba(249,115,22,0.15); color: #f97316; border: 1px solid rgba(249,115,22,0.3); }
+.vix-badge.extreme { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
 .trade-flagged td {
   opacity: 0.55;
 }
@@ -1035,6 +1052,146 @@ header::after {
   background: rgba(139, 92, 246, 0.15);
   color: #a78bfa;
   border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+/* Economic event badges */
+.econ-badge {
+  font-size: 8px;
+  font-weight: bold;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-left: 2px;
+  display: inline-block;
+}
+.econ-badge.fomc { background: rgba(239,68,68,0.18); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+.econ-badge.cpi { background: rgba(251,191,36,0.18); color: #fbbf24; border: 1px solid rgba(251,191,36,0.3); }
+.econ-badge.nfp { background: rgba(59,130,246,0.18); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
+.econ-badge.gdp { background: rgba(16,185,129,0.18); color: #34d399; border: 1px solid rgba(16,185,129,0.3); }
+.econ-badge.pce { background: rgba(168,85,247,0.18); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); }
+.econ-badge.default { background: rgba(148,163,184,0.18); color: #94a3b8; border: 1px solid rgba(148,163,184,0.3); }
+
+/* Today's events indicator on overview */
+.econ-today-panel {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.econ-today-title {
+  font-size: 11px;
+  font-weight: bold;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.econ-event-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.econ-event-row .econ-time { color: var(--text-dim); font-size: 11px; min-width: 42px; }
+.econ-event-row .econ-desc { color: var(--text); flex: 1; margin-left: 8px; }
+.econ-no-events { color: var(--text-dim); font-size: 11px; font-style: italic; }
+
+/* Risk Status Panel */
+.risk-status-panel {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.risk-section-title {
+  font-size: 11px;
+  font-weight: bold;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.risk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 11px;
+}
+.risk-led {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.risk-led.green { background: #16a34a; box-shadow: 0 0 4px #16a34a; }
+.risk-led.yellow { background: #f59e0b; box-shadow: 0 0 4px #f59e0b; }
+.risk-led.red { background: #dc2626; box-shadow: 0 0 4px #dc2626; }
+.risk-label {
+  color: var(--text-dim);
+  min-width: 58px;
+  flex-shrink: 0;
+}
+.risk-bar-wrap {
+  flex: 1;
+  height: 6px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 40px;
+}
+.risk-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.risk-bar-fill.green { background: var(--green); }
+.risk-bar-fill.yellow { background: var(--amber); }
+.risk-bar-fill.red { background: var(--red); }
+.risk-value {
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  min-width: 60px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.risk-period {
+  color: var(--text-dim);
+  font-size: 9px;
+  min-width: 32px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.risk-detail {
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 2px 0 2px 16px;
+}
+.risk-detail .paused { color: var(--red); font-weight: bold; }
+.risk-detail .resume { color: var(--amber); }
+
+/* VIX in chart footer */
+.footer-vix {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+.footer-vix-label {
+  font-size: 11px;
+  font-weight: bold;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+.footer-vix-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: bold;
+  color: #fff;
 }
 
 /* Strategy breakdown section */
@@ -1793,12 +1950,12 @@ header::after {
       <div class="setting-row">
         <label>Daily Contracts</label>
         <input type="number" id="set-daily-contracts" min="1" max="10" value="5"
-               onchange="updateSetting('strategy.contracts_per_trade', parseInt(this.value))">
+               onchange="updateSetting('strategy.max_contracts_override', parseInt(this.value))">
       </div>
       <div class="setting-row">
         <label>Swing Contracts</label>
         <input type="number" id="set-tnt-contracts" min="1" max="10" value="2"
-               onchange="updateSetting('tag_n_turn.contracts_per_trade', parseInt(this.value))">
+               onchange="updateSetting('tag_n_turn.max_contracts_override', parseInt(this.value))">
       </div>
     </div>
 
@@ -1989,6 +2146,16 @@ header::after {
           </div>
           <div id="tnt-details" style="font-size:10px; color:var(--text-dim); margin-top:6px;"></div>
         </div>
+        <div class="econ-today-panel">
+          <div class="econ-today-title">Economic Events</div>
+          <div id="econ-today-body"><span class="econ-no-events">Loading...</span></div>
+        </div>
+        <div class="risk-status-panel">
+          <div class="risk-section-title">Risk Status</div>
+          <div id="risk-status-body">
+            <span class="econ-no-events">Loading...</span>
+          </div>
+        </div>
       </div>
 
       <!-- POSITION TRACKER -->
@@ -2024,6 +2191,11 @@ header::after {
             <span class="change-arrow">--</span>
             <span class="change-value">--</span>
             <span class="change-pct"></span>
+          </div>
+          <div class="footer-vix" id="footer-vix" style="display:none;">
+            <span class="footer-vix-label">VIX</span>
+            <span class="footer-vix-value" id="footer-vix-value">--</span>
+            <span id="footer-vix-badge"></span>
           </div>
         </div>
         <!-- Center: Key Metrics -->
@@ -2601,6 +2773,19 @@ async function updateStatus() {
   } else {
     footerPrice.textContent = '--';
     footerChange.innerHTML = '<span class="change-arrow">--</span><span class="change-value">--</span><span class="change-pct"></span>';
+  }
+
+  // VIX (in chart footer)
+  const vixWrap = document.getElementById('footer-vix');
+  if (d.vix && d.vix.level) {
+    vixWrap.style.display = 'flex';
+    document.getElementById('footer-vix-value').textContent = d.vix.level.toFixed(2);
+    const regime = (d.vix.regime || '').toLowerCase();
+    const badgeEl = document.getElementById('footer-vix-badge');
+    badgeEl.className = 'vix-badge ' + regime;
+    badgeEl.textContent = d.vix.regime || '';
+  } else {
+    vixWrap.style.display = 'none';
   }
 
   // Params
@@ -3383,6 +3568,19 @@ async function updateJournal() {
     html += '<span class="arrow">&#9654;</span>';
     html += '<span class="date">' + dt + '</span>';
     html += '<span class="strategy-tag ' + stratClass + '">' + (stratNames[stratType] || stratType) + '</span>';
+    // Economic event badges
+    if (e.economic_events) {
+      try {
+        var econEvts = typeof e.economic_events === 'string' ? JSON.parse(e.economic_events) : e.economic_events;
+        if (Array.isArray(econEvts)) {
+          econEvts.forEach(function(ev) {
+            var cls = (ev || '').toLowerCase();
+            if (!['fomc','cpi','nfp','gdp','pce'].includes(cls)) cls = 'default';
+            html += '<span class="econ-badge ' + cls + '">' + ev + '</span>';
+          });
+        }
+      } catch(ignored) {}
+    }
     html += '<span class="dir ' + (e.direction_raw === 'bearish' ? 'dir-bear' : 'dir-bull') + '">' + e.direction + '</span>';
     html += '<span class="strikes">' + (e.short_strike || '--') + '/' + (e.long_strike || '--') + '</span>';
     html += '<span class="qty">' + (e.quantity || 1) + 'x</span>';
@@ -3434,7 +3632,45 @@ async function updateJournal() {
       html += '<span class="td-label">SPX at Entry</span><span class="td-value">' + (mc.spx_price ? '$' + Number(mc.spx_price).toLocaleString('en-US', {minimumFractionDigits: 2}) : 'N/A') + '</span>';
       html += '<span class="td-label">SPX Open</span><span class="td-value">' + (mc.spx_open ? '$' + Number(mc.spx_open).toLocaleString('en-US', {minimumFractionDigits: 2}) : 'N/A') + '</span>';
       html += '<span class="td-label">SPX at Signal</span><span class="td-value">' + (mc.spx_at_signal ? '$' + Number(mc.spx_at_signal).toLocaleString('en-US', {minimumFractionDigits: 2}) : 'N/A') + '</span>';
-      html += '<span class="td-label">VIX</span><span class="td-value">' + (mc.vix_level ? Number(mc.vix_level).toFixed(2) : 'N/A') + '</span>';
+      var vixDisplay = 'N/A';
+      if (mc.vix_level) {
+        vixDisplay = Number(mc.vix_level).toFixed(2);
+        if (mc.vix_regime) {
+          vixDisplay += ' <span class="vix-badge ' + mc.vix_regime.toLowerCase() + '">' + mc.vix_regime + '</span>';
+        }
+      }
+      html += '<span class="td-label">VIX</span><span class="td-value">' + vixDisplay + '</span>';
+      html += '</div></div>';
+    }
+
+    // 2b. Enhanced Market Metadata
+    if (e.day_of_week_name || e.entry_time_bucket || e.sma50 || e.spx_vs_prior_range) {
+      html += '<div class="journal-section">';
+      html += '<div class="journal-section-title">Trade Metadata</div>';
+      html += '<div class="market-context-grid">';
+      if (e.day_of_week_name) {
+        html += '<span class="td-label">Day</span><span class="td-value">' + e.day_of_week_name + '</span>';
+      }
+      if (e.entry_time_bucket) {
+        var bucketLabels = {'early': 'Early (9:30-10)', 'mid': 'Mid (10-10:30)', 'late': 'Late (10:30+)'};
+        html += '<span class="td-label">Session</span><span class="td-value">' + (bucketLabels[e.entry_time_bucket] || e.entry_time_bucket) + '</span>';
+      }
+      if (e.sma50 != null) {
+        var sma50Dist = e.spx_vs_sma50_pct != null ? ' (' + (e.spx_vs_sma50_pct > 0 ? '+' : '') + Number(e.spx_vs_sma50_pct).toFixed(2) + '%)' : '';
+        html += '<span class="td-label">SMA50</span><span class="td-value">' + Number(e.sma50).toLocaleString('en-US', {minimumFractionDigits: 2}) + sma50Dist + '</span>';
+      }
+      if (e.sma200 != null) {
+        var sma200Dist = e.spx_vs_sma200_pct != null ? ' (' + (e.spx_vs_sma200_pct > 0 ? '+' : '') + Number(e.spx_vs_sma200_pct).toFixed(2) + '%)' : '';
+        html += '<span class="td-label">SMA200</span><span class="td-value">' + Number(e.sma200).toLocaleString('en-US', {minimumFractionDigits: 2}) + sma200Dist + '</span>';
+      }
+      if (e.spx_vs_prior_range) {
+        var rangeClass = e.spx_vs_prior_range === 'above' ? 'pnl-pos' : (e.spx_vs_prior_range === 'below' ? 'pnl-neg' : '');
+        var rangeLabel = e.spx_vs_prior_range.charAt(0).toUpperCase() + e.spx_vs_prior_range.slice(1);
+        if (e.prior_day_high != null && e.prior_day_low != null) {
+          rangeLabel += ' [' + Number(e.prior_day_low).toFixed(0) + ' - ' + Number(e.prior_day_high).toFixed(0) + ']';
+        }
+        html += '<span class="td-label">vs Prior Range</span><span class="td-value ' + rangeClass + '">' + rangeLabel + '</span>';
+      }
       html += '</div></div>';
     }
 
@@ -3473,6 +3709,12 @@ async function updateJournal() {
     html += '<span class="td-label">Max Profit</span><span class="td-value">' + fmt$(e.max_profit_total) + '</span>';
     html += '<span class="td-label">Max Risk</span><span class="td-value">' + fmt$(e.max_risk_total) + '</span>';
     html += '<span class="td-label">R:R</span><span class="td-value">' + (e.risk_reward_ratio || 0).toFixed(2) + ':1</span>';
+    if (e.slippage != null) {
+      var slipCls = e.slippage >= 0 ? 'pnl-pos' : 'pnl-neg';
+      html += '<span class="td-label">Slippage</span><span class="td-value ' + slipCls + '">$' + (e.slippage >= 0 ? '+' : '') + e.slippage.toFixed(4) + ' (' + (e.slippage_pct >= 0 ? '+' : '') + e.slippage_pct.toFixed(2) + '%)</span>';
+      html += '<span class="td-label">Mid Credit</span><span class="td-value">$' + (e.theoretical_credit || 0).toFixed(4) + '</span>';
+      html += '<span class="td-label">Fill Credit</span><span class="td-value">$' + (e.actual_credit || 0).toFixed(4) + '</span>';
+    }
     const entryHHMM = e.entry_time ? e.entry_time.substring(11, 16) : '--';
     const expHHMM = e.expiration ? (e.expiration.includes('T') ? e.expiration.substring(11, 16) : e.expiration.substring(11, 16)) : '--';
     html += '<span class="td-label">Entry</span><span class="td-value">' + entryHHMM + ' ET</span>';
@@ -3602,7 +3844,12 @@ function exportJournal() {
   const columns = [
     'entry_time', 'strategy_type', 'direction', 'short_strike', 'long_strike',
     'quantity', 'credit_received', 'max_profit_total', 'max_risk_total',
-    'spx_at_entry', 'spx_at_exit', 'vix_at_entry', 'day_open', 'gap_pct',
+    'spx_at_entry', 'spx_at_exit', 'vix_at_entry', 'vix_regime', 'day_open', 'gap_pct',
+    'theoretical_credit', 'actual_credit', 'slippage', 'slippage_pct',
+    'economic_events',
+    'day_of_week_name', 'entry_time_bucket',
+    'sma50', 'sma200', 'spx_vs_sma50_pct', 'spx_vs_sma200_pct',
+    'prior_day_high', 'prior_day_low', 'spx_vs_prior_range',
     'exit_time', 'exit_reason', 'pnl', 'profit_captured_pct', 'time_in_trade_minutes',
     'day_type', 'daily_move_pct', 'flag', 'notes'
   ];
@@ -3809,11 +4056,130 @@ async function stopBot() {
   }
 }
 
+// Economic events (loaded once per page load, static for the day)
+async function updateEconomicEvents() {
+  try {
+    const resp = await fetch('/api/economic-events');
+    const data = await resp.json();
+    const el = document.getElementById('econ-today-body');
+    if (!el) return;
+    if (!data.today || data.today.length === 0) {
+      el.innerHTML = '<span class="econ-no-events">No high-impact events today</span>';
+      return;
+    }
+    let html = '';
+    data.today.forEach(function(ev) {
+      var cls = (ev.event || '').toLowerCase();
+      if (!['fomc','cpi','nfp','gdp','pce'].includes(cls)) cls = 'default';
+      html += '<div class="econ-event-row">';
+      html += '<span class="econ-badge ' + cls + '">' + ev.event + '</span>';
+      html += '<span class="econ-time">' + (ev.time || '') + ' ET</span>';
+      html += '<span class="econ-desc">' + (ev.description || '') + '</span>';
+      html += '</div>';
+    });
+    el.innerHTML = html;
+  } catch(e) {
+    var el = document.getElementById('econ-today-body');
+    if (el) el.innerHTML = '<span class="econ-no-events">Calendar unavailable</span>';
+  }
+}
+updateEconomicEvents();
+
+// Risk status (refreshed with each status poll)
+async function updateRiskStatus() {
+  try {
+    const resp = await fetch('/api/risk-status');
+    const r = await resp.json();
+    const el = document.getElementById('risk-status-body');
+    if (!el) return;
+
+    function ledColor(pnl, limit, triggered) {
+      if (triggered) return 'red';
+      if (limit <= 0) return 'green';
+      var pct = Math.abs(Math.min(pnl, 0)) / limit * 100;
+      if (pct >= 75) return 'red';
+      if (pct >= 50) return 'yellow';
+      return 'green';
+    }
+    function barPct(pnl, limit) {
+      if (limit <= 0) return 0;
+      return Math.min(100, Math.abs(Math.min(pnl, 0)) / limit * 100);
+    }
+    function fmt$(v) {
+      var s = v < 0 ? '-$' + Math.abs(v).toFixed(0) : '$' + v.toFixed(0);
+      return s;
+    }
+
+    var html = '';
+
+    // Daily circuit breaker
+    var dc = r.daily;
+    var dLed = dc.breaker_triggered ? 'red' : ledColor(dc.realized_pnl, dc.max_loss_dollars, false);
+    var dPct = barPct(dc.realized_pnl, dc.max_loss_dollars);
+    html += '<div class="risk-row">';
+    html += '<span class="risk-led ' + dLed + '"></span>';
+    html += '<span class="risk-label">Daily</span>';
+    html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + dLed + '" style="width:' + dPct.toFixed(0) + '%"></div></div>';
+    html += '<span class="risk-value">' + fmt$(dc.realized_pnl) + ' / ' + fmt$(dc.max_loss_dollars) + '</span>';
+    html += '</div>';
+
+    // Weekly
+    if (r.weekly.enabled) {
+      var wc = r.weekly;
+      var wLed = wc.breaker_triggered ? 'red' : ledColor(wc.realized_pnl, wc.max_loss_dollars, false);
+      var wPct = barPct(wc.realized_pnl, wc.max_loss_dollars);
+      html += '<div class="risk-row">';
+      html += '<span class="risk-led ' + wLed + '"></span>';
+      html += '<span class="risk-label">Weekly</span>';
+      html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + wLed + '" style="width:' + wPct.toFixed(0) + '%"></div></div>';
+      html += '<span class="risk-value">' + fmt$(wc.realized_pnl) + ' / ' + fmt$(wc.max_loss_dollars) + '</span>';
+      html += '<span class="risk-period">' + wc.period_label + '</span>';
+      html += '</div>';
+    }
+
+    // Monthly
+    if (r.monthly.enabled) {
+      var mc = r.monthly;
+      var mLed = mc.breaker_triggered ? 'red' : ledColor(mc.realized_pnl, mc.max_loss_dollars, false);
+      var mPct = barPct(mc.realized_pnl, mc.max_loss_dollars);
+      html += '<div class="risk-row">';
+      html += '<span class="risk-led ' + mLed + '"></span>';
+      html += '<span class="risk-label">Monthly</span>';
+      html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + mLed + '" style="width:' + mPct.toFixed(0) + '%"></div></div>';
+      html += '<span class="risk-value">' + fmt$(mc.realized_pnl) + ' / ' + fmt$(mc.max_loss_dollars) + '</span>';
+      html += '<span class="risk-period">' + mc.period_label + '</span>';
+      html += '</div>';
+    }
+
+    // Consecutive losses
+    if (r.consecutive.enabled) {
+      var cl = r.consecutive;
+      var clLed = cl.paused ? 'red' : (cl.count >= cl.max_consecutive - 1 ? 'yellow' : 'green');
+      html += '<div class="risk-row">';
+      html += '<span class="risk-led ' + clLed + '"></span>';
+      html += '<span class="risk-label">Streak</span>';
+      html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + clLed + '" style="width:' + (cl.max_consecutive > 0 ? (cl.count / cl.max_consecutive * 100).toFixed(0) : 0) + '%"></div></div>';
+      html += '<span class="risk-value">' + cl.count + ' / ' + cl.max_consecutive + '</span>';
+      html += '</div>';
+      if (cl.paused && cl.resume_time) {
+        var rt = new Date(cl.resume_time);
+        html += '<div class="risk-detail"><span class="paused">PAUSED</span> <span class="resume">resumes ' + rt.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) + '</span></div>';
+      }
+    }
+
+    el.innerHTML = html || '<span class="econ-no-events">No risk limits configured</span>';
+  } catch(e) {
+    var el = document.getElementById('risk-status-body');
+    if (el) el.innerHTML = '<span class="econ-no-events">Risk status unavailable</span>';
+  }
+}
+updateRiskStatus();
+
 async function refreshAll() {
   const cdEl = document.getElementById('refresh-countdown');
   cdEl.style.opacity = '0.4';
   cdEl.textContent = '...';
-  const tasks = [updateStatus(), updateToday(), updateSignals(), updateHistory()];
+  const tasks = [updateStatus(), updateToday(), updateSignals(), updateHistory(), updateRiskStatus()];
   if (activeTab === 'journal') tasks.push(updateJournal());
   await Promise.all(tasks);
   countdown = 30;
@@ -4011,8 +4377,8 @@ async function loadCurrentSettings() {
   document.getElementById('trending-threshold-val').textContent = '$' + trendingThreshold;
 
   // Position sizing
-  document.getElementById('set-daily-contracts').value = data.strategy?.contracts_per_trade ?? 5;
-  document.getElementById('set-tnt-contracts').value = data.tag_n_turn?.contracts_per_trade ?? 2;
+  document.getElementById('set-daily-contracts').value = data.strategy?.max_contracts_override ?? 5;
+  document.getElementById('set-tnt-contracts').value = data.tag_n_turn?.max_contracts_override ?? 2;
 
   // Risk controls
   const maxLoss = data.portfolio?.max_daily_loss_pct ?? 2;

@@ -153,6 +153,15 @@ class SPXIncomeStrategy:
             # Calculate net credit
             credit = short_price - long_price
 
+            # Mid-price for slippage tracking
+            if direction == TradeDirection.BULLISH:
+                short_mid = (options_chain[short_strike]['put_bid'] + options_chain[short_strike]['put_ask']) / 2
+                long_mid = (options_chain[long_strike]['put_bid'] + options_chain[long_strike]['put_ask']) / 2
+            else:
+                short_mid = (options_chain[short_strike]['call_bid'] + options_chain[short_strike]['call_ask']) / 2
+                long_mid = (options_chain[long_strike]['call_bid'] + options_chain[long_strike]['call_ask']) / 2
+            theoretical_mid_credit = round(short_mid - long_mid, 4)
+
             logger.info(f"Credit: ${credit:.2f} (short=${short_price:.2f}, long=${long_price:.2f})")
 
             # Guard: credit must be positive (not a debit spread)
@@ -198,7 +207,8 @@ class SPXIncomeStrategy:
                 credit_received=credit,
                 entry_time=now,
                 expiration=expiration,
-                underlying_price_at_entry=current_price
+                underlying_price_at_entry=current_price,
+                theoretical_mid_credit=theoretical_mid_credit,
             )
             
             logger.info(f"Spread constructed: {spread}")

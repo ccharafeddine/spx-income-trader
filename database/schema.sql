@@ -25,9 +25,33 @@ CREATE TABLE IF NOT EXISTS trades (
     -- Entry context
     spx_at_entry REAL,
     vix_at_entry REAL,
+    vix_regime TEXT,     -- LOW, NORMAL, ELEVATED, HIGH, EXTREME
     day_open REAL,
     gap_pct REAL,
     intraday_move_at_entry REAL,
+
+    -- Slippage tracking (theoretical mid vs actual fill)
+    theoretical_credit REAL,
+    actual_credit REAL,
+    slippage REAL,
+    slippage_pct REAL,
+
+    -- Economic calendar context
+    economic_events TEXT,  -- JSON array of event tags, e.g. '["CPI","FOMC"]'
+
+    -- Enhanced trade metadata (for post-hoc analysis)
+    day_of_week INTEGER,       -- 0=Monday .. 4=Friday
+    day_of_week_name TEXT,     -- 'Monday' .. 'Friday'
+    entry_time_bucket TEXT,    -- 'early' (9:30-10), 'mid' (10-10:30), 'late' (10:30+)
+    sma50 REAL,                -- 50-day SMA at entry
+    sma200 REAL,               -- 200-day SMA at entry
+    spx_vs_sma50 REAL,         -- SPX - SMA50 (points)
+    spx_vs_sma50_pct REAL,     -- (SPX - SMA50) / SMA50 * 100
+    spx_vs_sma200 REAL,        -- SPX - SMA200 (points)
+    spx_vs_sma200_pct REAL,    -- (SPX - SMA200) / SMA200 * 100
+    prior_day_high REAL,
+    prior_day_low REAL,
+    spx_vs_prior_range TEXT,   -- 'above', 'below', 'within'
 
     -- Exit details
     exit_price REAL,

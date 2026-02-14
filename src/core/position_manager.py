@@ -192,9 +192,12 @@ class PositionManager:
             # Build entry context for database analytics
             entry_context = {'strategy_type': strategy_type}
             try:
+                from src.data.vix_provider import classify_vix
                 spx_price = spread.underlying_price_at_entry
                 entry_context['spx_at_entry'] = round(spx_price, 2)
-                entry_context['vix_at_entry'] = self._get_vix_price()
+                vix_price = self._get_vix_price()
+                entry_context['vix_at_entry'] = vix_price
+                entry_context['vix_regime'] = classify_vix(vix_price)
                 if self._day_open is not None:
                     entry_context['day_open'] = round(self._day_open, 2)
                     entry_context['intraday_move_at_entry'] = round(
@@ -204,6 +207,68 @@ class PositionManager:
                     entry_context['gap_pct'] = round(
                         ((self._day_open - self._prev_close) / self._prev_close) * 100, 4
                     )
+                # Day of week and entry time bucket
+                entry_dt = trade.entry_time
+                entry_context['day_of_week'] = entry_dt.weekday()  # 0=Mon
+                entry_context['day_of_week_name'] = entry_dt.strftime('%A')
+                try:
+                    from src.data.sma_provider import classify_entry_time_bucket
+                    entry_context['entry_time_bucket'] = classify_entry_time_bucket(entry_dt)
+                except Exception:
+                    pass
+
+                # SMA distances and prior-day range
+                try:
+                    from src.data.sma_provider import (
+                        get_sma50, get_sma200, get_prior_day_range,
+                        compute_sma_distance, classify_vs_prior_range,
+                    )
+                    sma50 = get_sma50()
+                    sma200 = get_sma200()
+                    if sma50 is not None:
+                        entry_context['sma50'] = sma50
+                        pts, pct = compute_sma_distance(spx_price, sma50)
+                        entry_context['spx_vs_sma50'] = pts
+                        entry_context['spx_vs_sma50_pct'] = pct
+                    if sma200 is not None:
+                        entry_context['sma200'] = sma200
+                        pts, pct = compute_sma_distance(spx_price, sma200)
+                        entry_context['spx_vs_sma200'] = pts
+                        entry_context['spx_vs_sma200_pct'] = pct
+                    prior_high, prior_low = get_prior_day_range()
+                    if prior_high is not None:
+                        entry_context['prior_day_high'] = prior_high
+                        entry_context['prior_day_low'] = prior_low
+                        entry_context['spx_vs_prior_range'] = classify_vs_prior_range(
+                            spx_price, prior_high, prior_low
+                        )
+                except Exception as e_sma:
+                    logger.debug(f"SMA/range lookup failed: {e_sma}")
+
+                # Economic calendar: tag trade with same-day events
+                try:
+                    from src.data.economic_calendar import get_today_events, format_events_short
+                    import json as _json
+                    today_events = get_today_events()
+                    if today_events:
+                        event_tags = [e['event'] for e in today_events]
+                        entry_context['economic_events'] = _json.dumps(event_tags)
+                        logger.info(f"  Economic events today: {format_events_short(today_events)}")
+                except Exception as e_cal:
+                    logger.debug(f"Economic calendar lookup failed: {e_cal}")
+
+                # Slippage: actual fill vs theoretical mid-price
+                theoretical_mid = getattr(spread, 'theoretical_mid_credit', None)
+                actual_fill = order_status['fill_price']
+                if theoretical_mid is not None:
+                    slippage = round(actual_fill - theoretical_mid, 4)
+                    slippage_pct = round((slippage / theoretical_mid) * 100, 2) if theoretical_mid != 0 else 0.0
+                    entry_context['theoretical_credit'] = round(theoretical_mid, 4)
+                    entry_context['actual_credit'] = round(actual_fill, 4)
+                    entry_context['slippage'] = slippage
+                    entry_context['slippage_pct'] = slippage_pct
+                    logger.info(f"  Slippage: ${slippage:+.4f} ({slippage_pct:+.2f}%) [mid=${theoretical_mid:.4f}, fill=${actual_fill:.4f}]")
+
                 logger.debug(f"Entry context: {entry_context}")
             except Exception as e:
                 logger.warning(f"Failed to build entry context: {e}")

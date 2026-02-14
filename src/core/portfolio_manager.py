@@ -31,13 +31,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from src.core.drawdown_manager import DrawdownManager
+
 logger = logging.getLogger(__name__)
 
 
 class PositionSizingMethod(Enum):
     """Position sizing calculation methods"""
     PERCENT_RISK = "percent_risk"
-    FIXED_CONTRACTS = "fixed_contracts"
     KELLY = "kelly"
 
 
@@ -98,6 +99,8 @@ class PortfolioManager:
         risk_per_trade_pct: float = 2.0,
         min_contracts: int = 1,
         max_contracts: int = 20,
+        # Layered drawdown limits (weekly/monthly)
+        drawdown_limits: Optional[Dict] = None,
     ):
         self.account_size = account_size
         self.max_total_positions = max_total_positions
@@ -146,6 +149,14 @@ class PortfolioManager:
 
         # Load persisted state (for positions that survive restarts)
         self._load_state()
+
+        # Layered drawdown breakers (weekly/monthly)
+        drawdown_path = self.persistence_path.parent / 'drawdown_state.json'
+        self.drawdown_manager = DrawdownManager(
+            account_size=account_size,
+            config=drawdown_limits,
+            persistence_path=drawdown_path,
+        )
 
         logger.info(
             f"PortfolioManager initialized: "
@@ -238,6 +249,11 @@ class PortfolioManager:
             self._save_state()
             return False, f"Daily realized loss limit ({self.max_daily_loss_pct}%) reached"
 
+        # Check weekly/monthly drawdown limits
+        dd_allowed, dd_reason = self.drawdown_manager.can_trade()
+        if not dd_allowed:
+            return False, dd_reason
+
         # Check total position count
         if len(self.active_positions) >= self.max_total_positions:
             return False, f"Max total positions ({self.max_total_positions}) reached"
@@ -313,6 +329,7 @@ class PortfolioManager:
 
         pos = self.active_positions.pop(position_id)
         self.daily_realized_pnl += realized_pnl
+        self.drawdown_manager.record_realized_pnl(realized_pnl)
 
         logger.info(
             f"Portfolio: Closed {pos.strategy.value} position {position_id}, "
@@ -335,6 +352,7 @@ class PortfolioManager:
     def update_realized_pnl(self, pnl_change: float):
         """Update realized P&L from external source (position manager)"""
         self.daily_realized_pnl += pnl_change
+        self.drawdown_manager.record_realized_pnl(pnl_change)
 
         if self.daily_realized_pnl <= -self.max_daily_loss and not self.circuit_breaker_triggered:
             self.circuit_breaker_triggered = True
@@ -370,7 +388,9 @@ class PortfolioManager:
         - Removes expired 0DTE positions (they should already be closed)
         - Keeps swing positions (Tag 'n Turn)
         - Resets circuit breaker
+        - Checks weekly/monthly period rollovers
         """
+        self.drawdown_manager.check_period_rollovers()
         self.daily_realized_pnl = 0.0
         self.daily_risk_used = 0.0
         self.dte0_trades_today = 0
@@ -413,12 +433,14 @@ class PortfolioManager:
             'tnt_trades_today': self.tnt_trades_today,
             'positions': {k: v.to_dict() for k, v in self.active_positions.items()},
             'position_sizing': self.get_position_sizing_summary(),
+            'drawdown_limits': self.drawdown_manager.get_status(),
         }
 
     def update_account_size(self, new_size: float):
         """Update account size and recalculate dollar limits"""
         self.account_size = new_size
         self.max_daily_loss = self.account_size * (self.max_daily_loss_pct / 100)
+        self.drawdown_manager.update_account_size(new_size)
         logger.info(
             f"Account size updated to ${new_size:.2f}, "
             f"max_daily_loss now ${self.max_daily_loss:.0f}"
@@ -432,7 +454,7 @@ class PortfolioManager:
         self,
         strategy: StrategyType,
         max_risk_per_contract: float,
-        fixed_contracts: Optional[int] = None,
+        max_contracts_override: Optional[int] = None,
     ) -> int:
         """
         Calculate position size based on configured method.
@@ -440,10 +462,10 @@ class PortfolioManager:
         Args:
             strategy: Strategy requesting position sizing
             max_risk_per_contract: Maximum risk per contract in dollars
-            fixed_contracts: Override for fixed_contracts method (from strategy config)
+            max_contracts_override: Per-strategy ceiling (applied after global clamp)
 
         Returns:
-            Number of contracts to trade (clamped to min/max)
+            Number of contracts to trade (clamped to min/max and override)
         """
         if max_risk_per_contract <= 0:
             logger.warning("Invalid max_risk_per_contract, using minimum contracts")
@@ -453,13 +475,20 @@ class PortfolioManager:
             contracts = self._calculate_percent_risk_size(max_risk_per_contract)
         elif self.sizing_method == PositionSizingMethod.KELLY:
             contracts = self._calculate_kelly_size(strategy, max_risk_per_contract)
-        elif self.sizing_method == PositionSizingMethod.FIXED_CONTRACTS:
-            contracts = self._get_fixed_contracts(strategy, fixed_contracts)
         else:
             contracts = self.min_contracts
 
-        # Clamp to configured bounds
+        # Clamp to global configured bounds
         contracts = max(self.min_contracts, min(contracts, self.max_contracts))
+
+        # Apply per-strategy ceiling if provided
+        if max_contracts_override is not None and max_contracts_override > 0:
+            if contracts > max_contracts_override:
+                logger.info(
+                    f"Position capped by strategy override: "
+                    f"{contracts} -> {max_contracts_override}"
+                )
+                contracts = max_contracts_override
 
         logger.info(
             f"Position sizing ({self.sizing_method.value}): "
@@ -543,20 +572,6 @@ class PortfolioManager:
         )
 
         return int(math.floor(contracts))
-
-    def _get_fixed_contracts(
-        self,
-        strategy: StrategyType,
-        fixed_contracts: Optional[int],
-    ) -> int:
-        """
-        Return fixed contract count from strategy config.
-
-        Falls back to min_contracts if not specified.
-        """
-        if fixed_contracts is not None and fixed_contracts > 0:
-            return fixed_contracts
-        return self.min_contracts
 
     def _get_historical_stats(
         self,

@@ -14,13 +14,28 @@ portfolio:
 
   # Dynamic Position Sizing
   position_sizing:
-    method: "percent_risk"     # "percent_risk", "fixed_contracts", or "kelly"
+    method: "percent_risk"     # "percent_risk" or "kelly"
     risk_per_trade_pct: 2.0    # Risk 2% of account per trade
     min_contracts: 1           # Never less than 1 contract
     max_contracts: 20          # Cap regardless of account size
     # percent_risk: Sizes position to risk X% of account
-    # fixed_contracts: Uses contracts_per_trade from strategy config
     # kelly: Optimal sizing based on historical win rate (needs 10+ trades)
+    # Each strategy's max_contracts_override acts as an additional ceiling
+
+  # Layered Drawdown Circuit Breakers
+  # Longer-horizon loss limits beyond the daily circuit breaker.
+  # Only REALIZED losses count; auto-resets on period rollover.
+  drawdown_limits:
+    weekly:
+      enabled: true
+      max_loss_pct: 4.0     # 4% of account per ISO week (Mon-Fri)
+    monthly:
+      enabled: true
+      max_loss_pct: 8.0     # 8% of account per calendar month
+    consecutive_losses:
+      enabled: true
+      max_consecutive: 5    # Pause after 5 losses in a row
+      pause_hours: 24       # Trading paused for 24 hours (time-based, not period-based)
 
   # Strategy priority (highest priority enters first if slots limited)
   priority:
@@ -45,8 +60,8 @@ strategy:
   # Profit target as % of max profit
   profit_target_pct: 80.0
 
-  # Number of contracts per trade
-  contracts_per_trade: 5
+  # Per-strategy ceiling for position sizing (caps percent_risk/kelly result)
+  max_contracts_override: 5
 
 risk:
   # Maximum position size (contracts)
@@ -136,7 +151,7 @@ tag_n_turn:
   use_credit_spreads: true
 
   # Position sizing for swings (separate from daily)
-  contracts_per_trade: 2  # Smaller size for multi-day risk
+  max_contracts_override: 2  # Smaller size for multi-day risk
 
   # For credit spreads (when use_credit_spreads: true)
   spread_width: 10.0  # Wider spreads for multi-day
@@ -159,7 +174,7 @@ bnb:
   pulse_threshold: 10.0
 
   # Position sizing
-  contracts_per_trade: 3
+  max_contracts_override: 3
 
   # Just Breakfast settings
   # If first bar of next day confirms signal direction, roll into daily setup
@@ -176,7 +191,7 @@ orb:
   max_threshold: 40.0  # Relaxed signal threshold
 
   # Position sizing
-  contracts_per_trade: 3
+  max_contracts_override: 3
 
 # ============================================
 # PDT (Pattern Day Trader) RULE PROTECTION

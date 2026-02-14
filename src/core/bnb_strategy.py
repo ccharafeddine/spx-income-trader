@@ -65,7 +65,7 @@ class BnBStrategy:
         self.enabled = config.get('enabled', False)
         self.pulse_threshold = config.get('pulse_threshold', 10.0)
         self.aggressive_roll = config.get('aggressive_roll', True)
-        self.contracts_per_trade = config.get('contracts_per_trade', 3)
+        self.max_contracts_override = config.get('max_contracts_override', 3)
 
         # State
         self.todays_bnb_bars = []

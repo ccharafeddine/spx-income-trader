@@ -223,7 +223,7 @@ def load_strategy_params():
                 'spread_width': 5.0,
                 'profit_target_pct': 80.0,
                 'max_daily_trades': 1,
-                'contracts_per_trade': 5
+                'max_contracts_override': 5
             },
             'risk': {
                 'max_position_size': 5,

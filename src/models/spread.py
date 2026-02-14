@@ -34,6 +34,7 @@ class CreditSpread:
     entry_time: datetime
     expiration: datetime
     underlying_price_at_entry: Optional[float] = None
+    theoretical_mid_credit: Optional[float] = None
     
     @property
     def spread_width(self) -> float:

@@ -55,7 +55,7 @@ class ORBStrategy:
         self.enabled = config.get('enabled', False)
         self.min_threshold = config.get('min_threshold', 10.0)
         self.max_threshold = config.get('max_threshold', 40.0)
-        self.contracts_per_trade = config.get('contracts_per_trade', 3)
+        self.max_contracts_override = config.get('max_contracts_override', 3)
 
         # State
         self.opening_range: Optional[ORBRange] = None

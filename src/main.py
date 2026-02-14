@@ -204,6 +204,8 @@ class TradingBot:
             risk_per_trade_pct=sizing_cfg.get('risk_per_trade_pct', 2.0),
             min_contracts=sizing_cfg.get('min_contracts', 1),
             max_contracts=sizing_cfg.get('max_contracts', 20),
+            # Layered drawdown limits (weekly/monthly)
+            drawdown_limits=portfolio_cfg.get('drawdown_limits'),
         )
 
         logger.info("TradingBot initialized")
@@ -1105,6 +1107,16 @@ class TradingBot:
                 long_price = options_chain[long_strike]['call_ask']
 
             credit = short_price - long_price
+
+            # Mid-price for slippage tracking
+            if direction == TradeDirection.BULLISH:
+                short_mid = (options_chain[short_strike]['put_bid'] + options_chain[short_strike]['put_ask']) / 2
+                long_mid = (options_chain[long_strike]['put_bid'] + options_chain[long_strike]['put_ask']) / 2
+            else:
+                short_mid = (options_chain[short_strike]['call_bid'] + options_chain[short_strike]['call_ask']) / 2
+                long_mid = (options_chain[long_strike]['call_bid'] + options_chain[long_strike]['call_ask']) / 2
+            theoretical_mid_credit = round(short_mid - long_mid, 4)
+
             if credit <= 0:
                 logger.warning(f"Non-positive credit ${credit:.2f}, rejecting")
                 return None
@@ -1138,6 +1150,7 @@ class TradingBot:
                 entry_time=now,
                 expiration=expiration,
                 underlying_price_at_entry=current_price,
+                theoretical_mid_credit=theoretical_mid_credit,
             )
 
             logger.info(
@@ -1197,12 +1210,12 @@ class TradingBot:
 
             # 3. Position sizing
             strategy_cfg = STRATEGY_PARAMS.get(strategy_name, {})
-            fixed_fallback = strategy_cfg.get('contracts_per_trade', 3)
+            override = strategy_cfg.get('max_contracts_override')
             max_risk_per_contract = spread.max_risk
             quantity = self.portfolio.calculate_position_size(
                 strategy=strategy_type,
                 max_risk_per_contract=max_risk_per_contract,
-                fixed_contracts=fixed_fallback,
+                max_contracts_override=override,
             )
 
             # 4. Portfolio risk gate
@@ -1258,6 +1271,7 @@ class TradingBot:
                 "long_strike": spread.long_leg.strike,
                 "quantity": quantity,
                 "credit_received": spread.credit_received,
+                "theoretical_mid_credit": spread.theoretical_mid_credit,
                 "max_risk": spread.max_risk * quantity,
                 "underlying_price": current_price,
                 "expiration": spread.expiration.isoformat() if spread.expiration else None,
@@ -1453,11 +1467,11 @@ class TradingBot:
             # Calculate position size based on configured method
             # max_risk per contract = (spread_width - credit) * 100
             max_risk_per_contract = spread.max_risk
-            fixed_fallback = STRATEGY_PARAMS['strategy'].get('contracts_per_trade', 5)
+            override = STRATEGY_PARAMS['strategy'].get('max_contracts_override')
             quantity = self.portfolio.calculate_position_size(
                 strategy=StrategyType.DAILY_INCOME,
                 max_risk_per_contract=max_risk_per_contract,
-                fixed_contracts=fixed_fallback,
+                max_contracts_override=override,
             )
 
             # Check portfolio risk limits before entry
@@ -1509,6 +1523,7 @@ class TradingBot:
                     "long_strike": spread.long_leg.strike,
                     "quantity": quantity,
                     "credit_received": spread.credit_received,
+                    "theoretical_mid_credit": spread.theoretical_mid_credit,
                     "max_risk": spread.max_risk * quantity,
                     "underlying_price": current_price,
                     "expiration": spread.expiration.isoformat() if spread.expiration else None,
