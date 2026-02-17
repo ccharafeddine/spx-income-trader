@@ -1,8 +1,8 @@
-# SPX Income Trader
+# The Daily Melt
 
 Fully automated options income system trading SPX 0DTE credit spreads. 100% mechanical strategy execution with zero human intervention, real-time position management, and a native desktop application for monitoring.
 
-Built with Python. Trades live through E*TRADE or Charles Schwab. Runs as a standalone desktop app on Windows and macOS.
+Built with Python. Trades live through E*TRADE or Charles Schwab. Runs as a standalone desktop app on Windows, Linux, and macOS.
 
 ---
 
@@ -49,9 +49,10 @@ The entire pipeline runs autonomously from market open to close. The bot handles
 - Real-time web UI with account summary, candlestick charts, and position monitoring
 - Audio alerts via Web Audio API: market open/close bell chimes, trade entry/exit tones, bar completion pings, and danger alerts (all mutable)
 - Signal log showing every detected setup with strikes, credit, risk, and SPX price
-- Trade journal with entry analysis (pulse bar checklist), market context, and exit review
+- Trade journal with monthly calendar view, entry analysis (pulse bar checklist), market context, and exit review
+- Daily journal capturing bars built, pulse bars, signals, rejections, and no-trade summaries
 - Risk status panel with drawdown tracking and win/loss streak counters
-- Filterable by strategy, direction, outcome, and date range
+- Filterable by strategy, direction, outcome, day type, and date range
 - PDT status badge with real-time slot count and next-frees date display
 - Hot-reloadable settings (strategy parameters, trading mode, credentials)
 - CSV export for offline analysis
@@ -72,11 +73,17 @@ The entire pipeline runs autonomously from market open to close. The bot handles
 
 ## Screenshots
 
-| Dashboard Overview | Trade Journal |
-|---|---|
-| ![Dashboard Overview](dashboard_overview.png) | ![Trade Journal](dashboard_journal.png) |
+**Dashboard Overview** - Bot status, strategy parameters, risk drawdown meters, SPX candlestick chart with pulse bar highlights, account summary, signal log, and trade history.
 
-The Overview tab shows bot status, SPX price, strategy parameters, open positions, signal log, and trade history with a P&L chart. The Trade Journal provides detailed entry analysis with a checklist of every gate the signal passed through, trade details (strikes, credit, risk/reward, duration), and exit analysis.
+![Dashboard Overview](screenshots/overview.png)
+
+**Trade Journal - Calendar View** - Monthly calendar showing per-day P&L, trade count, strategy tags, no-trade reasons, weekends, and market holidays. Click any day to expand its trades below.
+
+![Trade Journal Calendar](screenshots/journal_calendar.png)
+
+**Trade Journal - Trade Detail** - Entry analysis with a checklist of every gate the signal passed through, pulse bar details, strike rationale, market context, trade details (strikes, credit, risk/reward, duration), and exit analysis with post-trade review.
+
+![Trade Detail](screenshots/trade_detail.png)
 
 ---
 
@@ -130,8 +137,9 @@ python src/main.py
 python app_desktop.py
 
 # Pre-built desktop app (if available)
-# Windows: dist/SPX Income Trader/SPX Income Trader.exe
-# macOS:   dist/SPX Income Trader.app
+# Windows: dist/The Daily Melt/The Daily Melt.exe
+# Linux:   dist/SPXIncomeTrader/The Daily Melt
+# macOS:   dist/The Daily Melt.app
 ```
 
 **Broker Setup:**
@@ -159,7 +167,7 @@ py -3.13 -m venv .venv313
 .venv313\Scripts\activate
 pip install -r requirements.txt
 
-# Build (output: dist/SPX Income Trader/)
+# Build (output: dist/The Daily Melt/)
 python build/build_windows.py --clean
 
 # Debug build with console visible
@@ -193,7 +201,7 @@ python3.13 -m venv .venv313
 source .venv313/bin/activate
 pip install -r requirements.txt
 
-# Build (output: dist/SPX Income Trader.app)
+# Build (output: dist/The Daily Melt.app)
 python build/build_macos.py --clean
 ```
 
@@ -265,7 +273,7 @@ build/
     build_linux.py           # PyInstaller build script (Linux)
     build_macos.py           # py2app build script (macOS)
 
-tests/                       # 424 unit tests
+tests/                       # 433 unit tests
 
 app_desktop.py               # Desktop app entry point (pywebview + Flask)
 ```
@@ -274,7 +282,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask)
 
 ## Testing
 
-424 tests covering:
+433 tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows)
 - Position management (sizing, P&L calculation, exit triggers)
 - Risk gates (circuit breaker, position limits, credit quality)
@@ -282,6 +290,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask)
 - Bar building and market state management
 - Drawdown management and consecutive loss tracking
 - VIX data provider multi-source fallback chains
+- Daily journal persistence and API endpoints
 
 ```bash
 python -m pytest tests/ -v
@@ -293,15 +302,17 @@ The system also supports full dry-run mode for paper trading against live market
 
 ## Dry-Run Results
 
-Initial validation over 5 trading days (Feb 3-10, 2026) on a $50,000 simulated account:
+Validation over 6 trading days (Feb 3-13, 2026) on a $50,000 simulated account:
 
 | Metric | Value |
 |--------|-------|
-| Trading Days | 5 |
-| Trades | 4W / 1L |
-| Win Rate | 75% |
-| Total P&L | +$3,486 |
-| Return | +7.4% |
+| Trading Days | 6 |
+| Trades | 6 (5W / 1L) |
+| Win Rate | 83.3% |
+| Total P&L | +$3,915 |
+| Return | +7.83% |
+| Avg Win | +$918 |
+| Avg Loss | -$675 |
 
 These are simulated results using real-time SPX market data with Black-Scholes modeled option pricing. Live results will differ based on actual fills, slippage, and market conditions.
 

@@ -1,4 +1,4 @@
-# Building SPX Income Trader
+# Building The Daily Melt
 
 ## Windows
 
@@ -264,81 +264,6 @@ Options:
 | `--no-layout` | Skip Finder window layout (faster build) |
 
 This creates `dist/SPXIncomeTrader.dmg` with a drag-to-Applications layout.
-
-### 5. Code Signing
-
-Unsigned apps trigger Gatekeeper warnings on macOS ("app is damaged" or "unidentified developer"). For personal use this is fine - right-click > Open bypasses the warning. For distribution, sign the app:
-
-#### Ad-hoc signing (removes Gatekeeper "damaged" warning, no Apple account needed)
-
-```bash
-codesign --force --deep --sign - "dist/SPX Income Trader.app"
-```
-
-#### Signing with a Developer ID (required for distribution outside the App Store)
-
-1. Enroll in the [Apple Developer Program](https://developer.apple.com/programs/) ($99/year)
-2. Create a "Developer ID Application" certificate in Xcode or the developer portal
-3. Sign the app:
-
-```bash
-codesign --force --deep --sign "Developer ID Application: Your Name (TEAM_ID)" \
-    --options runtime \
-    --entitlements build/entitlements.plist \
-    "dist/SPX Income Trader.app"
-```
-
-4. Sign the DMG too:
-
-```bash
-codesign --force --sign "Developer ID Application: Your Name (TEAM_ID)" \
-    "dist/SPXIncomeTrader.dmg"
-```
-
-#### Verifying the signature
-
-```bash
-codesign --verify --verbose "dist/SPX Income Trader.app"
-spctl --assess --verbose "dist/SPX Income Trader.app"
-```
-
-### 6. Notarization (Optional, for public distribution)
-
-Notarization tells macOS that Apple has scanned your app and found no malware. Without it, users downloading the app from the internet will see extra Gatekeeper warnings.
-
-1. Ensure you have signed with a Developer ID certificate (step 5 above) and `--options runtime` was used
-2. Create an app-specific password at [appleid.apple.com](https://appleid.apple.com) (Security > App-Specific Passwords)
-3. Store credentials in the keychain:
-
-```bash
-xcrun notarytool store-credentials "AC_PASSWORD" \
-    --apple-id "your@email.com" \
-    --team-id "TEAM_ID" \
-    --password "app-specific-password"
-```
-
-4. Submit the DMG for notarization:
-
-```bash
-xcrun notarytool submit "dist/SPXIncomeTrader.dmg" \
-    --keychain-profile "AC_PASSWORD" \
-    --wait
-```
-
-5. Once approved, staple the ticket to the DMG:
-
-```bash
-xcrun stapler staple "dist/SPXIncomeTrader.dmg"
-```
-
-6. Verify:
-
-```bash
-xcrun stapler validate "dist/SPXIncomeTrader.dmg"
-spctl --assess --type open --context context:primary-signature "dist/SPXIncomeTrader.dmg"
-```
-
-The full cycle (sign + notarize + staple) takes about 5-10 minutes. Apple's notarization service runs automated security checks and typically approves within 2-3 minutes.
 
 ---
 
