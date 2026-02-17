@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SPX Income Trader</title>
+<title>The Daily Melt</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -68,12 +68,20 @@ header::after {
   gap: 16px;
 }
 .logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--font-ui);
   font-size: 17px;
   font-weight: 700;
   color: #fff;
   letter-spacing: 3px;
   text-shadow: 0 0 20px rgba(6, 182, 212, 0.3);
+}
+.logo img {
+  height: 30px;
+  width: 30px;
+  border-radius: 6px;
 }
 .bot-indicator {
   display: flex;
@@ -1864,7 +1872,7 @@ header::after {
 
 <header>
   <div class="header-left">
-    <span class="logo">SPX INCOME TRADER</span>
+    <span class="logo"><img src="/static/icon.png" alt="">THE DAILY MELT</span>
     <div class="bot-indicator">
       <span class="dot" id="bot-dot"></span>
       <span id="bot-status-text">--</span>
@@ -4686,7 +4694,7 @@ document.addEventListener('keydown', function(e) {
 </script>
 
 <footer class="app-footer">
-  SPX Income Trader <span id="app-version">v--</span>
+  The Daily Melt <span id="app-version">v--</span>
 </footer>
 
 </body>
