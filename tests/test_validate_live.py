@@ -3,6 +3,8 @@ Tests for POST /api/settings/validate-live endpoint.
 
 Validates the 6-check pre-live checklist: credentials, environment,
 connection, options permissions, max contracts, and account size.
+
+Now broker-aware: tests cover both E*TRADE and Schwab code paths.
 """
 
 import pytest
@@ -39,8 +41,31 @@ def _find_check(data, check_id):
     return None
 
 
+def _etrade_settings(**overrides):
+    """Build a settings dict with E*TRADE as active broker."""
+    base = {
+        'broker': {'active': 'etrade'},
+        'portfolio': {'account_size': 50000, 'position_sizing': {'max_contracts': 1}},
+    }
+    base.update(overrides)
+    return base
+
+
+def _schwab_settings(**overrides):
+    """Build a settings dict with Schwab as active broker."""
+    base = {
+        'broker': {
+            'active': 'schwab',
+            'schwab': {'app_key': 'key', 'app_secret': 'secret', 'account_number': 'acct'},
+        },
+        'portfolio': {'account_size': 50000, 'position_sizing': {'max_contracts': 1}},
+    }
+    base.update(overrides)
+    return base
+
+
 # --------------------------------------------------------------------------
-# Test 1: Missing credentials blocks live trading
+# E*TRADE Tests
 # --------------------------------------------------------------------------
 
 @patch('dashboard.app.get_etrade_credentials')
@@ -52,9 +77,7 @@ def test_missing_credentials_blocks(mock_settings, mock_creds, client):
         'account_id': 'acct',
         'sandbox': False,
     }
-    mock_settings.return_value = {
-        'portfolio': {'account_size': 50000, 'position_sizing': {'max_contracts': 1}},
-    }
+    mock_settings.return_value = _etrade_settings()
 
     data = _post_validate(client)
 
@@ -66,10 +89,6 @@ def test_missing_credentials_blocks(mock_settings, mock_creds, client):
     assert 'Skipped' in _find_check(data, 'connection')['detail']
 
 
-# --------------------------------------------------------------------------
-# Test 2: Sandbox warning allows proceed
-# --------------------------------------------------------------------------
-
 @patch('dashboard.app.get_etrade_credentials')
 @patch('dashboard.app._load_settings')
 def test_sandbox_warning_allows_proceed(mock_settings, mock_creds, client):
@@ -79,16 +98,14 @@ def test_sandbox_warning_allows_proceed(mock_settings, mock_creds, client):
         'account_id': 'acct',
         'sandbox': True,
     }
-    mock_settings.return_value = {
-        'portfolio': {'account_size': 50000, 'position_sizing': {'max_contracts': 1}},
-    }
+    mock_settings.return_value = _etrade_settings()
 
     mock_broker = MagicMock()
     mock_broker.connect.return_value = True
     mock_broker.get_account_balance.return_value = {'net_account_value': 50000.0}
-    mock_broker.get_option_expirations.return_value = ['2026-02-20', '2026-02-27']
+    mock_broker.get_options_chain.return_value = [{'strike': 5000}, {'strike': 5010}]
 
-    with patch('src.brokers.etrade_broker.ETradeBroker', return_value=mock_broker):
+    with patch('src.brokers.broker_factory.get_broker', return_value=mock_broker):
         data = _post_validate(client)
 
     assert data['can_proceed'] is True
@@ -96,10 +113,6 @@ def test_sandbox_warning_allows_proceed(mock_settings, mock_creds, client):
     assert env_check['passed'] is False  # sandbox = warning
     assert env_check['severity'] == 'warning'
 
-
-# --------------------------------------------------------------------------
-# Test 3: Connection failure blocks
-# --------------------------------------------------------------------------
 
 @patch('dashboard.app.get_etrade_credentials')
 @patch('dashboard.app._load_settings')
@@ -110,23 +123,17 @@ def test_connection_failure_blocks(mock_settings, mock_creds, client):
         'account_id': 'acct',
         'sandbox': False,
     }
-    mock_settings.return_value = {
-        'portfolio': {'account_size': 50000, 'position_sizing': {'max_contracts': 1}},
-    }
+    mock_settings.return_value = _etrade_settings()
 
     mock_broker = MagicMock()
     mock_broker.connect.return_value = False
 
-    with patch('src.brokers.etrade_broker.ETradeBroker', return_value=mock_broker):
+    with patch('src.brokers.broker_factory.get_broker', return_value=mock_broker):
         data = _post_validate(client)
 
     assert data['can_proceed'] is False
     assert _find_check(data, 'connection')['passed'] is False
 
-
-# --------------------------------------------------------------------------
-# Test 4: Empty options expirations blocks
-# --------------------------------------------------------------------------
 
 @patch('dashboard.app.get_etrade_credentials')
 @patch('dashboard.app._load_settings')
@@ -137,25 +144,19 @@ def test_options_failure_blocks(mock_settings, mock_creds, client):
         'account_id': 'acct',
         'sandbox': False,
     }
-    mock_settings.return_value = {
-        'portfolio': {'account_size': 50000, 'position_sizing': {'max_contracts': 1}},
-    }
+    mock_settings.return_value = _etrade_settings()
 
     mock_broker = MagicMock()
     mock_broker.connect.return_value = True
     mock_broker.get_account_balance.return_value = {'net_account_value': 50000.0}
-    mock_broker.get_option_expirations.return_value = []
+    mock_broker.get_options_chain.return_value = []
 
-    with patch('src.brokers.etrade_broker.ETradeBroker', return_value=mock_broker):
+    with patch('src.brokers.broker_factory.get_broker', return_value=mock_broker):
         data = _post_validate(client)
 
     assert data['can_proceed'] is False
     assert _find_check(data, 'options')['passed'] is False
 
-
-# --------------------------------------------------------------------------
-# Test 5: All checks pass
-# --------------------------------------------------------------------------
 
 @patch('dashboard.app.get_etrade_credentials')
 @patch('dashboard.app._load_settings')
@@ -166,26 +167,22 @@ def test_all_checks_pass(mock_settings, mock_creds, client):
         'account_id': 'acct',
         'sandbox': False,
     }
-    mock_settings.return_value = {
-        'portfolio': {'account_size': 50000, 'position_sizing': {'max_contracts': 2}},
-    }
+    mock_settings.return_value = _etrade_settings(
+        portfolio={'account_size': 50000, 'position_sizing': {'max_contracts': 2}}
+    )
 
     mock_broker = MagicMock()
     mock_broker.connect.return_value = True
     mock_broker.get_account_balance.return_value = {'net_account_value': 50000.0}
-    mock_broker.get_option_expirations.return_value = ['2026-02-20', '2026-02-27']
+    mock_broker.get_options_chain.return_value = [{'strike': 5000}, {'strike': 5010}]
 
-    with patch('src.brokers.etrade_broker.ETradeBroker', return_value=mock_broker):
+    with patch('src.brokers.broker_factory.get_broker', return_value=mock_broker):
         data = _post_validate(client)
 
     assert data['can_proceed'] is True
     assert data['all_passed'] is True
     assert len(data['checks']) == 6
 
-
-# --------------------------------------------------------------------------
-# Test 6: Warnings only still allows proceed
-# --------------------------------------------------------------------------
 
 @patch('dashboard.app.get_etrade_credentials')
 @patch('dashboard.app._load_settings')
@@ -196,20 +193,20 @@ def test_warnings_only_allows_proceed(mock_settings, mock_creds, client):
         'account_id': 'acct',
         'sandbox': True,  # warning: sandbox
     }
-    mock_settings.return_value = {
-        'portfolio': {
+    mock_settings.return_value = _etrade_settings(
+        portfolio={
             'account_size': 50000,
             'position_sizing': {'max_contracts': 10},  # warning: >2
-        },
-    }
+        }
+    )
 
     mock_broker = MagicMock()
     mock_broker.connect.return_value = True
     # 20% diff from config -> warning
     mock_broker.get_account_balance.return_value = {'net_account_value': 40000.0}
-    mock_broker.get_option_expirations.return_value = ['2026-02-20']
+    mock_broker.get_options_chain.return_value = [{'strike': 5000}]
 
-    with patch('src.brokers.etrade_broker.ETradeBroker', return_value=mock_broker):
+    with patch('src.brokers.broker_factory.get_broker', return_value=mock_broker):
         data = _post_validate(client)
 
     assert data['can_proceed'] is True
@@ -219,3 +216,61 @@ def test_warnings_only_allows_proceed(mock_settings, mock_creds, client):
     assert _find_check(data, 'environment')['passed'] is False
     assert _find_check(data, 'contracts')['passed'] is False
     assert _find_check(data, 'account_size')['passed'] is False
+
+
+# --------------------------------------------------------------------------
+# Schwab Tests
+# --------------------------------------------------------------------------
+
+@patch('dashboard.app.is_schwab_configured', return_value=True)
+@patch('dashboard.app._load_settings')
+def test_schwab_all_checks_pass(mock_settings, mock_schwab_cfg, client):
+    mock_settings.return_value = _schwab_settings(
+        portfolio={'account_size': 50000, 'position_sizing': {'max_contracts': 1}}
+    )
+
+    mock_broker = MagicMock()
+    mock_broker.auth.is_authenticated.return_value = True
+    mock_broker.get_account_balance.return_value = {'net_account_value': 50000.0}
+    mock_broker.get_options_chain.return_value = [{'strike': 5000}, {'strike': 5010}]
+
+    with patch('src.brokers.broker_factory.get_broker', return_value=mock_broker):
+        data = _post_validate(client)
+
+    assert data['can_proceed'] is True
+    assert data['all_passed'] is True
+    assert len(data['checks']) == 6
+    # Schwab always passes environment check (no sandbox concept)
+    assert _find_check(data, 'environment')['passed'] is True
+
+
+@patch('dashboard.app.is_schwab_configured', return_value=False)
+@patch('dashboard.app._load_settings')
+def test_schwab_missing_creds_blocks(mock_settings, mock_schwab_cfg, client):
+    mock_settings.return_value = {
+        'broker': {'active': 'schwab', 'schwab': {}},
+        'portfolio': {'account_size': 50000, 'position_sizing': {'max_contracts': 1}},
+    }
+
+    data = _post_validate(client)
+
+    assert data['can_proceed'] is False
+    assert _find_check(data, 'credentials')['passed'] is False
+
+
+# --------------------------------------------------------------------------
+# Dry Run broker test
+# --------------------------------------------------------------------------
+
+@patch('dashboard.app._load_settings')
+def test_dry_run_blocks_live(mock_settings, client):
+    mock_settings.return_value = {
+        'broker': {'active': 'dry_run'},
+        'portfolio': {'account_size': 50000, 'position_sizing': {'max_contracts': 1}},
+    }
+
+    data = _post_validate(client)
+
+    assert data['can_proceed'] is False
+    assert _find_check(data, 'credentials')['passed'] is False
+    assert 'dry_run' in _find_check(data, 'credentials')['detail']

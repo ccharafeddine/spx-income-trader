@@ -148,8 +148,7 @@ class SchwabBroker(BrokerInterface):
             return self._account_hash
 
         client = self._get_client()
-        resp = client.get_account_numbers()
-        self._check_response(resp, "get_account_numbers")
+        resp = self._call_api(client.get_account_numbers, context="get_account_numbers")
 
         accounts = resp.json()
         if not accounts:
@@ -186,6 +185,67 @@ class SchwabBroker(BrokerInterface):
                 response=body,
             )
 
+    def _call_api(self, func, *args, context: str = "", retry_count: int = 0, **kwargs):
+        """Execute a schwab-py client call with retry logic.
+
+        Handles:
+        - 401 Unauthorized: re-creates client and retries once
+        - 429 Rate Limited: exponential backoff
+        - 500/502/503/504: exponential backoff
+        - Network errors: exponential backoff
+        """
+        try:
+            resp = func(*args, **kwargs)
+
+            # 401: token may have expired, schwab-py auto-refresh may have failed
+            if resp.status_code == 401 and retry_count == 0:
+                logger.warning(f"HTTP 401 ({context}) - re-creating client and retrying")
+                self.auth._client = None  # Force client re-creation
+                new_client = self._get_client()
+                # Re-bind the function to the new client
+                method_name = func.__name__
+                new_func = getattr(new_client, method_name, None)
+                if new_func:
+                    return self._call_api(new_func, *args, context=context,
+                                          retry_count=retry_count + 1, **kwargs)
+                # If we can't re-bind, fall through to error
+                self._check_response(resp, context)
+
+            # 429: rate limited
+            if resp.status_code == 429 and retry_count < self.MAX_ORDER_RETRIES:
+                delay = self.RETRY_BASE_DELAY * (2 ** (retry_count + 1))
+                logger.warning(f"Rate limited 429 ({context}), backing off {delay:.1f}s "
+                               f"(attempt {retry_count + 1})")
+                time.sleep(delay)
+                return self._call_api(func, *args, context=context,
+                                      retry_count=retry_count + 1, **kwargs)
+
+            # 5xx: transient server errors
+            if resp.status_code in (500, 502, 503, 504) and retry_count < self.MAX_ORDER_RETRIES:
+                delay = self.RETRY_BASE_DELAY * (2 ** retry_count)
+                logger.warning(f"Transient error {resp.status_code} ({context}), "
+                               f"retrying in {delay:.1f}s (attempt {retry_count + 1})")
+                time.sleep(delay)
+                return self._call_api(func, *args, context=context,
+                                      retry_count=retry_count + 1, **kwargs)
+
+            self._check_response(resp, context)
+            return resp
+
+        except SchwabAPIError:
+            raise
+        except Exception as e:
+            if retry_count < self.MAX_ORDER_RETRIES:
+                delay = self.RETRY_BASE_DELAY * (2 ** retry_count)
+                logger.warning(f"Request error ({context}): {e}, "
+                               f"retrying in {delay:.1f}s (attempt {retry_count + 1})")
+                time.sleep(delay)
+                return self._call_api(func, *args, context=context,
+                                      retry_count=retry_count + 1, **kwargs)
+            raise SchwabAPIError(
+                f"Request failed after {self.MAX_ORDER_RETRIES} retries ({context}): {e}"
+            )
+
     # =========================================================================
     # MARKET DATA METHODS
     # =========================================================================
@@ -198,8 +258,8 @@ class SchwabBroker(BrokerInterface):
         schwab_symbol = '$SPX' if symbol.upper() in ('SPX', '$SPX.X', '^GSPC') else symbol
 
         try:
-            resp = client.get_quote(schwab_symbol)
-            self._check_response(resp, f"get_quote({schwab_symbol})")
+            resp = self._call_api(client.get_quote, schwab_symbol,
+                                  context=f"get_quote({schwab_symbol})")
 
             data = resp.json()
             quote_data = data.get(schwab_symbol, {})
@@ -245,14 +305,15 @@ class SchwabBroker(BrokerInterface):
             exp_date = dt.strptime(expiration, '%Y-%m-%d').date()
 
             from schwab.client import Client
-            resp = client.get_option_chain(
+            resp = self._call_api(
+                client.get_option_chain,
                 schwab_symbol,
                 contract_type=Client.Options.ContractType.ALL,
                 from_date=exp_date,
                 to_date=exp_date,
                 strike_count=50,
+                context=f"get_option_chain({schwab_symbol}, {expiration})",
             )
-            self._check_response(resp, f"get_option_chain({schwab_symbol}, {expiration})")
 
             data = resp.json()
             return self._transform_chain(data, expiration)
@@ -438,8 +499,8 @@ class SchwabBroker(BrokerInterface):
         # Place order
         try:
             client = self._get_client()
-            resp = client.place_order(account_hash, order)
-            self._check_response(resp, "place_order")
+            resp = self._call_api(client.place_order, account_hash, order,
+                                  context="place_order")
 
             order_id = self._extract_order_id(resp)
             if not order_id:
@@ -511,8 +572,8 @@ class SchwabBroker(BrokerInterface):
 
         try:
             client = self._get_client()
-            resp = client.place_order(account_hash, order)
-            self._check_response(resp, "close_spread")
+            resp = self._call_api(client.place_order, account_hash, order,
+                                  context="close_spread")
 
             order_id = self._extract_order_id(resp)
             if not order_id:
@@ -544,8 +605,8 @@ class SchwabBroker(BrokerInterface):
             client = self._get_client()
             account_hash = self._get_account_hash()
 
-            resp = client.get_order(int(order_id), account_hash)
-            self._check_response(resp, f"get_order({order_id})")
+            resp = self._call_api(client.get_order, int(order_id), account_hash,
+                                  context=f"get_order({order_id})")
 
             order_data = resp.json()
             return self._parse_order_response(order_data)
@@ -712,8 +773,9 @@ class SchwabBroker(BrokerInterface):
         account_hash = self._get_account_hash()
 
         from schwab.client import Client
-        resp = client.get_account(account_hash, fields=[Client.Account.Fields.POSITIONS])
-        self._check_response(resp, "get_account")
+        resp = self._call_api(client.get_account, account_hash,
+                              fields=[Client.Account.Fields.POSITIONS],
+                              context="get_account")
 
         data = resp.json()
         acct = data.get('securitiesAccount', {})

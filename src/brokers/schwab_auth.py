@@ -23,9 +23,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict
 
+import pytz
+
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from config.settings import BASE_DIR
+
+_ET = pytz.timezone('US/Eastern')
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +105,11 @@ class SchwabAuth:
                 }
 
             created_at = datetime.fromisoformat(created_str)
+            # Ensure timezone-aware comparison (ET-aware)
+            if created_at.tzinfo is None:
+                created_at = _ET.localize(created_at)
             expires_at = created_at + timedelta(days=REFRESH_TOKEN_LIFETIME_DAYS)
-            now = datetime.now()
+            now = datetime.now(_ET)
             remaining = expires_at - now
             hours_remaining = max(0, remaining.total_seconds() / 3600)
 
@@ -208,7 +215,7 @@ class SchwabAuth:
     def _write_metadata(self):
         """Write token creation timestamp to metadata file."""
         meta = {
-            'token_created_at': datetime.now().isoformat(),
+            'token_created_at': datetime.now(_ET).isoformat(),
             'refresh_token_lifetime_days': REFRESH_TOKEN_LIFETIME_DAYS,
         }
         Path(self._meta_path).parent.mkdir(parents=True, exist_ok=True)

@@ -2430,10 +2430,20 @@ def api_set_trading_mode():
     if mode not in ('dry-run', 'live'):
         return jsonify({'error': 'mode must be "dry-run" or "live"'}), 400
 
-    if mode == 'live' and not is_etrade_configured():
-        return jsonify({
-            'error': 'Cannot enable live trading without E*TRADE credentials configured.'
-        }), 400
+    if mode == 'live':
+        active = STRATEGY_PARAMS.get('broker', {}).get('active', 'dry_run')
+        if active == 'dry_run':
+            return jsonify({
+                'error': 'Cannot enable live trading with dry_run broker. Select Schwab or E*TRADE first.'
+            }), 400
+        if active == 'schwab' and not is_schwab_configured():
+            return jsonify({
+                'error': 'Cannot enable live trading without Schwab credentials configured.'
+            }), 400
+        if active == 'etrade' and not is_etrade_configured():
+            return jsonify({
+                'error': 'Cannot enable live trading without E*TRADE credentials configured.'
+            }), 400
 
     if save_trading_mode(mode):
         return jsonify({
@@ -2452,43 +2462,72 @@ def api_validate_live():
     settings = _load_settings()
     portfolio_cfg = settings.get('portfolio', {})
     sizing_cfg = portfolio_cfg.get('position_sizing', {})
+    active_broker = settings.get('broker', {}).get('active', 'dry_run')
 
-    # --- Check 1: Credentials ---
-    creds = get_etrade_credentials()
-    creds_ok = bool(
-        creds.get('consumer_key')
-        and creds.get('consumer_secret')
-        and creds.get('account_id')
-    )
+    # --- Check 1: Credentials (broker-aware) ---
+    if active_broker == 'schwab':
+        creds_ok = is_schwab_configured()
+        creds_detail = ('Schwab credentials configured' if creds_ok
+                        else 'Missing Schwab app_key or app_secret')
+    elif active_broker == 'etrade':
+        creds = get_etrade_credentials()
+        creds_ok = bool(
+            creds.get('consumer_key')
+            and creds.get('consumer_secret')
+            and creds.get('account_id')
+        )
+        creds_detail = ('All E*TRADE credentials configured' if creds_ok
+                        else 'Missing consumer_key, consumer_secret, or account_id')
+    else:
+        creds_ok = False
+        creds_detail = f'Active broker is "{active_broker}" - select Schwab or E*TRADE for live trading'
+
     checks.append({
         'id': 'credentials',
         'label': 'API Credentials Set',
         'severity': 'critical',
         'passed': creds_ok,
-        'detail': 'All credentials configured' if creds_ok
-                  else 'Missing consumer_key, consumer_secret, or account_id',
+        'detail': creds_detail,
     })
 
-    # --- Check 2: Environment is Production ---
-    sandbox = creds.get('sandbox', True)
-    env_ok = not sandbox
+    # --- Check 2: Environment (broker-aware) ---
+    if active_broker == 'schwab':
+        # Schwab has no sandbox concept in the same way; always production API
+        env_ok = True
+        env_detail = 'Schwab API (production)'
+    elif active_broker == 'etrade':
+        creds = get_etrade_credentials()
+        sandbox = creds.get('sandbox', True)
+        env_ok = not sandbox
+        env_detail = ('Production environment' if env_ok
+                      else 'Sandbox mode is enabled - live orders will hit the sandbox API')
+    else:
+        env_ok = False
+        env_detail = 'No live broker selected'
+
     checks.append({
         'id': 'environment',
         'label': 'Environment is Production',
         'severity': 'warning',
         'passed': env_ok,
-        'detail': 'Production environment' if env_ok
-                  else 'Sandbox mode is enabled - live orders will hit the sandbox API',
+        'detail': env_detail,
     })
 
     # --- Checks 3-4 require credentials ---
+    broker_label = 'Schwab' if active_broker == 'schwab' else 'E*TRADE'
     broker = None
     balance_data = None
+
     if creds_ok:
         try:
-            from src.brokers.etrade_broker import ETradeBroker
-            broker = ETradeBroker()
-            connected = broker.connect()
+            from src.brokers.broker_factory import get_broker
+            broker = get_broker(settings)
+            if active_broker == 'schwab':
+                connected = broker.auth.is_authenticated()
+            elif active_broker == 'etrade':
+                connected = broker.connect() if hasattr(broker, 'connect') else broker.auth.is_authenticated()
+            else:
+                connected = False
         except Exception as e:
             connected = False
             logger.error(f"Validate-live broker connect failed: {e}")
@@ -2504,11 +2543,11 @@ def api_validate_live():
                 conn_detail = f'Balance fetch failed: {e}'
         else:
             conn_ok = False
-            conn_detail = 'Could not connect to E*TRADE API - check tokens'
+            conn_detail = f'Could not connect to {broker_label} API - check tokens/credentials'
 
         checks.append({
             'id': 'connection',
-            'label': 'E*TRADE API Connection',
+            'label': f'{broker_label} API Connection',
             'severity': 'critical',
             'passed': conn_ok,
             'detail': conn_detail,
@@ -2517,11 +2556,14 @@ def api_validate_live():
         # Check 4: SPX Options Permissions
         if conn_ok:
             try:
-                expirations = broker.get_option_expirations('SPX')
-                opts_ok = len(expirations) > 0
-                opts_detail = (f'{len(expirations)} expiration dates available'
+                from datetime import date as _date, timedelta as _td
+                # Use options chain query as a proxy for permissions
+                tomorrow = _date.today() + _td(days=1)
+                chain = broker.get_options_chain('SPX', tomorrow.strftime('%Y-%m-%d'))
+                opts_ok = len(chain) > 0
+                opts_detail = (f'{len(chain)} strikes available'
                                if opts_ok
-                               else 'No SPX option expirations returned - options may not be enabled')
+                               else 'No SPX option data returned - options may not be enabled')
             except Exception as e:
                 opts_ok = False
                 opts_detail = f'Options query failed: {e}'
@@ -2540,7 +2582,7 @@ def api_validate_live():
         # Credentials missing - skip connection checks
         checks.append({
             'id': 'connection',
-            'label': 'E*TRADE API Connection',
+            'label': f'{broker_label} API Connection',
             'severity': 'critical',
             'passed': False,
             'detail': 'Skipped - credentials not configured',
