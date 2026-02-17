@@ -2342,14 +2342,6 @@ def api_risk_status():
         'breaker_triggered': False,
         'period_label': '',
     }
-    consecutive = {
-        'enabled': consec_cfg.get('enabled', False),
-        'count': 0,
-        'max_consecutive': consec_cfg.get('max_consecutive', 5),
-        'paused': False,
-        'resume_time': None,
-    }
-
     try:
         dd_path = BASE_DIR / 'database' / 'drawdown_state.json'
         if dd_path.exists():
@@ -2372,15 +2364,65 @@ def api_risk_status():
                 monthly['realized_pnl'] = round(dd.get('monthly_realized_pnl', 0.0), 2)
                 monthly['breaker_triggered'] = dd.get('monthly_breaker_triggered', False)
             monthly['period_label'] = today.strftime('%b %Y')
+    except Exception:
+        pass
 
-            # Consecutive losses (always current)
-            consecutive['count'] = dd.get('consecutive_losses', 0)
-            pause_str = dd.get('consec_pause_until')
-            if pause_str:
-                pause_dt = _dt.fromisoformat(pause_str)
-                if _dt.now() < pause_dt:
-                    consecutive['paused'] = True
-                    consecutive['resume_time'] = pause_str
+    # Compute win/loss streaks from trade history
+    streaks = {'win_streak': 0, 'loss_streak': 0, 'active': 'none'}
+    try:
+        db_path = BASE_DIR / 'database' / 'trades.db'
+        if db_path.exists():
+            import sqlite3
+            conn = sqlite3.connect(str(db_path), timeout=10)
+            rows = conn.execute(
+                "SELECT pnl FROM trades WHERE LOWER(status) = 'closed' AND pnl IS NOT NULL "
+                "ORDER BY exit_time DESC"
+            ).fetchall()
+            conn.close()
+
+            if rows:
+                # Determine active streak from most recent trade
+                first_pnl = rows[0][0]
+                if first_pnl > 0:
+                    streaks['active'] = 'win'
+                elif first_pnl < 0:
+                    streaks['active'] = 'loss'
+
+                # Count active streak length
+                active_count = 0
+                for r in rows:
+                    pnl = r[0]
+                    if streaks['active'] == 'win' and pnl > 0:
+                        active_count += 1
+                    elif streaks['active'] == 'loss' and pnl < 0:
+                        active_count += 1
+                    else:
+                        break
+
+                if streaks['active'] == 'win':
+                    streaks['win_streak'] = active_count
+                elif streaks['active'] == 'loss':
+                    streaks['loss_streak'] = active_count
+
+                # Count previous (frozen) streak from remaining trades
+                remaining = rows[active_count:]
+                if remaining:
+                    prev_count = 0
+                    prev_pnl = remaining[0][0]
+                    if prev_pnl > 0:
+                        for r in remaining:
+                            if r[0] > 0:
+                                prev_count += 1
+                            else:
+                                break
+                        streaks['win_streak'] = prev_count
+                    elif prev_pnl < 0:
+                        for r in remaining:
+                            if r[0] < 0:
+                                prev_count += 1
+                            else:
+                                break
+                        streaks['loss_streak'] = prev_count
     except Exception:
         pass
 
@@ -2388,7 +2430,7 @@ def api_risk_status():
         'daily': daily,
         'weekly': weekly,
         'monthly': monthly,
-        'consecutive': consecutive,
+        'streaks': streaks,
     })
 
 

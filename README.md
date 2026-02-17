@@ -8,7 +8,7 @@ Built with Python. Trades live through E*TRADE or Charles Schwab. Runs as a stan
 
 ## How It Works
 
-The system implements Phil Newton's "Production Line Trading" methodology, a rules-based approach to selling option premium on the S&P 500 index.
+A rules-based approach to selling option premium on the S&P 500 index using momentum and mean-reversion patterns.
 
 1. **Scan** - Monitors 30-minute SPX bars for pulse bar momentum patterns (price closing in the top or bottom 10% of the bar's range)
 2. **Confirm** - Waits for the next bar to break the pulse bar's high or low, confirming directional momentum
@@ -47,8 +47,10 @@ The entire pipeline runs autonomously from market open to close. The bot handles
 
 **Dashboard**
 - Real-time web UI with account summary, candlestick charts, and position monitoring
+- Audio alerts via Web Audio API: market open/close bell chimes, trade entry/exit tones, bar completion pings, and danger alerts (all mutable)
 - Signal log showing every detected setup with strikes, credit, risk, and SPX price
 - Trade journal with entry analysis (pulse bar checklist), market context, and exit review
+- Risk status panel with drawdown tracking and win/loss streak counters
 - Filterable by strategy, direction, outcome, and date range
 - PDT status badge with real-time slot count and next-frees date display
 - Hot-reloadable settings (strategy parameters, trading mode, credentials)
@@ -200,6 +202,11 @@ src/
         pulse_detector.py    # Pulse bar pattern detection
         bollinger_filter.py  # Bollinger Band filter and trend bias
         pdt_tracker.py       # Pattern Day Trader rule tracking and entry gating
+        drawdown_manager.py  # Drawdown tracking and circuit breakers
+    data/
+        yahoo_finance.py     # Real-time SPX/VIX quotes
+        market_data.py       # Market data abstraction
+        vix_provider.py      # VIX data with multi-source fallback
     brokers/
         base.py              # Abstract broker interface
         broker_factory.py    # Broker selection and instantiation
@@ -212,9 +219,6 @@ src/
         bar.py               # Bar dataclass
         spread.py            # CreditSpread, OptionLeg models
         trade.py             # Trade record, TradeStatus enum
-    data/
-        yahoo_finance.py     # Real-time SPX/VIX quotes
-        market_data.py       # Market data abstraction
     utils/
         app_paths.py         # Cross-platform path resolution
         logging.py           # Structured logging with credential masking
@@ -249,14 +253,14 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask)
 
 ## Testing
 
-424 unit tests covering:
+424 tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows)
 - Position management (sizing, P&L calculation, exit triggers)
 - Risk gates (circuit breaker, position limits, credit quality)
 - PDT compliance tracking and entry gating
 - Bar building and market state management
 - Drawdown management and consecutive loss tracking
-- VIX data provider fallback chains
+- VIX data provider multi-source fallback chains
 
 ```bash
 python -m pytest tests/ -v

@@ -2462,7 +2462,15 @@ class SoundManager {
   }
   init() {
     if (!this.ctx) {
-      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      try {
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        console.log('[Sound] AudioContext initialized');
+      } catch (e) {
+        console.warn('[Sound] AudioContext failed:', e);
+      }
+    }
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume();
     }
   }
   _tone(freq, duration, vol, type) {
@@ -2480,37 +2488,51 @@ class SoundManager {
   }
   play(type) {
     if (this.muted || !this.ctx) return;
+    console.debug('[Sound]', type);
     switch (type) {
       case 'bar-complete':
-        this._tone(800, 0.05, 0.05, 'sine');
+        this._tone(800, 0.05, 0.12, 'sine');
         break;
       case 'pulse-detected': {
-        this._tone(600, 0.08, 0.08, 'sine');
-        setTimeout(() => this._tone(900, 0.08, 0.08, 'sine'), 100);
+        this._tone(600, 0.08, 0.18, 'sine');
+        setTimeout(() => this._tone(900, 0.08, 0.18, 'sine'), 100);
         break;
       }
       case 'trade-opened': {
-        [523, 659, 784].forEach(f => this._tone(f, 0.2, 0.06, 'sine'));
+        [523, 659, 784].forEach(f => this._tone(f, 0.2, 0.25, 'sine'));
         break;
       }
       case 'trade-closed-profit': {
-        this._tone(523, 0.1, 0.06, 'sine');
-        setTimeout(() => this._tone(659, 0.1, 0.06, 'sine'), 100);
-        setTimeout(() => this._tone(784, 0.15, 0.06, 'sine'), 200);
+        this._tone(523, 0.1, 0.25, 'sine');
+        setTimeout(() => this._tone(659, 0.1, 0.25, 'sine'), 100);
+        setTimeout(() => this._tone(784, 0.15, 0.25, 'sine'), 200);
         break;
       }
       case 'trade-closed-loss':
-        this._tone(220, 0.3, 0.06, 'sine');
+        this._tone(220, 0.3, 0.25, 'sine');
         break;
       case 'alert': {
-        this._tone(1000, 0.06, 0.1, 'square');
-        setTimeout(() => this._tone(1000, 0.06, 0.1, 'square'), 120);
+        this._tone(1000, 0.06, 0.3, 'square');
+        setTimeout(() => this._tone(1000, 0.06, 0.3, 'square'), 120);
+        break;
+      }
+      case 'market-open': {
+        this._tone(523, 0.3, 0.25, 'sine');
+        setTimeout(() => this._tone(659, 0.3, 0.25, 'sine'), 150);
+        setTimeout(() => this._tone(784, 0.5, 0.3, 'sine'), 300);
+        break;
+      }
+      case 'market-close': {
+        this._tone(784, 0.3, 0.2, 'sine');
+        setTimeout(() => this._tone(659, 0.3, 0.2, 'sine'), 200);
+        setTimeout(() => this._tone(523, 0.5, 0.25, 'sine'), 400);
         break;
       }
     }
   }
 }
 const soundMgr = new SoundManager();
+soundMgr.init();  // eager init (may start suspended, user interaction resumes)
 ['click', 'keydown', 'touchstart'].forEach(evt => {
   document.addEventListener(evt, () => soundMgr.init(), { once: true });
 });
@@ -2531,6 +2553,9 @@ let prevClosedIds = new Set();
 let prevDangerIds = new Set();
 let initialLoad = true;
 let latestTodayData = null;
+let bellPlayedOpen = false;
+let bellPlayedClose = false;
+let prevMarketOpen = null;
 
 // ---------------------------------------------------------------
 // Helpers
@@ -2834,6 +2859,21 @@ async function updateStatus() {
   const ms = document.getElementById('market-status');
   ms.textContent = d.market.is_open ? 'OPEN' : 'CLOSED';
   ms.className = 'status-value ' + (d.market.is_open ? 'positive' : '');
+
+  // Market bell sounds on state transition
+  const marketNowOpen = d.market.is_open;
+  if (prevMarketOpen !== null) {
+    if (marketNowOpen && !prevMarketOpen && !bellPlayedOpen) {
+      soundMgr.play('market-open');
+      bellPlayedOpen = true;
+      bellPlayedClose = false;
+    } else if (!marketNowOpen && prevMarketOpen && !bellPlayedClose) {
+      soundMgr.play('market-close');
+      bellPlayedClose = true;
+      bellPlayedOpen = false;
+    }
+  }
+  prevMarketOpen = marketNowOpen;
 
   // Next bar
   const nb = document.getElementById('next-bar');
