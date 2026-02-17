@@ -59,12 +59,12 @@ The entire pipeline runs autonomously from market open to close. The bot handles
 **Desktop Application**
 - Native window via pywebview (not a browser wrapper)
 - System tray with minimize-to-tray support
-- Available for Windows (PyInstaller) and macOS (py2app)
+- Available for Windows (PyInstaller), Linux (PyInstaller + optional AppImage), and macOS (py2app)
 - Headless mode for running without a UI
 
 **Data & Storage**
 - SQLite database with WAL mode for concurrent read/write access
-- OS keychain credential storage (Windows Credential Manager / macOS Keychain)
+- OS keychain credential storage (Windows Credential Manager / macOS Keychain / Linux Secret Service)
 - Automatic database migrations on startup
 - Signal log rotation at 5,000 entries
 
@@ -166,6 +166,25 @@ python build/build_windows.py --clean
 python build/build_windows.py --clean --debug
 ```
 
+**Linux (PyInstaller):**
+
+```bash
+# Install system dependencies (Ubuntu/Debian)
+sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1
+sudo apt install libayatana-appindicator3-dev
+
+# Create a Python 3.13 virtual environment
+python3.13 -m venv .venv313
+source .venv313/bin/activate
+pip install -r requirements.txt
+
+# Build (output: dist/SPXIncomeTrader/)
+python build/build_linux.py --clean
+
+# Optional: package as AppImage
+python build/build_linux.py --appimage
+```
+
 **macOS (py2app):**
 
 ```bash
@@ -180,6 +199,7 @@ python build/build_macos.py --clean
 
 **Packaged app data paths:**
 - Windows: `%LOCALAPPDATA%\SPXIncomeTrader\SPXIncomeTrader\`
+- Linux: `~/.local/share/SPXIncomeTrader/`
 - macOS: `~/Library/Application Support/SPXIncomeTrader/`
 
 The packaged app copies the database and seeds `strategy_params.yaml` on first run.
@@ -241,8 +261,9 @@ database/
     migrations/              # Auto-applied schema migrations
 
 build/
-    build_windows.py         # PyInstaller build script
-    build_macos.py           # py2app build script
+    build_windows.py         # PyInstaller build script (Windows)
+    build_linux.py           # PyInstaller build script (Linux)
+    build_macos.py           # py2app build script (macOS)
 
 tests/                       # 424 unit tests
 
