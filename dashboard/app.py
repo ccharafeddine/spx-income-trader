@@ -289,7 +289,11 @@ def _parse_expiration(exp_str):
 
 
 def parse_todays_log():
-    """Parse today's entries from the trading log file."""
+    """Parse today's entries from the trading log file.
+
+    Also checks the most recent rotated log (.1) in case the log
+    rotated mid-day and early bars are in the previous file.
+    """
     today_prefix = datetime.now(ET).date().strftime('%Y-%m-%d')
     bars = []
     pulses = []
@@ -308,53 +312,62 @@ def parse_todays_log():
         r'\((\d+) ticks\)'
     )
 
-    try:
-        with open(LOG_FILE, 'r', encoding='utf-8', errors='replace') as f:
-            for line in f:
-                if today_prefix not in line:
-                    continue
+    # Read both current and most recent rotated log (in case of mid-day rotation)
+    log_files = [LOG_FILE + '.1', LOG_FILE]  # .1 first so current file wins for dedup
+    for log_path in log_files:
+        try:
+            with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+                for line in f:
+                    if today_prefix not in line:
+                        continue
 
-                m = bar_re.search(line)
-                if m:
-                    bars.append({
-                        'time': m.group(1),
-                        'open': float(m.group(2)),
-                        'high': float(m.group(3)),
-                        'low': float(m.group(4)),
-                        'close': float(m.group(5)),
-                    })
+                    m = bar_re.search(line)
+                    if m:
+                        bars.append({
+                            'time': m.group(1),
+                            'open': float(m.group(2)),
+                            'high': float(m.group(3)),
+                            'low': float(m.group(4)),
+                            'close': float(m.group(5)),
+                        })
 
-                m = pulse_re.search(line)
-                if m:
-                    ts_match = re.search(r'(\d{2}:\d{2}:\d{2})', line)
-                    pulses.append({
-                        'direction': m.group(1),
-                        'time': ts_match.group(1) if ts_match else '',
-                        'line': line.strip(),
-                    })
+                    m = pulse_re.search(line)
+                    if m:
+                        ts_match = re.search(r'(\d{2}:\d{2}:\d{2})', line)
+                        pulses.append({
+                            'direction': m.group(1),
+                            'time': ts_match.group(1) if ts_match else '',
+                            'line': line.strip(),
+                        })
 
-                m = heartbeat_re.search(line)
-                if m:
-                    last_heartbeat = {
-                        'loop': int(m.group(1)),
-                        'time': m.group(2),
-                    }
+                    m = heartbeat_re.search(line)
+                    if m:
+                        last_heartbeat = {
+                            'loop': int(m.group(1)),
+                            'time': m.group(2),
+                        }
 
-                m = building_re.search(line)
-                if m:
-                    building_bar = {
-                        'time': m.group(1),
-                        'open': float(m.group(2)),
-                        'high': float(m.group(3)),
-                        'low': float(m.group(4)),
-                        'close': float(m.group(5)),
-                        'ticks': int(m.group(6)),
-                    }
-    except FileNotFoundError:
-        pass
+                    m = building_re.search(line)
+                    if m:
+                        building_bar = {
+                            'time': m.group(1),
+                            'open': float(m.group(2)),
+                            'high': float(m.group(3)),
+                            'low': float(m.group(4)),
+                            'close': float(m.group(5)),
+                            'ticks': int(m.group(6)),
+                        }
+        except FileNotFoundError:
+            pass
+
+    # Deduplicate bars by time (keep last occurrence from multiple bot runs)
+    seen = {}
+    for bar in bars:
+        seen[bar['time']] = bar
+    deduped_bars = sorted(seen.values(), key=lambda b: b['time'])
 
     return {
-        'bars': bars,
+        'bars': deduped_bars,
         'pulses': pulses,
         'last_heartbeat': last_heartbeat,
         'building_bar': building_bar,
@@ -1341,20 +1354,30 @@ def api_today():
     log_data = parse_todays_log()
     today_str = datetime.now(ET).date().strftime('%Y-%m-%d')
 
-    # Yahoo intraday bars for candlestick chart
-    intraday = yahoo.get_intraday_bars('30m', '1d') or []
+    # Bar data priority: bot memory > log parsing > Yahoo Finance
+    # 1) Bot in-memory bars (desktop mode only, most reliable)
+    bot_bars = None
+    get_bot_bars = getattr(app, '_desktop_get_bot_bars', None)
+    if get_bot_bars:
+        bot_bars = get_bot_bars()
+
+    # 2) Yahoo intraday bars for candlestick chart (cached, fast after first call)
     chart_bars = []
-    for b in intraday:
-        ts = b['timestamp']
-        if hasattr(ts, 'isoformat'):
-            ts = ts.isoformat()
-        chart_bars.append({
-            'timestamp': str(ts),
-            'open': b['open'],
-            'high': b['high'],
-            'low': b['low'],
-            'close': b['close'],
-        })
+    try:
+        intraday = yahoo.get_intraday_bars('30m', '1d') or []
+        for b in intraday:
+            ts = b['timestamp']
+            if hasattr(ts, 'isoformat'):
+                ts = ts.isoformat()
+            chart_bars.append({
+                'timestamp': str(ts),
+                'open': b['open'],
+                'high': b['high'],
+                'low': b['low'],
+                'close': b['close'],
+            })
+    except Exception as e:
+        logger.debug(f"Yahoo intraday bars unavailable: {e}")
 
     # Today's signals (only those during market hours)
     all_signals = load_signals()
@@ -1407,6 +1430,7 @@ def api_today():
         pulse_times.add(pt)
 
     return jsonify({
+        'bot_bars': bot_bars,
         'log_bars': log_data['bars'],
         'chart_bars': chart_bars,
         'pulses': log_data['pulses'],

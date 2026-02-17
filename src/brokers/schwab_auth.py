@@ -213,7 +213,7 @@ class SchwabAuth:
         return client
 
     def _write_metadata(self):
-        """Write token creation timestamp to metadata file."""
+        """Write token creation timestamp to metadata file with restricted permissions."""
         meta = {
             'token_created_at': datetime.now(_ET).isoformat(),
             'refresh_token_lifetime_days': REFRESH_TOKEN_LIFETIME_DAYS,
@@ -221,7 +221,15 @@ class SchwabAuth:
         Path(self._meta_path).parent.mkdir(parents=True, exist_ok=True)
         with open(self._meta_path, 'w') as f:
             json.dump(meta, f, indent=2)
-        logger.info(f"Token metadata written: {self._meta_path}")
+
+        # Restrict token files to owner-only read/write
+        for path in [self._meta_path, self.token_path]:
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass  # Windows may not support Unix permissions
+
+        logger.info("Token metadata written")
 
 
 def _get_keyring_credential(key: str) -> Optional[str]:

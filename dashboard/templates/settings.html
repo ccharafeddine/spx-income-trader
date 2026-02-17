@@ -985,6 +985,10 @@ header {
 </div>
 
 <script>
+// CSRF token
+const API_TOKEN = '{{ api_token }}';
+const API_HEADERS = {'X-API-Token': API_TOKEN, 'Content-Type': 'application/json'};
+
 // ---------------------------------------------------------------------------
 // Active Broker Selection
 // ---------------------------------------------------------------------------
@@ -1027,7 +1031,7 @@ async function saveActiveBroker() {
   try {
     const response = await fetch('/api/broker/active', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: API_HEADERS,
       body: JSON.stringify({broker: broker}),
     });
     const data = await response.json();
@@ -1076,7 +1080,7 @@ async function saveSchwabCredentials() {
   try {
     const response = await fetch('/api/schwab/credentials', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: API_HEADERS,
       body: JSON.stringify({
         app_key: appKey.startsWith('****') ? '' : appKey,
         app_secret: appSecret,
@@ -1209,7 +1213,7 @@ async function saveTradingMode() {
   try {
     const response = await fetch('/api/settings/trading-mode', {
       method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
+      headers: API_HEADERS,
       body: JSON.stringify({mode: selectedMode}),
     });
     const data = await response.json();
@@ -1310,7 +1314,7 @@ document.getElementById('save-trading-mode-btn').addEventListener('click', async
   btn.textContent = 'Validating...';
 
   try {
-    const response = await fetch('/api/settings/validate-live', {method: 'POST'});
+    const response = await fetch('/api/settings/validate-live', {method: 'POST', headers: API_HEADERS});
     const data = await response.json();
 
     // Update each check row
@@ -1388,7 +1392,7 @@ document.getElementById('clear-credentials-btn').addEventListener('click', async
   }
 
   try {
-    const response = await fetch('/api/clear-credentials', { method: 'POST' });
+    const response = await fetch('/api/clear-credentials', { method: 'POST', headers: API_HEADERS });
     const data = await response.json();
 
     if (data.success) {

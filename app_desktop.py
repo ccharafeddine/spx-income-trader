@@ -127,6 +127,9 @@ class DesktopApp:
         self._shutdown_complete = False   # Guards against double-shutdown
         self._webview_window = None       # Set only in native mode
 
+        # Bot startup tracking
+        self._bot_starting = False
+
         # Bot crash tracking
         self._bot_crashed = False
         self._bot_crash_error = None
@@ -159,6 +162,10 @@ class DesktopApp:
         # /api/status can use it instead of the lockfile-based check (which
         # doesn't work in desktop mode since the PID is always this process).
         app._desktop_get_bot_status = desktop.get_bot_status
+
+        # Expose bot's in-memory bars so /api/today can use them directly
+        # (more reliable than log file parsing for the current session)
+        app._desktop_get_bot_bars = desktop.get_bot_bars
 
         @app.route('/api/bot/start', methods=['POST'])
         def api_bot_start():
@@ -363,6 +370,7 @@ class DesktopApp:
 
             self._bot_mode = mode
             self._bot_started_at = datetime.now()
+            self._bot_starting = True
             self._bot_crashed = False
             self._bot_crash_error = None
             self._bot_crash_time = None
@@ -427,6 +435,7 @@ class DesktopApp:
 
             with self._bot_lock:
                 self._bot = bot
+                self._bot_starting = False
 
             self._update_tray_icon()
 
@@ -455,6 +464,7 @@ class DesktopApp:
 
             with self._bot_lock:
                 self._bot = None
+                self._bot_starting = False
                 self._bot_mode = None
                 self._bot_started_at = None
             logger.info("Bot thread exited, status reset to stopped")
@@ -534,9 +544,52 @@ class DesktopApp:
             if not bot_thread.is_alive():
                 break  # Bot stopped normally
 
+    def get_bot_bars(self):
+        """Return completed bars from the bot's in-memory BarBuilder.
+
+        Returns a list of dicts with time/open/high/low/close, or None
+        if the bot is not running.
+        """
+        with self._bot_lock:
+            if self._bot is None:
+                return None
+            try:
+                bb = getattr(self._bot, 'bar_builder', None)
+                if bb is None:
+                    return None
+                bars = bb.get_bars()
+                result = []
+                for b in bars:
+                    result.append({
+                        'time': b.timestamp.strftime('%H:%M'),
+                        'open': b.open,
+                        'high': b.high,
+                        'low': b.low,
+                        'close': b.close,
+                    })
+                return result
+            except Exception:
+                return None
+
     def get_bot_status(self):
         """Return current bot status as a dict."""
         with self._bot_lock:
+            # Bot thread is spawned but still initializing (imports, broker auth)
+            if self._bot_starting and self._bot is None:
+                uptime = 0
+                if self._bot_started_at:
+                    uptime = int((datetime.now() - self._bot_started_at).total_seconds())
+                return {
+                    'running': True,
+                    'stopping': False,
+                    'crashed': False,
+                    'mode': self._bot_mode,
+                    'uptime_seconds': uptime,
+                    'trades_today': 0,
+                    'daily_pnl': 0.0,
+                    'status': 'starting',
+                }
+
             if self._bot is not None and self._bot.running:
                 uptime = 0
                 if self._bot_started_at:
@@ -548,7 +601,7 @@ class DesktopApp:
                     'mode': self._bot_mode,
                     'uptime_seconds': uptime,
                     'trades_today': self._bot.dte0_trades_today + self._bot.tnt_trades_today,
-                    'daily_pnl': self._bot.daily_pnl,
+                    'daily_pnl': getattr(self._bot.portfolio, 'daily_realized_pnl', 0.0),
                 }
 
             # Bot reference still exists but running=False means we sent

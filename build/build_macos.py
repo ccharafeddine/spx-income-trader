@@ -204,8 +204,8 @@ def _convert_ico_to_icns():
                  str(png_path), "--out", str(out)],
                 check=True, capture_output=True,
             )
-            # @2x variant (retina)
-            if size <= 256:
+            # @2x variant (retina) - includes 512x512@2x (1024x1024)
+            if size <= 512:
                 out_2x = iconset / f"icon_{size}x{size}@2x.png"
                 retina_size = size * 2
                 subprocess.run(
@@ -256,7 +256,8 @@ def _generate_placeholder_icns():
         for size in sizes:
             resized = img.resize((size, size), Image.LANCZOS)
             resized.save(iconset / f"icon_{size}x{size}.png")
-            if size <= 256:
+            # @2x variant (retina) - includes 512x512@2x (1024x1024)
+            if size <= 512:
                 retina = img.resize((size * 2, size * 2), Image.LANCZOS)
                 retina.save(iconset / f"icon_{size}x{size}@2x.png")
 
@@ -319,8 +320,9 @@ setup(
 
 
 def clean():
-    """Remove previous build artifacts."""
-    for d in [DIST_DIR, BUILD_DIR]:
+    """Remove previous macOS build artifacts (preserves other builds in dist/)."""
+    app_bundle = DIST_DIR / f"{APP_NAME}.app"
+    for d in [app_bundle, BUILD_DIR]:
         if d.exists():
             print(f"Removing {d}")
             shutil.rmtree(d)

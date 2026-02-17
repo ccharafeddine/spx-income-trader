@@ -95,10 +95,9 @@ def is_etrade_configured() -> bool:
 
 
 def is_schwab_configured() -> bool:
-    """Check if Schwab credentials are configured in strategy_params.yaml."""
-    params = load_strategy_params()
-    schwab_cfg = params.get('broker', {}).get('schwab', {})
-    return bool(schwab_cfg.get('app_key') and schwab_cfg.get('app_secret'))
+    """Check if Schwab credentials are configured (keyring or YAML fallback)."""
+    creds = get_schwab_credentials()
+    return bool(creds.get('app_key') and creds.get('app_secret'))
 
 
 def is_any_broker_configured() -> bool:
@@ -168,6 +167,82 @@ def clear_etrade_credentials() -> bool:
         return False
     except Exception as e:
         logger.error(f"Failed to clear credentials from keyring: {e}")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Schwab credential management (OS keyring)
+# ---------------------------------------------------------------------------
+
+SCHWAB_KEYRING_SERVICE = 'spx-income-trader-schwab'
+
+
+def save_schwab_credentials(
+    app_key: str,
+    app_secret: str,
+    account_number: str = '',
+    callback_url: str = 'https://127.0.0.1',
+) -> bool:
+    """Save Schwab credentials to the OS keychain."""
+    try:
+        import keyring
+        keyring.set_password(SCHWAB_KEYRING_SERVICE, 'schwab_app_key', app_key)
+        keyring.set_password(SCHWAB_KEYRING_SERVICE, 'schwab_app_secret', app_secret)
+        if account_number:
+            keyring.set_password(SCHWAB_KEYRING_SERVICE, 'schwab_account_number', account_number)
+        keyring.set_password(SCHWAB_KEYRING_SERVICE, 'schwab_callback_url', callback_url)
+        return True
+    except ImportError:
+        logger.error("keyring module not installed - cannot save Schwab credentials")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to save Schwab credentials to keyring: {e}")
+        return False
+
+
+def get_schwab_credentials() -> dict:
+    """Load Schwab credentials from OS keychain, fall back to YAML config."""
+    try:
+        import keyring
+        key = keyring.get_password(SCHWAB_KEYRING_SERVICE, 'schwab_app_key')
+        secret = keyring.get_password(SCHWAB_KEYRING_SERVICE, 'schwab_app_secret')
+        if key and secret:
+            return {
+                'app_key': key,
+                'app_secret': secret,
+                'account_number': keyring.get_password(SCHWAB_KEYRING_SERVICE, 'schwab_account_number') or '',
+                'callback_url': keyring.get_password(SCHWAB_KEYRING_SERVICE, 'schwab_callback_url') or 'https://127.0.0.1',
+                'source': 'keyring',
+            }
+    except (ImportError, Exception):
+        pass
+
+    # Fall back to YAML config (legacy / migration)
+    params = load_strategy_params()
+    schwab_cfg = params.get('broker', {}).get('schwab', {})
+    return {
+        'app_key': schwab_cfg.get('app_key', ''),
+        'app_secret': schwab_cfg.get('app_secret', ''),
+        'account_number': schwab_cfg.get('account_number', ''),
+        'callback_url': schwab_cfg.get('callback_url', 'https://127.0.0.1'),
+        'source': 'yaml' if schwab_cfg.get('app_key') else 'none',
+    }
+
+
+def clear_schwab_credentials() -> bool:
+    """Remove Schwab credentials from the OS keychain."""
+    try:
+        import keyring
+        for key in ['schwab_app_key', 'schwab_app_secret', 'schwab_account_number', 'schwab_callback_url']:
+            try:
+                keyring.delete_password(SCHWAB_KEYRING_SERVICE, key)
+            except keyring.errors.PasswordDeleteError:
+                pass
+        return True
+    except ImportError:
+        return False
+    except Exception as e:
+        logger.error(f"Failed to clear Schwab credentials from keyring: {e}")
         return False
 
 

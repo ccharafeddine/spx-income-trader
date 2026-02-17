@@ -254,7 +254,7 @@ class ETradeAuth:
             return False
 
     def _save_tokens(self) -> None:
-        """Save tokens to file"""
+        """Save tokens to file with restricted permissions."""
         token_data = {
             'access_token': self.access_token,
             'access_token_secret': self.access_token_secret,
@@ -268,6 +268,12 @@ class ETradeAuth:
 
         with open(self.token_file, 'w') as f:
             json.dump(token_data, f, indent=2)
+
+        # Restrict to owner-only read/write
+        try:
+            os.chmod(self.token_file, 0o600)
+        except OSError:
+            pass  # Windows may not support Unix permissions
 
     def _load_tokens(self) -> bool:
         """Load tokens from file if they exist and are valid"""

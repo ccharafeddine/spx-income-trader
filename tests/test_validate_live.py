@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from dashboard.app import app
+from dashboard.app import app, API_TOKEN
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def client():
 
 def _post_validate(client):
     """Helper to POST /api/settings/validate-live and return parsed JSON."""
-    resp = client.post('/api/settings/validate-live')
+    resp = client.post('/api/settings/validate-live', headers={'X-API-Token': API_TOKEN})
     assert resp.status_code == 200
     return resp.get_json()
 

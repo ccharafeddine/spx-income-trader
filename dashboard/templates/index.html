@@ -2460,7 +2460,7 @@ header::after {
       <div class="panel-title">Today's Activity</div>
       <div class="chart-container">
         <div class="chart-watermark">SPX</div>
-        <div id="candle-chart"></div>
+        <div id="candle-chart"><div class="empty" style="opacity:0.4">Loading chart data...</div></div>
       </div>
       <div class="chart-footer">
         <!-- Left: SPX Price Display -->
@@ -3044,7 +3044,12 @@ async function updateStatus() {
   const dot = document.getElementById('bot-dot');
   const txt = document.getElementById('bot-status-text');
   if (d.bot.running) {
-    if (d.bot.heartbeat_warning) {
+    if (d.bot.status === 'starting') {
+      dot.className = 'dot running';
+      txt.textContent = 'STARTING';
+      txt.title = 'Bot is initializing...';
+      txt.style.color = 'var(--yellow, #f0ad4e)';
+    } else if (d.bot.heartbeat_warning) {
       dot.className = 'dot running';
       txt.textContent = 'RUNNING ⚠';
       txt.title = d.bot.heartbeat_warning;
@@ -3420,7 +3425,10 @@ async function updateToday() {
   }
 
   // Sound: bar complete & pulse detected
-  const bars = (d.chart_bars && d.chart_bars.length) ? d.chart_bars : d.log_bars;
+  // Bar priority: bot memory (real-time) > Yahoo Finance > log file parsing
+  const bars = (d.bot_bars && d.bot_bars.length) ? d.bot_bars
+             : (d.chart_bars && d.chart_bars.length) ? d.chart_bars
+             : d.log_bars;
 
   // OHLC metrics (if available from bars)
   if (bars && bars.length > 0) {

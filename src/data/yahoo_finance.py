@@ -297,11 +297,22 @@ class YahooFinanceProvider:
             logger.warning("yfinance not installed - intraday bars unavailable")
             return None
 
+        # Check cache (same pattern as _get_quote)
+        cache_key = f"intraday_{interval}_{period}"
+        now = datetime.now(self.tz)
+        if cache_key in self._cache:
+            cache_time, cache_data = self._cache[cache_key]
+            if now - cache_time < self._cache_duration:
+                logger.debug(f"Using cached intraday bars ({interval}/{period})")
+                return cache_data
+
         try:
             ticker = yf.Ticker(self.SPX_SYMBOL)
-            hist = ticker.history(period=period, interval=interval)
+            hist = ticker.history(period=period, interval=interval, timeout=5)
 
             if hist.empty:
+                # Cache empty result briefly (30s) to avoid hammering Yahoo
+                self._cache[cache_key] = (now, None)
                 return None
 
             bars = []
@@ -315,10 +326,13 @@ class YahooFinanceProvider:
                     'volume': int(row['Volume'])
                 })
 
+            self._cache[cache_key] = (now, bars)
             return bars
 
         except Exception as e:
             logger.error(f"Error fetching intraday bars: {e}")
+            # Cache failure briefly to avoid repeated slow calls
+            self._cache[cache_key] = (now, None)
             return None
 
     def is_market_open(self) -> bool:

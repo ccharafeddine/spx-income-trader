@@ -120,7 +120,6 @@ class TradingBot:
         self.tz = pytz.timezone("America/New_York")
         self.dte0_trades_today = 0   # Shared 0DTE slot (DI/ORB/B&B)
         self.tnt_trades_today = 0    # TNT swing slot
-        self.daily_pnl = 0.0
         self.current_trading_date = None
 
         # Token auto-renewal for live broker (E*TRADE tokens expire after 2 hours)
@@ -145,7 +144,8 @@ class TradingBot:
         self._current_spx_price = 0.0
         self._last_completed_bar = None
 
-        self.max_daily_loss = STRATEGY_PARAMS['risk']['max_daily_loss']
+        # Daily loss limit is enforced solely by PortfolioManager.daily_realized_pnl
+        # to prevent dual-tracker drift. No separate TradingBot.daily_pnl.
 
         # Afternoon window (Bed & Breakfast system, p.23-26)
         timing_cfg = STRATEGY_PARAMS.get('timing', {})
@@ -373,7 +373,7 @@ class TradingBot:
             logger.info("Using real market data from Yahoo Finance")
         logger.info(f"Mode: {TRADING_MODE.upper()}")
         logger.info(f"Position limits: 0DTE={self.dte0_trades_today}/1 (DI/ORB/B&B), Swing={self.tnt_trades_today}/1 (TNT)")
-        logger.info(f"Max daily loss: ${self.max_daily_loss}")
+        logger.info(f"Max daily loss: ${self.portfolio.max_daily_loss:.0f} ({self.portfolio.max_daily_loss_pct}%)")
         logger.info("=" * 60)
 
         # Start token auto-renewal for live broker
@@ -469,7 +469,7 @@ class TradingBot:
                         logger.info(
                             f"New trading day: {today}. "
                             f"Resetting counters (prev: {total_prev} trades, "
-                            f"${self.daily_pnl:.2f} P&L)"
+                            f"${self.portfolio.daily_realized_pnl:.2f} P&L)"
                         )
                     self.current_trading_date = today
                     self._restore_daily_counters(today)
@@ -538,11 +538,12 @@ class TradingBot:
                 # Monitor existing positions ALWAYS (even when daily limits reached)
                 closed_pnl = self.position_manager.monitor_positions()
                 if closed_pnl != 0:
-                    self.daily_pnl += closed_pnl
-                    logger.info(f"Daily P&L updated: ${self.daily_pnl:.2f} (trade closed: ${closed_pnl:+.2f})")
+                    logger.info(f"Trade closed: ${closed_pnl:+.2f}")
 
-                # Update portfolio risk tracking for closed trades
+                # Update portfolio risk tracking for closed trades (single P&L source of truth)
                 self._drain_recently_closed()
+                if closed_pnl != 0:
+                    logger.info(f"Daily realized P&L: ${self.portfolio.daily_realized_pnl:.2f}")
 
                 # Update market state: build bars, feed parallel strategies
                 # (runs every cycle during market hours, NOT gated by setup window)
@@ -645,21 +646,21 @@ class TradingBot:
             )
             self.tnt_trades_today = counts.get('tag_n_turn', 0)
 
-            # Restore daily P&L from summary
+            # Restore daily P&L into portfolio (single source of truth)
             summary = self.db.get_daily_summary(trade_date)
-            self.daily_pnl = summary['realized_pnl']
+            self.portfolio.daily_realized_pnl = summary['realized_pnl']
 
             total = self.dte0_trades_today + self.tnt_trades_today
             logger.info(
                 f"Restored daily counters from DB: "
                 f"{total} trades (0DTE={self.dte0_trades_today}/1, TNT={self.tnt_trades_today}/1), "
-                f"${self.daily_pnl:.2f} P&L"
+                f"${self.portfolio.daily_realized_pnl:.2f} P&L"
             )
         except Exception as e:
             logger.warning(f"Could not restore daily counters: {e}")
             self.dte0_trades_today = 0
             self.tnt_trades_today = 0
-            self.daily_pnl = 0.0
+            self.portfolio.daily_realized_pnl = 0.0
 
     def _reconcile_positions(self):
         """Compare broker positions against DB active trades.
@@ -742,13 +743,23 @@ class TradingBot:
         return 'none'
     
     def _check_daily_loss_circuit_breaker(self) -> bool:
-        """Check global daily loss circuit breaker. Blocks ALL strategies."""
-        if self.daily_pnl <= -self.max_daily_loss:
-            logger.warning(f"Max daily loss reached: ${self.daily_pnl:.2f}")
+        """Check global daily loss circuit breaker. Blocks ALL strategies.
+
+        Delegates to PortfolioManager.daily_realized_pnl as the single source
+        of truth for daily P&L tracking. This prevents drift between two
+        independent trackers after mid-day restarts.
+        """
+        if self.portfolio.circuit_breaker_triggered:
+            return False
+        daily_pnl = self.portfolio.daily_realized_pnl
+        max_loss = self.portfolio.max_daily_loss
+        if daily_pnl <= -max_loss:
+            self.portfolio.circuit_breaker_triggered = True
+            logger.warning(f"Max daily loss reached: ${daily_pnl:.2f} (limit: -${max_loss:.0f})")
             if self.notifier:
                 self.notifier.send(
                     "Daily Loss Limit Reached",
-                    f"Daily P&L: ${self.daily_pnl:.2f}\nStopping new trades."
+                    f"Daily P&L: ${daily_pnl:.2f}\nStopping new trades."
                 )
             return False
         return True
@@ -866,7 +877,6 @@ class TradingBot:
                                 )
                                 if realized is not None:
                                     self._drain_recently_closed()
-                                    self.daily_pnl += realized
                                     logger.info(
                                         f"B&B trade closed (Just Breakfast), "
                                         f"P&L: ${realized:+.2f}"
@@ -964,10 +974,9 @@ class TradingBot:
                         )
                         if realized is not None:
                             self._drain_recently_closed()
-                            self.daily_pnl += realized
                             logger.info(
                                 f"TNT trade closed, P&L: ${realized:+.2f}, "
-                                f"daily: ${self.daily_pnl:.2f}"
+                                f"daily: ${self.portfolio.daily_realized_pnl:.2f}"
                             )
                             self.tag_n_turn.on_position_closed({
                                 'reason': tnt_exit['reason'],
@@ -1310,8 +1319,17 @@ class TradingBot:
 
         Called every cycle after daily limits check. Separated from
         _update_market_state so breakout entries respect daily limits.
+
+        Re-checks the circuit breaker here because _update_market_state()
+        may have closed positions (B&B/TNT exit) that pushed daily P&L
+        past the limit since the main loop's circuit breaker check.
         """
         if not self.pending_setup:
+            return
+        # Re-check circuit breaker (may have been tripped by strategy closes)
+        if not self._check_daily_loss_circuit_breaker():
+            logger.info("Circuit breaker tripped during breakout check, clearing pending setup")
+            self.pending_setup = None
             return
         # Only block on Daily Income's own positions (not ORB/TNT/B&B)
         if self.portfolio.has_position_for_strategy(StrategyType.DAILY_INCOME):
@@ -1679,7 +1697,7 @@ class TradingBot:
                 self.notifier.send(
                     "Trading Bot Stopped",
                     f"Trades today: {total_trades}\n"
-                    f"Daily P&L: ${self.daily_pnl:.2f}"
+                    f"Daily P&L: ${self.portfolio.daily_realized_pnl:.2f}"
                 )
             except Exception as e:
                 logger.warning(f"Failed to send shutdown notification: {e}")

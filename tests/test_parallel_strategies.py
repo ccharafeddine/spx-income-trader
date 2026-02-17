@@ -58,8 +58,6 @@ def _make_mock_bot(dry_run=True, daily_pnl=0.0):
     bot = MagicMock()
     bot.tz = pytz.timezone("America/New_York")
     bot.dry_run = dry_run
-    bot.daily_pnl = daily_pnl
-    bot.max_daily_loss = 1000.0
     bot.dte0_trades_today = 0   # Shared 0DTE slot (DI/ORB/B&B)
     bot.tnt_trades_today = 0    # TNT swing slot
     bot.notifier = None
@@ -71,8 +69,12 @@ def _make_mock_bot(dry_run=True, daily_pnl=0.0):
     bot.broker.get_order_status.return_value = {'status': 'filled', 'fill_price': 2.50}
     bot.broker.get_current_price.return_value = 6000.0
 
-    # Mock portfolio
+    # Mock portfolio (single source of truth for daily P&L)
     bot.portfolio = MagicMock(spec=PortfolioManager)
+    bot.portfolio.daily_realized_pnl = daily_pnl
+    bot.portfolio.max_daily_loss = 1000.0
+    bot.portfolio.max_daily_loss_pct = 2.0
+    bot.portfolio.circuit_breaker_triggered = (daily_pnl <= -1000.0)
     bot.portfolio.calculate_position_size.return_value = 3
     bot.portfolio.can_enter_position.return_value = (True, "Approved")
     bot.portfolio.register_position.return_value = True
@@ -453,7 +455,7 @@ class TestRestoreDailyCounters:
 
         assert bot.dte0_trades_today == 2  # DI(1) + ORB(1) + B&B(0)
         assert bot.tnt_trades_today == 2
-        assert bot.daily_pnl == -150.0
+        assert bot.portfolio.daily_realized_pnl == -150.0
 
     def test_restore_empty_day(self):
         """Restore on a day with no trades."""
@@ -467,7 +469,7 @@ class TestRestoreDailyCounters:
 
         assert bot.dte0_trades_today == 0
         assert bot.tnt_trades_today == 0
-        assert bot.daily_pnl == 0.0
+        assert bot.portfolio.daily_realized_pnl == 0.0
 
     def test_restore_handles_db_error(self):
         """DB errors should reset to zero gracefully."""
@@ -480,7 +482,7 @@ class TestRestoreDailyCounters:
 
         assert bot.dte0_trades_today == 0
         assert bot.tnt_trades_today == 0
-        assert bot.daily_pnl == 0.0
+        assert bot.portfolio.daily_realized_pnl == 0.0
 
 
 # ============================================================================
@@ -883,7 +885,6 @@ class TestTNTExitExecution:
         )
         bot._drain_recently_closed.assert_called_once()
         bot.tag_n_turn.on_position_closed.assert_called_once()
-        assert bot.daily_pnl == 200.0
         bot._log_signal.assert_called()
 
     def test_tnt_exit_no_position(self):
@@ -919,7 +920,7 @@ class TestTNTExitExecution:
         # Should NOT attempt to close
         bot.position_manager.close_trade_by_id = MagicMock()
         # (already returned before getting there)
-        assert bot.daily_pnl == 0.0
+        assert bot.portfolio.daily_realized_pnl == 0.0
 
     def test_tnt_exit_close_failed_retries(self):
         """When close order fails, TNT stays open for retry next cycle."""
@@ -957,7 +958,7 @@ class TestTNTExitExecution:
 
         # State machine should NOT be reset (will retry next cycle)
         bot.tag_n_turn.on_position_closed.assert_not_called()
-        assert bot.daily_pnl == 0.0
+        assert bot.portfolio.daily_realized_pnl == 0.0
 
 
 # ============================================================================
@@ -1016,7 +1017,6 @@ class TestBnBExitExecution:
             "bnb-trade-001", "B&B: Just Breakfast 30-min exit"
         )
         bot._drain_recently_closed.assert_called_once()
-        assert bot.daily_pnl == -50.0
 
     def test_bnb_roll_to_daily_no_close(self):
         """B&B 'roll_to_daily' action should NOT close the position."""
@@ -1057,7 +1057,7 @@ class TestBnBExitExecution:
 
         # Should NOT close position
         bot.position_manager.close_trade_by_id.assert_not_called()
-        assert bot.daily_pnl == 0.0
+        assert bot.portfolio.daily_realized_pnl == 0.0
 
         # Should log the roll signal
         bot._log_signal.assert_called_with("BNB_ROLL_TO_DAILY", {
