@@ -291,7 +291,7 @@ class DesktopApp:
             return
 
         self._webview_window = webview.create_window(
-            'SPX Income Trader',
+            'The Daily Melt',
             self._url,
             width=1400,
             height=900,
@@ -718,9 +718,9 @@ class DesktopApp:
 
         try:
             self._tray_icon = pystray.Icon(
-                'SPX Income Trader',
+                'The Daily Melt',
                 icon=self._get_tray_icon_image(),
-                title='SPX Income Trader',
+                title='The Daily Melt',
                 menu=self._build_tray_menu(),
             )
         except Exception as e:

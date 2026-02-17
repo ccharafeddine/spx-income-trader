@@ -31,7 +31,7 @@ ENTRY_POINT = PROJECT_ROOT / "app_desktop.py"
 ICON_ICNS = PROJECT_ROOT / "assets" / "icon.icns"
 ICON_ICO = PROJECT_ROOT / "assets" / "icon.ico"
 ICON_PNG = PROJECT_ROOT / "assets" / "icon.png"
-APP_NAME = "SPX Income Trader"
+APP_NAME = "The Daily Melt"
 BUNDLE_ID = "com.spxincometrader.app"
 VERSION = "1.0.0"
 

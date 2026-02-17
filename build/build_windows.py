@@ -28,7 +28,7 @@ PROJECT_ROOT = SCRIPT_DIR.parent                      # repo root
 DIST_DIR = PROJECT_ROOT / "dist"
 BUILD_DIR = PROJECT_ROOT / "build" / "_pyinstaller"   # temp build artifacts
 ENTRY_POINT = PROJECT_ROOT / "app_desktop.py"
-APP_NAME = "SPX Income Trader"
+APP_NAME = "The Daily Melt"
 VERSION = "1.0.0"
 
 # Icon paths (in order of preference)
