@@ -44,63 +44,71 @@ ICON_PNG = PROJECT_ROOT / "assets" / "icon.png"
 # System dependency checks
 # ---------------------------------------------------------------------------
 
-_REQUIRED_PACKAGES = {
-    "gi": {
-        "apt": "python3-gi",
-        "desc": "PyGObject (GTK bindings for pywebview)",
-    },
-    "gi.repository.Gtk": {
-        "apt": "gir1.2-gtk-3.0",
-        "desc": "GTK 3 introspection data",
-    },
-    "gi.repository.WebKit2": {
-        "apt": "gir1.2-webkit2-4.1",
-        "desc": "WebKit2 introspection data (pywebview backend)",
-    },
-}
-
-# pystray needs an appindicator library for system tray
-_APPINDICATOR_PACKAGES = [
-    "libayatana-appindicator3-dev",
-    "libappindicator3-dev",
-]
-
-
 def check_system_dependencies():
     """Verify system packages needed by pywebview and pystray are installed."""
     missing = []
 
-    for module, info in _REQUIRED_PACKAGES.items():
+    # Check PyGObject (python3-gi)
+    try:
+        import gi  # noqa: F401
+    except ImportError:
+        missing.append("python3-gi (PyGObject)")
+
+    # Check GTK 3 typelib
+    if not missing:
         try:
-            __import__(module)
-        except ImportError:
-            missing.append(info["apt"])
+            gi.require_version("Gtk", "3.0")
+            from gi.repository import Gtk  # noqa: F401
+        except (ValueError, ImportError):
+            missing.append("gir1.2-gtk-3.0 (GTK 3 introspection data)")
+
+    # Check WebKit2 typelib (try 4.1 first, then 4.0)
+    if not missing:
+        webkit_found = False
+        for ver in ("4.1", "4.0"):
+            try:
+                gi.require_version("WebKit2", ver)
+                from gi.repository import WebKit2  # noqa: F401
+                webkit_found = True
+                break
+            except (ValueError, ImportError):
+                continue
+        if not webkit_found:
+            missing.append("gir1.2-webkit2-4.1 (WebKit2 introspection data)")
 
     if missing:
         print("ERROR: Missing system packages required for pywebview:")
         for pkg in missing:
             print(f"  - {pkg}")
         print()
-        print("Install them with:")
-        print(f"  sudo apt install {' '.join(missing)}")
+        print("Install them with (Ubuntu/Debian):")
+        print("  sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1")
+        print()
+        print("Or (Fedora):")
+        print("  sudo dnf install python3-gobject python3-cairo gtk3 webkit2gtk4.1")
         sys.exit(1)
 
-    # Check for appindicator (needed by pystray for system tray)
+    # Check for appindicator (needed by pystray for system tray) - non-fatal
     has_indicator = False
-    for pkg in _APPINDICATOR_PACKAGES:
-        result = subprocess.run(
-            ["dpkg", "-s", pkg],
-            capture_output=True, text=True,
-        )
-        if result.returncode == 0:
-            has_indicator = True
-            break
+    try:
+        for pkg_cmd in [
+            ["dpkg", "-s", "libayatana-appindicator3-dev"],
+            ["dpkg", "-s", "libappindicator3-dev"],
+            ["rpm", "-q", "libappindicator-gtk3-devel"],
+        ]:
+            result = subprocess.run(pkg_cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                has_indicator = True
+                break
+    except FileNotFoundError:
+        # Neither dpkg nor rpm available; skip this check
+        has_indicator = True  # Assume OK on non-standard distros
 
     if not has_indicator:
         print("WARNING: No appindicator library found (needed by pystray for system tray).")
         print("  Install one of:")
-        for pkg in _APPINDICATOR_PACKAGES:
-            print(f"    sudo apt install {pkg}")
+        print("    sudo apt install libayatana-appindicator3-dev")
+        print("    sudo apt install libappindicator3-dev")
         print("  The app will work but the system tray icon may not appear.\n")
 
     print("System dependency check passed.\n")
@@ -213,7 +221,8 @@ EXCLUDES = [
 
 def clean():
     """Remove previous build artifacts."""
-    for d in [DIST_DIR / DIST_FOLDER, BUILD_DIR]:
+    # Clean both the renamed output and the PyInstaller intermediate dir
+    for d in [DIST_DIR / DIST_FOLDER, DIST_DIR / APP_NAME, BUILD_DIR]:
         if d.exists():
             print(f"Removing {d}")
             shutil.rmtree(d)
@@ -407,7 +416,7 @@ exec "$HERE/usr/bin/{DIST_FOLDER}/{APP_NAME}" "$@"
         appimagetool = shutil.which("appimagetool-x86_64.AppImage")
 
     if not appimagetool:
-        print("\nAppDir created at: {appdir}")
+        print(f"\nAppDir created at: {appdir}")
         print("appimagetool not found on PATH. To finish packaging:")
         print("  1. Download: https://github.com/AppImage/AppImageKit/releases")
         print("  2. chmod +x appimagetool-x86_64.AppImage")
