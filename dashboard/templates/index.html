@@ -1996,6 +1996,24 @@ header::after {
         </div>
       </div>
       <div class="setting-row">
+        <label>Max Weekly Loss</label>
+        <div class="slider-with-value">
+          <input type="range" id="set-max-weekly-loss" min="2" max="10" step="1" value="4"
+                 oninput="document.getElementById('max-weekly-loss-val').textContent = this.value + '%'"
+                 onchange="updateSetting('portfolio.drawdown_limits.weekly.max_loss_pct', parseFloat(this.value))">
+          <span id="max-weekly-loss-val">4%</span>
+        </div>
+      </div>
+      <div class="setting-row">
+        <label>Max Monthly Loss</label>
+        <div class="slider-with-value">
+          <input type="range" id="set-max-monthly-loss" min="4" max="20" step="2" value="8"
+                 oninput="document.getElementById('max-monthly-loss-val').textContent = this.value + '%'"
+                 onchange="updateSetting('portfolio.drawdown_limits.monthly.max_loss_pct', parseFloat(this.value))">
+          <span id="max-monthly-loss-val">8%</span>
+        </div>
+      </div>
+      <div class="setting-row">
         <label>Max Positions</label>
         <div class="slider-with-value">
           <input type="range" id="set-max-pos" min="1" max="3" step="1" value="2"
@@ -4480,6 +4498,14 @@ async function loadCurrentSettings() {
   document.getElementById('set-max-loss').value = maxLoss;
   document.getElementById('max-loss-val').textContent = maxLoss + '%';
 
+  const maxWeeklyLoss = data.portfolio?.drawdown_limits?.weekly?.max_loss_pct ?? 4;
+  document.getElementById('set-max-weekly-loss').value = maxWeeklyLoss;
+  document.getElementById('max-weekly-loss-val').textContent = maxWeeklyLoss + '%';
+
+  const maxMonthlyLoss = data.portfolio?.drawdown_limits?.monthly?.max_loss_pct ?? 8;
+  document.getElementById('set-max-monthly-loss').value = maxMonthlyLoss;
+  document.getElementById('max-monthly-loss-val').textContent = maxMonthlyLoss + '%';
+
   const maxPos = data.portfolio?.max_total_positions ?? 2;
   document.getElementById('set-max-pos').value = maxPos;
   document.getElementById('max-pos-val').textContent = maxPos;
@@ -4541,6 +4567,7 @@ async function saveSettings() {
       showToast('Settings saved successfully');
       pendingChanges = {};
       loadCurrentSettings();
+      updateRiskStatus();
     } else {
       showToast('Error: ' + (result.error || 'Unknown error'), 'error');
     }

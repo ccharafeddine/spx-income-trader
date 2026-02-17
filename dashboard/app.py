@@ -2295,7 +2295,7 @@ def api_events():
 @app.route('/api/risk-status')
 def api_risk_status():
     """Risk management status: daily circuit breaker + layered drawdown."""
-    portfolio_cfg = STRATEGY_PARAMS.get('portfolio', {})
+    portfolio_cfg = _load_settings().get('portfolio', {})
     account_size = portfolio_cfg.get('account_size', 50000)
     max_daily_loss_pct = portfolio_cfg.get('max_daily_loss_pct', 2.0)
     max_daily_loss_dollars = account_size * (max_daily_loss_pct / 100)
