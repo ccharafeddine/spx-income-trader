@@ -702,10 +702,27 @@ header::after {
   transition: width 1s linear;
 }
 .pos-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2px 8px;
+  display: flex;
+  gap: 4px 16px;
   font-size: 11px;
+  flex-wrap: wrap;
+}
+.pos-metric {
+  display: inline-flex;
+  gap: 4px;
+}
+
+/* Full-width positions panel */
+.positions-panel {
+  margin-top: 12px;
+}
+.positions-panel #positions-body {
+  display: flex;
+  gap: 10px;
+}
+.positions-panel .position-card {
+  flex: 1;
+  margin-bottom: 0;
 }
 
 /* Trade Plan panel */
@@ -1143,6 +1160,10 @@ header::after {
 .risk-led.green { background: #16a34a; box-shadow: 0 0 4px #16a34a; }
 .risk-led.yellow { background: #f59e0b; box-shadow: 0 0 4px #f59e0b; }
 .risk-led.red { background: #dc2626; box-shadow: 0 0 4px #dc2626; }
+.risk-led.dim { background: #555; box-shadow: none; }
+.streak-count.green { color: #16a34a; }
+.streak-count.red { color: #dc2626; }
+.streak-count.dim { color: #555; }
 .risk-label {
   color: var(--text-dim);
   min-width: 58px;
@@ -2211,20 +2232,6 @@ header::after {
           </div>
         </div>
       </div>
-
-      <!-- POSITION TRACKER -->
-      <div class="panel">
-        <div class="panel-title">Open Positions</div>
-        <div id="positions-body">
-          <div class="empty">No open positions</div>
-        </div>
-      </div>
-
-      <!-- TRADE PLAN (visible only when position is open) -->
-      <div class="panel trade-plan-panel" id="trade-plan-panel" style="display:none;">
-        <div class="panel-title">Trade Plan</div>
-        <div id="trade-plan-content"></div>
-      </div>
     </div>
 
     <!-- RIGHT COLUMN: Chart -->
@@ -2293,6 +2300,20 @@ header::after {
       </div>
     </div>
 
+  </div>
+
+  <!-- POSITION TRACKER (full-width below chart) -->
+  <div class="panel positions-panel" id="positions-panel-wrap">
+    <div class="panel-title">Open Positions</div>
+    <div id="positions-body">
+      <div class="empty">No open positions</div>
+    </div>
+  </div>
+
+  <!-- TRADE PLAN (visible only when position is open) -->
+  <div class="panel trade-plan-panel" id="trade-plan-panel" style="display:none;">
+    <div class="panel-title">Trade Plan</div>
+    <div id="trade-plan-content"></div>
   </div>
 
   <!-- BOTTOM ROW: Signal Log + Trade History -->
@@ -3020,12 +3041,12 @@ async function updateStatus() {
             '<span class="pos-status ' + st + '">' + (p.position_status || 'UNKNOWN') + tooltipHtml + '</span>' +
           '</div>' +
           '<div class="pos-grid">' +
-            '<span class="status-label">Entry</span><span class="status-value">' + entryTs + ' ET</span>' +
-            '<span class="status-label">Credit</span><span class="status-value">' + fmt$(p.credit_received * 100 * p.quantity) + '</span>' +
-            '<span class="status-label">SPX Dist</span><span class="status-value">' + distAbs + ' pts ' + distLabel + '</span>' +
-            '<span class="status-label">Expires</span><span class="status-value">' + fmtTime(p.time_remaining_secs) + '</span>' +
-            '<span class="status-label">Est P&L</span><span class="status-value ' + pnlClass(p.est_pnl) + '">' + fmt$(p.est_pnl) + '</span>' +
-            '<span class="status-label">Qty</span><span class="status-value">' + p.quantity + 'x</span>' +
+            '<span class="pos-metric"><span class="status-label">Entry</span><span class="status-value">' + entryTs + ' ET</span></span>' +
+            '<span class="pos-metric"><span class="status-label">Credit</span><span class="status-value">' + fmt$(p.credit_received * 100 * p.quantity) + '</span></span>' +
+            '<span class="pos-metric"><span class="status-label">SPX Dist</span><span class="status-value">' + distAbs + ' pts ' + distLabel + '</span></span>' +
+            '<span class="pos-metric"><span class="status-label">Expires</span><span class="status-value">' + fmtTime(p.time_remaining_secs) + '</span></span>' +
+            '<span class="pos-metric"><span class="status-label">Est P&L</span><span class="status-value ' + pnlClass(p.est_pnl) + '">' + fmt$(p.est_pnl) + '</span></span>' +
+            '<span class="pos-metric"><span class="status-label">Qty</span><span class="status-value">' + p.quantity + 'x</span></span>' +
           '</div>' +
           '<div class="pos-progress" style="width:' + Math.max(0, Math.min(100, (p.time_remaining_secs || 0) / 23400 * 100)) + '%"></div>' +
         '</div>';
@@ -4264,20 +4285,23 @@ async function updateRiskStatus() {
       html += '</div>';
     }
 
-    // Consecutive losses
-    if (r.consecutive.enabled) {
-      var cl = r.consecutive;
-      var clLed = cl.paused ? 'red' : (cl.count >= cl.max_consecutive - 1 ? 'yellow' : 'green');
+    // Win/Loss streaks
+    if (r.streaks) {
+      var s = r.streaks;
+      var wActive = s.active === 'win';
+      var lActive = s.active === 'loss';
+      var wLed = wActive ? 'green' : (s.win_streak > 0 ? 'red' : 'dim');
+      var lLed = lActive ? 'green' : (s.loss_streak > 0 ? 'red' : 'dim');
       html += '<div class="risk-row">';
-      html += '<span class="risk-led ' + clLed + '"></span>';
-      html += '<span class="risk-label">Streak</span>';
-      html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + clLed + '" style="width:' + (cl.max_consecutive > 0 ? (cl.count / cl.max_consecutive * 100).toFixed(0) : 0) + '%"></div></div>';
-      html += '<span class="risk-value">' + cl.count + ' / ' + cl.max_consecutive + '</span>';
+      html += '<span class="risk-led ' + wLed + '"></span>';
+      html += '<span class="risk-label">W Streak</span>';
+      html += '<span class="risk-value streak-count ' + wLed + '">' + s.win_streak + '</span>';
       html += '</div>';
-      if (cl.paused && cl.resume_time) {
-        var rt = new Date(cl.resume_time);
-        html += '<div class="risk-detail"><span class="paused">PAUSED</span> <span class="resume">resumes ' + rt.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) + '</span></div>';
-      }
+      html += '<div class="risk-row">';
+      html += '<span class="risk-led ' + lLed + '"></span>';
+      html += '<span class="risk-label">L Streak</span>';
+      html += '<span class="risk-value streak-count ' + lLed + '">' + s.loss_streak + '</span>';
+      html += '</div>';
     }
 
     el.innerHTML = html || '<span class="econ-no-events">No risk limits configured</span>';
