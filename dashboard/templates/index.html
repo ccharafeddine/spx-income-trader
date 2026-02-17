@@ -1230,6 +1230,128 @@ header::after {
 }
 .cal-day-detail-close:hover { color: var(--text); border-color: var(--text-dim); }
 
+/* Daily journal summary card (no-trade days) */
+.daily-journal-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-dim);
+  border-radius: 6px;
+  padding: 14px 16px;
+  margin-top: 4px;
+}
+.daily-journal-card .dj-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.daily-journal-card .dj-header h3 {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: bold;
+  color: var(--text);
+  margin: 0;
+  flex: 1;
+}
+.daily-journal-card .dj-market-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.daily-journal-card .dj-market-stat {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.daily-journal-card .dj-market-stat .val {
+  color: var(--text);
+  font-weight: bold;
+}
+.daily-journal-card .dj-counters {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.daily-journal-card .dj-counter {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--text-dim);
+  background: rgba(255,255,255,0.03);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+.daily-journal-card .dj-counter .num {
+  font-weight: bold;
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+.daily-journal-card .dj-timeline {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.daily-journal-card .dj-timeline-title {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: bold;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.daily-journal-card .dj-event {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 4px 0;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--text-dim);
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.daily-journal-card .dj-event:last-child { border-bottom: none; }
+.daily-journal-card .dj-event-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  min-width: 50px;
+  flex-shrink: 0;
+}
+.daily-journal-card .dj-event-strategy {
+  font-size: 8px;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  min-width: 30px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.daily-journal-card .dj-event-reason {
+  color: var(--text);
+}
+.daily-journal-card .dj-event-detail {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.cal-no-trade-summary {
+  font-family: var(--font-ui);
+  font-size: 9px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
 /* Journal trade cards */
 .journal-card {
   background: var(--panel);
@@ -2823,6 +2945,13 @@ function fmt$(v) {
   return (n < 0 ? '-$' : '$') + s;
 }
 
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
 function fmtPct(v) {
   if (v == null) return '--';
   const n = Number(v);
@@ -4031,6 +4160,8 @@ function renderCalendar() {
     const isToday = dateStr === todayStr;
     const dayData = (calData.days || {})[dateStr];
     const hasTrades = dayData && dayData.trades > 0;
+    const hasJournal = dayData && (dayData.journal || dayData.no_trade_summary);
+    const isClickable = hasTrades || hasJournal;
     const isSelected = calSelectedDate === dateStr;
 
     let classes = 'cal-cell';
@@ -4042,9 +4173,11 @@ function renderCalendar() {
     if (hasTrades) {
       classes += ' has-trades';
       classes += dayData.pnl >= 0 ? ' profit' : ' loss';
+    } else if (hasJournal) {
+      classes += ' has-trades';  // reuse cursor/hover style
     }
 
-    const clickAttr = hasTrades ? ' onclick="selectCalDay(\'' + dateStr + '\')"' : '';
+    const clickAttr = isClickable ? ' onclick="selectCalDay(\'' + dateStr + '\')"' : '';
 
     html += '<div class="' + classes + '"' + clickAttr + '>';
     html += '<div class="cal-day-num">' + day + '</div>';
@@ -4065,17 +4198,28 @@ function renderCalendar() {
       }
     } else if (isWeekend || isHoliday) {
       html += '<div class="cal-closed">Market Closed';
-      if (isHoliday) html += '<span class="holiday-name">' + isHoliday + '</span>';
+      if (isHoliday) html += '<span class="holiday-name">' + esc(isHoliday) + '</span>';
       html += '</div>';
-    } else if (dayData && dayData.no_trade_reason) {
-      const reasonLabels = {
-        'circuit_breaker': 'Circuit Breaker',
-        'pdt_restricted': 'PDT Restricted',
-        'no_setups': 'No Setups'
-      };
-      html += '<div class="cal-no-trade">' + (reasonLabels[dayData.no_trade_reason] || 'No Setups') + '</div>';
+    } else if (dayData && (dayData.no_trade_reason || dayData.no_trade_summary)) {
+      // No-trade day with journal data - show descriptive summary
+      if (dayData.no_trade_summary) {
+        // Truncate to fit cell - show first sentence or ~60 chars
+        let summary = dayData.no_trade_summary;
+        if (summary.length > 60) {
+          const dot = summary.indexOf('.', 20);
+          summary = dot > 0 && dot < 60 ? summary.substring(0, dot + 1) : summary.substring(0, 57) + '...';
+        }
+        html += '<div class="cal-no-trade">' + esc(summary) + '</div>';
+      } else {
+        const reasonLabels = {
+          'circuit_breaker': 'Circuit Breaker',
+          'pdt_restricted': 'PDT Restricted',
+          'no_setups': 'No Setups'
+        };
+        html += '<div class="cal-no-trade">' + (reasonLabels[dayData.no_trade_reason] || 'No Setups') + '</div>';
+      }
     } else if (!isFuture && dateStr <= todayStr) {
-      html += '<div class="cal-no-trade">No Data</div>';
+      html += '<div class="cal-no-trade">Bot Offline</div>';
     }
 
     html += '</div>';
@@ -4086,7 +4230,9 @@ function renderCalendar() {
   // If a day was selected, keep the detail visible
   if (calSelectedDate) {
     const dayData = (calData.days || {})[calSelectedDate];
-    if (!dayData || !dayData.trades) {
+    if (dayData && (dayData.trades > 0 || dayData.journal || dayData.no_trade_summary)) {
+      // Keep detail open
+    } else {
       closeCalDayDetail();
     }
   }
@@ -4121,16 +4267,6 @@ async function selectCalDay(dateStr) {
     }
   });
 
-  // Compute days from dateStr to today so the journal API returns enough data
-  const clickedDate = new Date(dateStr + 'T12:00:00');
-  const now = new Date();
-  const diffDays = Math.ceil((now - clickedDate) / (1000 * 60 * 60 * 24)) + 1;
-  const d = await fetchJSON('/api/journal?days=' + Math.max(diffDays, 7));
-  if (!d) return;
-
-  // Filter to only the clicked date
-  let entries = (d.journal || []).filter(e => (e.entry_time || '').startsWith(dateStr));
-
   // Format date for header
   const dateObj = new Date(dateStr + 'T12:00:00');
   const dayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][dateObj.getDay()];
@@ -4142,15 +4278,115 @@ async function selectCalDay(dateStr) {
   html += '<button class="cal-day-detail-close" onclick="closeCalDayDetail()">&times;</button>';
   html += '</div>';
 
-  if (entries.length) {
-    html += renderJournalCards(entries, 'cal');
+  // Check if this is a trade day or a no-trade day
+  const dayData = (calData.days || {})[dateStr];
+  const hasTrades = dayData && dayData.trades > 0;
+
+  if (hasTrades) {
+    // Fetch journal trade entries for trade days
+    const clickedDate = new Date(dateStr + 'T12:00:00');
+    const now = new Date();
+    const diffDays = Math.ceil((now - clickedDate) / (1000 * 60 * 60 * 24)) + 1;
+    const d = await fetchJSON('/api/journal?days=' + Math.max(diffDays, 7));
+    if (!d) return;
+    let entries = (d.journal || []).filter(e => (e.entry_time || '').startsWith(dateStr));
+    if (entries.length) {
+      html += renderJournalCards(entries, 'cal');
+    } else {
+      html += '<div class="empty">No trade details available for this day</div>';
+    }
   } else {
-    html += '<div class="empty">No trade details available for this day</div>';
+    // No-trade day - fetch daily journal for rejection timeline
+    const dj = await fetchJSON('/api/journal/daily/' + dateStr);
+    html += renderDailyJournalCard(dj, dateStr, dayData);
   }
 
   detailEl.innerHTML = html;
   detailEl.style.display = '';
   detailEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderDailyJournalCard(dj, dateStr, dayData) {
+  let html = '<div class="daily-journal-card">';
+
+  if (!dj || dj.error) {
+    // No journal data - bot was offline or no data recorded
+    html += '<div class="dj-header"><h3>No Activity Recorded</h3></div>';
+    html += '<div style="color:var(--text-dim);font-size:11px;">';
+    html += 'The bot was not running on this day, or no journal data was recorded.';
+    html += '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  // Header with summary
+  html += '<div class="dj-header"><h3>Daily Summary</h3></div>';
+
+  // Market data row
+  let marketHtml = '';
+  if (dj.spx_open) {
+    marketHtml += '<span class="dj-market-stat">SPX Open: <span class="val">$' + Number(dj.spx_open).toLocaleString(undefined, {minimumFractionDigits:2}) + '</span></span>';
+  }
+  if (dj.spx_close) {
+    marketHtml += '<span class="dj-market-stat">Close: <span class="val">$' + Number(dj.spx_close).toLocaleString(undefined, {minimumFractionDigits:2}) + '</span></span>';
+  }
+  if (dj.spx_change_pct != null) {
+    const chgCls = dj.spx_change_pct >= 0 ? 'color-pos' : 'color-neg';
+    const chgSign = dj.spx_change_pct >= 0 ? '+' : '';
+    marketHtml += '<span class="dj-market-stat">Change: <span class="val ' + chgCls + '">' + chgSign + dj.spx_change_pct.toFixed(2) + '%</span></span>';
+  }
+  if (dj.vix_level) {
+    marketHtml += '<span class="dj-market-stat">VIX: <span class="val">' + dj.vix_level.toFixed(1) + '</span>';
+    if (dj.vix_regime) marketHtml += ' (' + esc(dj.vix_regime) + ')';
+    marketHtml += '</span>';
+  }
+  if (marketHtml) {
+    html += '<div class="dj-market-row">' + marketHtml + '</div>';
+  }
+
+  // Activity counters
+  html += '<div class="dj-counters">';
+  html += '<div class="dj-counter"><span class="num">' + (dj.bars_built || 0) + '</span> bars built</div>';
+  html += '<div class="dj-counter"><span class="num">' + (dj.pulse_bars_found || 0) + '</span> pulse bars</div>';
+  html += '<div class="dj-counter"><span class="num">' + (dj.signals_evaluated || 0) + '</span> signals evaluated</div>';
+  html += '<div class="dj-counter"><span class="num">' + (dj.trades_entered || 0) + '</span> trades entered</div>';
+  html += '</div>';
+
+  // No-trade summary text
+  if (dj.no_trade_summary) {
+    html += '<div style="font-size:12px;color:var(--text);margin-bottom:8px;line-height:1.5;">' + esc(dj.no_trade_summary) + '</div>';
+  }
+
+  // Rejection timeline
+  const rejections = dj.rejection_reasons || [];
+  if (rejections.length > 0) {
+    const reasonLabels = {
+      'circuit_breaker': 'Circuit Breaker',
+      '0dte_limit_reached': '0DTE Limit',
+      'setup_expired': 'Setup Expired',
+      'credit_below_minimum': 'Credit Too Low',
+      'pdt_restricted': 'PDT Restricted',
+      'position_limit': 'Position Limit',
+      'portfolio_risk_blocked': 'Risk Blocked',
+      'tnt_limit_reached': 'TNT Limit',
+    };
+    html += '<div class="dj-timeline">';
+    html += '<div class="dj-timeline-title">Rejection Timeline</div>';
+    rejections.forEach(function(r) {
+      html += '<div class="dj-event">';
+      html += '<span class="dj-event-time">' + esc(r.timestamp) + '</span>';
+      html += '<span class="dj-event-strategy">' + esc(r.strategy) + '</span>';
+      html += '<span class="dj-event-reason">' + (reasonLabels[r.reason] || esc(r.reason) || '') + '</span>';
+      if (r.detail) {
+        html += '<span class="dj-event-detail">' + esc(r.detail) + '</span>';
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+
+  html += '</div>';
+  return html;
 }
 
 function closeCalDayDetail() {
@@ -4217,8 +4453,8 @@ function renderJournalCards(entries, prefix) {
       const checkChar = r.met ? '&#10003;' : '&#10007;';
       html += '<li class="reason-item">';
       html += '<span class="reason-check ' + checkCls + '">' + checkChar + '</span>';
-      html += '<span><span class="reason-label">' + r.label + '</span>';
-      if (r.detail) html += ' <span class="reason-detail">&mdash; ' + r.detail + '</span>';
+      html += '<span><span class="reason-label">' + esc(r.label) + '</span>';
+      if (r.detail) html += ' <span class="reason-detail">&mdash; ' + esc(r.detail) + '</span>';
       html += '</span></li>';
     });
     html += '</ul>';

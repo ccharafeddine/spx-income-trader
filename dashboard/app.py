@@ -408,6 +408,36 @@ def _ensure_journal_notes_table(conn):
     conn.commit()
 
 
+_daily_journal_table_checked = False
+
+def _ensure_daily_journal_table(conn):
+    """Create daily_journal table if it doesn't exist (cached after first check)."""
+    global _daily_journal_table_checked
+    if _daily_journal_table_checked:
+        return
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS daily_journal (
+            date DATE PRIMARY KEY,
+            bars_built INTEGER DEFAULT 0,
+            pulse_bars_found INTEGER DEFAULT 0,
+            signals_evaluated INTEGER DEFAULT 0,
+            trades_entered INTEGER DEFAULT 0,
+            spx_open REAL,
+            spx_close REAL,
+            spx_change_pct REAL,
+            vix_level REAL,
+            vix_regime TEXT,
+            rejection_reasons TEXT,
+            market_context TEXT,
+            no_trade_summary TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    _daily_journal_table_checked = True
+
+
 def load_signals():
     """Load signals from both the unified log and the legacy dry-run log."""
     signals = []
@@ -1887,6 +1917,20 @@ def api_journal_calendar():
             if ds and ds not in days_data and ds not in event_reasons:
                 event_reasons[ds] = 'no_setups'
 
+        # Get daily_journal entries for the month
+        _ensure_daily_journal_table(conn)
+        journal_rows = conn.execute(
+            """SELECT date, bars_built, pulse_bars_found, signals_evaluated,
+                      trades_entered, spx_open, spx_close, spx_change_pct,
+                      vix_level, vix_regime, no_trade_summary
+               FROM daily_journal
+               WHERE date >= ? AND date < ?""",
+            (first_day, last_day)
+        ).fetchall()
+        journal_data = {}
+        for jr in journal_rows:
+            journal_data[jr['date']] = dict(jr)
+
         conn.close()
     except Exception as e:
         logger.error(f"Calendar API error: {e}")
@@ -1903,6 +1947,17 @@ def api_journal_calendar():
     for date_str, d in days_data.items():
         d['strategies'] = sorted(d['strategies'])
         d['pnl'] = round(d['pnl'], 2)
+        # Merge daily_journal data if available
+        if date_str in journal_data:
+            jd = journal_data[date_str]
+            d['journal'] = {
+                'bars_built': jd.get('bars_built', 0),
+                'pulse_bars_found': jd.get('pulse_bars_found', 0),
+                'signals_evaluated': jd.get('signals_evaluated', 0),
+                'spx_change_pct': jd.get('spx_change_pct'),
+                'vix_level': jd.get('vix_level'),
+                'vix_regime': jd.get('vix_regime'),
+            }
         result_days[date_str] = d
         total_pnl += d['pnl']
         total_trades += d['trades']
@@ -1911,7 +1966,29 @@ def api_journal_calendar():
         if d['trades'] > 0:
             trading_days += 1
 
-    # Add no-trade days with reasons
+    # Add no-trade days with reasons (prefer daily_journal data over system events)
+    for date_str, jd in journal_data.items():
+        if date_str not in result_days:
+            summary_text = jd.get('no_trade_summary', '')
+            # Determine reason from journal data
+            reason = 'no_setups'
+            if date_str in event_reasons:
+                reason = event_reasons[date_str]
+            result_days[date_str] = {
+                'trades': 0, 'pnl': 0, 'wins': 0, 'losses': 0,
+                'strategies': [], 'no_trade_reason': reason,
+                'no_trade_summary': summary_text,
+                'journal': {
+                    'bars_built': jd.get('bars_built', 0),
+                    'pulse_bars_found': jd.get('pulse_bars_found', 0),
+                    'signals_evaluated': jd.get('signals_evaluated', 0),
+                    'spx_change_pct': jd.get('spx_change_pct'),
+                    'vix_level': jd.get('vix_level'),
+                    'vix_regime': jd.get('vix_regime'),
+                },
+            }
+
+    # Add remaining event-only days
     for date_str, reason in event_reasons.items():
         if date_str not in result_days:
             result_days[date_str] = {
@@ -1934,6 +2011,52 @@ def api_journal_calendar():
         'days': result_days,
         'summary': summary,
     })
+
+
+@app.route('/api/journal/daily/<date_str>')
+def api_journal_daily(date_str):
+    """Get full daily journal entry for a specific date, including rejection timeline."""
+    # Validate date format
+    try:
+        from datetime import date as date_type
+        parts = date_str.split('-')
+        date_type(int(parts[0]), int(parts[1]), int(parts[2]))
+    except (ValueError, IndexError):
+        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        _ensure_daily_journal_table(conn)
+
+        row = conn.execute(
+            "SELECT * FROM daily_journal WHERE date = ?",
+            (date_str,)
+        ).fetchone()
+
+        if not row:
+            conn.close()
+            return jsonify({'error': 'No journal entry for this date', 'date': date_str}), 404
+
+        data = dict(row)
+
+        # Parse JSON fields
+        try:
+            data['rejection_reasons'] = json.loads(data.get('rejection_reasons') or '[]')
+        except (json.JSONDecodeError, TypeError):
+            data['rejection_reasons'] = []
+        try:
+            data['market_context'] = json.loads(data.get('market_context') or '{}')
+        except (json.JSONDecodeError, TypeError):
+            data['market_context'] = {}
+
+        conn.close()
+        return jsonify(data)
+    except Exception as e:
+        if conn:
+            conn.close()
+        logger.error(f"Daily journal API error: {e}")
+        return jsonify({'error': 'Database error'}), 500
 
 
 @app.route('/api/journal/notes', methods=['POST'])

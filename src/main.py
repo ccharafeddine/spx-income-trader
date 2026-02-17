@@ -144,6 +144,14 @@ class TradingBot:
         self._current_spx_price = 0.0
         self._last_completed_bar = None
 
+        # Daily journal tracking (lightweight accumulator, flushed at EOD)
+        self._journal_rejections = []   # List of {timestamp, strategy, reason, detail}
+        self._journal_bars_built = 0
+        self._journal_pulse_bars = 0
+        self._journal_signals_evaluated = 0
+        self._journal_trades_entered = 0
+        self._journal_finalized = False
+
         # Daily loss limit is enforced solely by PortfolioManager.daily_realized_pnl
         # to prevent dual-tracker drift. No separate TradingBot.daily_pnl.
 
@@ -480,6 +488,14 @@ class TradingBot:
                     self.position_manager._day_open = None
                     self.position_manager._prev_close = None
 
+                    # Reset daily journal counters for new day
+                    self._journal_rejections = []
+                    self._journal_bars_built = 0
+                    self._journal_pulse_bars = 0
+                    self._journal_signals_evaluated = 0
+                    self._journal_trades_entered = 0
+                    self._journal_finalized = False
+
                     # Reset parallel strategies for new day
                     self._bnb_day_end_called = False
                     self.portfolio.reset_daily()
@@ -530,6 +546,12 @@ class TradingBot:
                         except Exception as e:
                             logger.warning(f"B&B on_day_end failed: {e}")
 
+                    # Finalize daily journal once after market close
+                    if (not self._journal_finalized
+                            and self.current_trading_date == current_time.date()
+                            and current_time.time() >= time(16, 0)):
+                        self._finalize_daily_journal()
+
                     logger.info(f"Market closed ({current_time.strftime('%a %H:%M')} ET). Next check in 60s...")
                     self._interruptible_sleep(60)
                     consecutive_errors = 0  # Reset error counter
@@ -551,6 +573,10 @@ class TradingBot:
 
                 # Global circuit breaker - blocks ALL strategies
                 if not self._check_daily_loss_circuit_breaker():
+                    if not any(r['reason'] == 'circuit_breaker' and r['strategy'] == 'all'
+                               for r in self._journal_rejections):
+                        self._record_rejection('all', 'circuit_breaker',
+                            f"Daily P&L ${self.portfolio.daily_realized_pnl:.2f} hit limit")
                     if self.pending_setup:
                         logger.info("Daily loss circuit breaker active, clearing pending setup")
                         self.pending_setup = None
@@ -564,6 +590,8 @@ class TradingBot:
                 if not self._check_0dte_limit():
                     if self.pending_setup:
                         logger.info("Daily Income limit reached, clearing pending setup")
+                        self._record_rejection('daily_income', '0dte_limit_reached',
+                            f"Already traded {self.dte0_trades_today} 0DTE today")
                         self.pending_setup = None
                 else:
                     # Check pending breakout triggers (only when DI can still trade)
@@ -584,12 +612,16 @@ class TradingBot:
                         window_end = time(11, 30)
                         window_label = "9:30-11:30"
                     if current_time.time() > window_end:
+                        above_below = 'above' if ps['direction'].value == 'bullish' else 'below'
                         logger.info(
                             f"Pending {ps['direction'].value.upper()} setup expired "
                             f"({ps_window} window closed at {window_end.strftime('%H:%M')} ET without breakout). "
-                            f"Trigger was {'above' if ps['direction'].value == 'bullish' else 'below'} "
+                            f"Trigger was {above_below} "
                             f"${ps['trigger_price']:,.2f}"
                         )
+                        self._record_rejection('daily_income', 'setup_expired',
+                            f"{ps['direction'].value} setup from {ps['bar'].timestamp.strftime('%H:%M')} bar, "
+                            f"trigger {above_below} ${ps['trigger_price']:,.2f} never hit before {window_end.strftime('%H:%M')}")
                         self.pending_setup = None
 
                 # Log outside-window status periodically
@@ -778,6 +810,146 @@ class TradingBot:
             return False
         return True
 
+    def _record_rejection(self, strategy: str, reason: str, detail: str = ''):
+        """Record a trade rejection event for the daily journal."""
+        self._journal_rejections.append({
+            'timestamp': datetime.now(self.tz).strftime('%H:%M:%S'),
+            'strategy': strategy,
+            'reason': reason,
+            'detail': detail,
+        })
+
+    def _finalize_daily_journal(self):
+        """Write the daily journal entry to DB at end of day."""
+        if self._journal_finalized:
+            return
+        self._journal_finalized = True
+
+        try:
+            trade_date = self.current_trading_date
+            if not trade_date:
+                return
+
+            # Get market data for the day
+            spx_open = None
+            spx_close = None
+            spx_change_pct = None
+            vix_level = None
+            vix_regime = None
+
+            try:
+                from src.data.yahoo_finance import YahooFinanceProvider
+                yf_provider = YahooFinanceProvider()
+                spx_quote = yf_provider.get_spx_quote()
+                if spx_quote:
+                    spx_open = spx_quote.get('open')
+                    spx_close = spx_quote.get('price')
+                    spx_change_pct = spx_quote.get('change_pct')
+                vix_quote = yf_provider.get_vix_quote()
+                if vix_quote:
+                    vix_level = vix_quote.get('price')
+            except Exception:
+                pass
+
+            # Get VIX regime from drawdown manager or strategy params
+            try:
+                from src.core.drawdown_manager import DrawdownManager
+                dm = DrawdownManager(STRATEGY_PARAMS.get('portfolio', {}))
+                if vix_level:
+                    vix_regime = dm.get_vix_regime(vix_level)
+            except Exception:
+                if vix_level:
+                    if vix_level < 15:
+                        vix_regime = 'low'
+                    elif vix_level < 20:
+                        vix_regime = 'normal'
+                    elif vix_level < 30:
+                        vix_regime = 'elevated'
+                    else:
+                        vix_regime = 'high'
+
+            # Build human-readable summary
+            no_trade_summary = self._build_no_trade_summary(
+                spx_open, spx_close, spx_change_pct, vix_level, vix_regime
+            )
+
+            # Market context
+            market_context = {}
+            if spx_open and spx_close:
+                day_range = abs(spx_close - spx_open)
+                if spx_change_pct is not None:
+                    if abs(spx_change_pct) < 0.3:
+                        market_context['day_type'] = 'flat'
+                    elif spx_change_pct > 0.8:
+                        market_context['day_type'] = 'trending_up'
+                    elif spx_change_pct < -0.8:
+                        market_context['day_type'] = 'trending_down'
+                    else:
+                        market_context['day_type'] = 'choppy'
+                market_context['range'] = round(day_range, 2)
+
+            journal_data = {
+                'bars_built': self._journal_bars_built,
+                'pulse_bars_found': self._journal_pulse_bars,
+                'signals_evaluated': self._journal_signals_evaluated,
+                'trades_entered': self._journal_trades_entered,
+                'spx_open': spx_open,
+                'spx_close': spx_close,
+                'spx_change_pct': round(spx_change_pct, 2) if spx_change_pct else None,
+                'vix_level': round(vix_level, 2) if vix_level else None,
+                'vix_regime': vix_regime,
+                'rejection_reasons': self._journal_rejections,
+                'market_context': market_context,
+                'no_trade_summary': no_trade_summary,
+            }
+
+            self.db.save_daily_journal(trade_date, journal_data)
+            logger.info(
+                f"Daily journal saved: {self._journal_bars_built} bars, "
+                f"{self._journal_pulse_bars} pulse bars, "
+                f"{self._journal_trades_entered} trades, "
+                f"{len(self._journal_rejections)} rejections"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save daily journal: {e}")
+
+    def _build_no_trade_summary(self, spx_open, spx_close, spx_change_pct, vix_level, vix_regime):
+        """Build a human-readable summary of why no trades were taken."""
+        parts = []
+
+        if self._journal_pulse_bars > 0:
+            parts.append(f"{self._journal_pulse_bars} pulse bar{'s' if self._journal_pulse_bars > 1 else ''} detected")
+            # Check if any setup formed but didn't trigger
+            setup_reasons = [r for r in self._journal_rejections if r['reason'] == 'setup_expired']
+            if setup_reasons:
+                for sr in setup_reasons:
+                    parts.append(sr['detail'])
+            elif self._journal_trades_entered == 0:
+                # Pulse bar but no trade - check specific rejections
+                credit_reasons = [r for r in self._journal_rejections if r['reason'] == 'credit_below_minimum']
+                if credit_reasons:
+                    parts.append(f"credit too low ({credit_reasons[0]['detail']})")
+                else:
+                    breaker_reasons = [r for r in self._journal_rejections if r['reason'] == 'circuit_breaker']
+                    if breaker_reasons:
+                        parts.append("circuit breaker blocked entry")
+                    else:
+                        parts.append("no breakout confirmation")
+        else:
+            parts.append("No pulse bars formed")
+
+        # Add market context
+        market_bits = []
+        if spx_change_pct is not None:
+            direction = 'up' if spx_change_pct > 0 else 'down'
+            market_bits.append(f"SPX {direction} {abs(spx_change_pct):.2f}%")
+        if vix_level and vix_regime:
+            market_bits.append(f"VIX {vix_level:.1f} ({vix_regime})")
+        if market_bits:
+            parts.append('. '.join(market_bits))
+
+        return '. '.join(parts) + '.' if parts else 'No data available.'
+
     def _drain_recently_closed(self):
         """Process recently_closed trades into portfolio manager."""
         for closed in self.position_manager.recently_closed:
@@ -844,6 +1016,7 @@ class TradingBot:
             # Process completed bar through all filters and parallel strategies
             bar = self._last_completed_bar
             if bar:
+                self._journal_bars_built += 1
                 logger.info(f"New 30-min bar completed: {bar}")
 
                 # Feed bar to Bollinger filter
@@ -853,9 +1026,9 @@ class TradingBot:
                 if self.tag_n_turn_enabled and self.tag_n_turn:
                     self.tag_n_turn.on_bar_complete(bar)
 
-                # ORB: Set opening range on first bar (10:00 completion)
+                # ORB: Set opening range on first bar (starts 9:30, completes at 10:00)
                 if self.orb_enabled and self.orb_strategy:
-                    if bar.timestamp.time() == time(10, 0):
+                    if bar.timestamp.time() == time(9, 30):
                         self.orb_strategy.set_opening_range(bar)
 
                 # B&B: Process bar for end-of-day signals (15:00-16:00)
@@ -928,6 +1101,12 @@ class TradingBot:
                         "stop_price": tnt_signal['stop_price'],
                     })
                     # Execute if TNT limit allows and circuit breaker not tripped
+                    if not self._check_daily_loss_circuit_breaker():
+                        self._record_rejection('tag_n_turn', 'circuit_breaker',
+                            f"Daily P&L ${self.portfolio.daily_realized_pnl:.2f} hit limit")
+                    elif not self._check_tnt_limit():
+                        self._record_rejection('tag_n_turn', 'tnt_limit_reached',
+                            f"Already traded {self.tnt_trades_today} TNT today")
                     if (self._check_daily_loss_circuit_breaker()
                             and self._check_tnt_limit()):
                         tnt_cfg = STRATEGY_PARAMS.get('tag_n_turn', {})
@@ -1023,6 +1202,15 @@ class TradingBot:
                         if not orb_ok:
                             # Rollback premature state set by check_breakout()
                             self.orb_strategy.rollback_entry()
+                    else:
+                        # Limit or circuit breaker blocked execution - rollback strategy state
+                        if not self._check_daily_loss_circuit_breaker():
+                            self._record_rejection('orb', 'circuit_breaker',
+                                f"Daily P&L ${self.portfolio.daily_realized_pnl:.2f} hit limit")
+                        else:
+                            self._record_rejection('orb', '0dte_limit_reached',
+                                f"Already traded {self.dte0_trades_today} 0DTE today")
+                        self.orb_strategy.rollback_entry()
 
             if self.bnb_enabled and self.bnb_strategy:
                 bnb_signal = self.bnb_strategy.check_entry_signal(current_price, current_time)
@@ -1047,6 +1235,15 @@ class TradingBot:
                         if not bnb_ok:
                             # Rollback premature state set by check_entry_signal()
                             self.bnb_strategy.rollback_entry()
+                    else:
+                        # Limit or circuit breaker blocked execution - rollback strategy state
+                        if not self._check_daily_loss_circuit_breaker():
+                            self._record_rejection('bnb', 'circuit_breaker',
+                                f"Daily P&L ${self.portfolio.daily_realized_pnl:.2f} hit limit")
+                        else:
+                            self._record_rejection('bnb', '0dte_limit_reached',
+                                f"Already traded {self.dte0_trades_today} 0DTE today")
+                        self.bnb_strategy.rollback_entry()
 
         except Exception as e:
             logger.error(f"Error updating market state: {e}", exc_info=True)
@@ -1129,9 +1326,13 @@ class TradingBot:
 
             if credit <= 0:
                 logger.warning(f"Non-positive credit ${credit:.2f}, rejecting")
+                self._record_rejection('spread', 'credit_below_minimum',
+                    f"Credit ${credit:.2f} (non-positive)")
                 return None
             if credit < min_credit:
                 logger.warning(f"Credit ${credit:.2f} below min ${min_credit:.2f}")
+                self._record_rejection('spread', 'credit_below_minimum',
+                    f"Credit ${credit:.2f} < min ${min_credit:.2f}")
                 return None
 
             short_leg = OptionLeg(
@@ -1199,6 +1400,7 @@ class TradingBot:
         # PDT entry gate - block if no day trade slots available
         if not self.pdt_tracker.can_open_trade():
             logger.warning(f"{strategy_name}: Trade BLOCKED by PDT entry gate - no day trade slots")
+            self._record_rejection(strategy_name, 'pdt_restricted', 'No day trade slots available')
             self.db.log_event("pdt_entry_blocked", f"PDT blocked {strategy_name} entry", {
                 "strategy": strategy_name,
                 "direction": direction.value,
@@ -1247,6 +1449,7 @@ class TradingBot:
             )
             if not allowed:
                 logger.warning(f"{strategy_name}: Portfolio risk blocked: {deny_reason}")
+                self._record_rejection(strategy_name, 'portfolio_risk_blocked', deny_reason)
                 return False
 
             # 5. Enter trade (auto-confirm for parallel strategies)
@@ -1267,6 +1470,7 @@ class TradingBot:
                 return False
 
             # 6. Update counters
+            self._journal_trades_entered += 1
             if is_0dte:
                 self.dte0_trades_today += 1
             else:
@@ -1405,14 +1609,18 @@ class TradingBot:
             # Only block on Daily Income's own positions
             if self.portfolio.has_position_for_strategy(StrategyType.DAILY_INCOME):
                 logger.debug("Daily Income already has open position, skipping setup check")
+                self._record_rejection('daily_income', 'position_limit',
+                    'Daily Income position already open')
                 return
 
             current_time = datetime.now(self.tz)
 
             # Evaluate for pulse bar setup
+            self._journal_signals_evaluated += 1
             direction = self.strategy.evaluate_setup(bar, current_price)
 
             if direction:
+                self._journal_pulse_bars += 1
                 # Pulse bar detected -- store as pending setup, DON'T enter yet
                 trigger_price = bar.high if direction.value == 'bullish' else bar.low
                 above_below = 'above' if direction.value == 'bullish' else 'below'
@@ -1467,6 +1675,7 @@ class TradingBot:
             # PDT entry gate - block if no day trade slots available
             if not self.pdt_tracker.can_open_trade():
                 logger.warning("DI setup BLOCKED by PDT entry gate - no day trade slots")
+                self._record_rejection('daily_income', 'pdt_restricted', 'No day trade slots available')
                 self.db.log_event("pdt_entry_blocked", "PDT blocked DI entry", {
                     "strategy": "daily_income",
                     "direction": direction.value,
@@ -1487,6 +1696,8 @@ class TradingBot:
 
             if not spread:
                 logger.warning("Failed to construct spread")
+                self._record_rejection('daily_income', 'credit_below_minimum',
+                    f"Could not construct {direction.value} spread at SPX {current_price:.0f}")
                 return
 
             # Display trade details
@@ -1522,6 +1733,7 @@ class TradingBot:
             )
             if not allowed:
                 logger.warning(f"Portfolio risk check blocked entry: {deny_reason}")
+                self._record_rejection('daily_income', 'portfolio_risk_blocked', deny_reason)
                 return
 
             sizing_method = self.portfolio.sizing_method.value
@@ -1541,6 +1753,7 @@ class TradingBot:
 
             if trade:
                 logger.info(f"Trade executed: {trade.id}")
+                self._journal_trades_entered += 1
 
                 self.dte0_trades_today += 1
 

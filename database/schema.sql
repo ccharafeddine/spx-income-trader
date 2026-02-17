@@ -127,3 +127,22 @@ CREATE TABLE IF NOT EXISTS pdt_day_trades (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pdt_trade_date ON pdt_day_trades(trade_date);
+
+-- Daily journal: one row per trading day, records what happened even when no trades placed
+CREATE TABLE IF NOT EXISTS daily_journal (
+    date DATE PRIMARY KEY,
+    bars_built INTEGER DEFAULT 0,
+    pulse_bars_found INTEGER DEFAULT 0,
+    signals_evaluated INTEGER DEFAULT 0,
+    trades_entered INTEGER DEFAULT 0,
+    spx_open REAL,
+    spx_close REAL,
+    spx_change_pct REAL,
+    vix_level REAL,
+    vix_regime TEXT,           -- 'low', 'normal', 'elevated', 'high'
+    rejection_reasons TEXT,     -- JSON array of rejection events
+    market_context TEXT,        -- JSON: day_type, range, etc.
+    no_trade_summary TEXT,      -- Human-readable summary for display
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

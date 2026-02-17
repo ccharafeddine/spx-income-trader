@@ -132,6 +132,18 @@ class TagNTurnStrategy:
         elif self.state == TNTState.PULSE_CONFIRMED:
             # Pulse just confirmed, set up breakout level
             self._setup_breakout_trigger()
+        elif self.state == TNTState.AWAITING_BREAKOUT:
+            # Timeout stale breakout setups (6 bars = 3 hours)
+            bar_ts = self.pulse_info.get('bar_timestamp') if self.pulse_info else None
+            if bar_ts:
+                try:
+                    pulse_time = datetime.fromisoformat(bar_ts)
+                    if bar.timestamp - pulse_time > timedelta(hours=3):
+                        self._reset_to_idle(
+                            f"Breakout timeout - setup from {pulse_time.strftime('%H:%M')} expired after 3h"
+                        )
+                except (ValueError, TypeError):
+                    pass
         elif self.state == TNTState.POSITION_OPEN:
             # Check exit conditions on each bar
             pass  # Exit checks happen in check_exit_conditions with current price
@@ -426,6 +438,7 @@ class TagNTurnStrategy:
             'direction': direction,
             'bar': bar,
             'bar_time': bar.timestamp.strftime('%H:%M') if bar.timestamp else None,
+            'bar_timestamp': bar.timestamp.isoformat() if bar.timestamp else None,
             'high': bar.high,
             'low': bar.low,
             'close': bar.close,

@@ -451,3 +451,85 @@ class DatabaseManager:
             """, (exit_time, exit_reason, pnl, pnl_percent, trade_id))
             conn.commit()
             logger.info(f"Orphaned trade {trade_id} resolved: P&L=${pnl:+.2f}")
+
+    def save_daily_journal(self, journal_date: date, data: Dict):
+        """Save or update a daily journal entry."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO daily_journal (
+                    date, bars_built, pulse_bars_found, signals_evaluated,
+                    trades_entered, spx_open, spx_close, spx_change_pct,
+                    vix_level, vix_regime, rejection_reasons, market_context,
+                    no_trade_summary, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (
+                journal_date,
+                data.get('bars_built', 0),
+                data.get('pulse_bars_found', 0),
+                data.get('signals_evaluated', 0),
+                data.get('trades_entered', 0),
+                data.get('spx_open'),
+                data.get('spx_close'),
+                data.get('spx_change_pct'),
+                data.get('vix_level'),
+                data.get('vix_regime'),
+                json.dumps(data.get('rejection_reasons', [])),
+                json.dumps(data.get('market_context', {})),
+                data.get('no_trade_summary', ''),
+            ))
+            conn.commit()
+            logger.debug(f"Daily journal saved for {journal_date}")
+
+    def get_daily_journal(self, journal_date: date) -> Optional[Dict]:
+        """Get daily journal entry for a specific date."""
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM daily_journal WHERE date = ?",
+                (journal_date,)
+            ).fetchone()
+            if row:
+                d = dict(row)
+                # Parse JSON fields
+                try:
+                    d['rejection_reasons'] = json.loads(d.get('rejection_reasons') or '[]')
+                except (json.JSONDecodeError, TypeError):
+                    d['rejection_reasons'] = []
+                try:
+                    d['market_context'] = json.loads(d.get('market_context') or '{}')
+                except (json.JSONDecodeError, TypeError):
+                    d['market_context'] = {}
+                return d
+            return None
+
+    def get_daily_journals_for_month(self, year: int, month: int) -> Dict[str, Dict]:
+        """Get all daily journal entries for a given month. Returns dict keyed by date string."""
+        first_day = f"{year:04d}-{month:02d}-01"
+        if month == 12:
+            last_day = f"{year + 1:04d}-01-01"
+        else:
+            last_day = f"{year:04d}-{month + 1:02d}-01"
+
+        result = {}
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM daily_journal WHERE date >= ? AND date < ?",
+                (first_day, last_day)
+            ).fetchall()
+            for row in rows:
+                d = dict(row)
+                raw_date = d.get('date', '')
+                # detect_types may return datetime.date; convert to string key
+                date_str = str(raw_date) if not isinstance(raw_date, str) else raw_date
+                try:
+                    d['rejection_reasons'] = json.loads(d.get('rejection_reasons') or '[]')
+                except (json.JSONDecodeError, TypeError):
+                    d['rejection_reasons'] = []
+                try:
+                    d['market_context'] = json.loads(d.get('market_context') or '{}')
+                except (json.JSONDecodeError, TypeError):
+                    d['market_context'] = {}
+                result[date_str] = d
+        return result
