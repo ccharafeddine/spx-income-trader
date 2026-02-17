@@ -1732,8 +1732,8 @@ def main():
 
             logger.info("*** LIVE TRADING MODE - Real orders will be placed ***")
 
-            # Determine active broker from config (default to etrade for backward compat)
-            active_broker = STRATEGY_PARAMS.get('broker', {}).get('active', 'etrade')
+            # Determine active broker from config (default to schwab)
+            active_broker = STRATEGY_PARAMS.get('broker', {}).get('active', 'schwab')
 
             if active_broker == 'schwab':
                 # Schwab broker via factory

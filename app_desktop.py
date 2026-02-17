@@ -391,15 +391,29 @@ class DesktopApp:
                 broker = DryRunBroker(initial_balance=50000.0)
                 dry_run = True
             else:
-                # Live mode requires E*TRADE authentication
-                from src.brokers.etrade_broker import ETradeBroker
-                from src.brokers.etrade_auth import ETradeAuth
-                etrade_auth = ETradeAuth()
-                if not etrade_auth.authenticate():
-                    logger.error("E*TRADE authentication failed")
-                    return
-                broker = ETradeBroker(auth=etrade_auth)
-                dry_run = False
+                # Live mode: use broker factory to get the active broker
+                from src.brokers.broker_factory import get_broker
+                from config.settings import STRATEGY_PARAMS as _sp
+                active = _sp.get('broker', {}).get('active', 'schwab')
+
+                if active == 'dry_run':
+                    # Config says dry_run but mode is live - fall back to dry run
+                    broker = DryRunBroker(initial_balance=50000.0)
+                    dry_run = True
+                else:
+                    broker = get_broker(_sp)
+                    # Verify authentication for the active broker
+                    if active == 'schwab':
+                        if not broker.auth.is_authenticated():
+                            logger.error("Schwab authentication failed. Run auth script first.")
+                            return
+                        logger.info("Schwab authentication verified")
+                    elif active == 'etrade':
+                        if not broker.auth.authenticate():
+                            logger.error("E*TRADE authentication failed")
+                            return
+                        logger.info("E*TRADE authentication verified")
+                    dry_run = False
 
             strategy = SPXIncomeStrategy()
             db_manager = DatabaseManager(DATABASE_PATH)

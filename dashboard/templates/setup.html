@@ -43,7 +43,7 @@ body {
 
 .setup-container {
   width: 100%;
-  max-width: 480px;
+  max-width: 520px;
 }
 
 .logo-container {
@@ -88,6 +88,82 @@ body {
   font-size: 13px;
   color: var(--text-dim);
   margin-bottom: 24px;
+}
+
+/* Broker selection cards */
+.broker-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.broker-card {
+  position: relative;
+  padding: 16px 20px;
+  background: var(--bg);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.broker-card:hover {
+  border-color: var(--text-dim);
+}
+
+.broker-card.selected {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.15);
+}
+
+.broker-card .broker-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 4px;
+}
+
+.broker-card .broker-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.broker-card .broker-badge {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(6, 182, 212, 0.15);
+  color: var(--cyan);
+}
+
+.broker-card .broker-radio {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg);
+  transition: border-color 0.2s;
+}
+
+.broker-card.selected .broker-radio {
+  border-color: var(--cyan);
+  background: var(--cyan);
+  box-shadow: inset 0 0 0 3px var(--bg);
+}
+
+.broker-card.has-badge .broker-radio {
+  display: none;
 }
 
 .form-group {
@@ -202,14 +278,12 @@ body {
   margin-bottom: 20px;
 }
 
-.success-message {
-  background: var(--green-dim);
-  border: 1px solid var(--green);
-  border-radius: 6px;
-  padding: 12px 16px;
-  color: var(--green);
-  font-size: 13px;
-  margin-bottom: 20px;
+.credential-form {
+  display: none;
+}
+
+.credential-form.active {
+  display: block;
 }
 
 .info-box {
@@ -251,75 +325,156 @@ body {
 <div class="setup-container">
   <div class="logo-container">
     <div class="logo">SPX INCOME TRADER</div>
-    <div class="logo-sub">E*TRADE API Configuration</div>
+    <div class="logo-sub">Broker Configuration</div>
   </div>
 
   <div class="panel">
-    <div class="panel-title">Connect Your E*TRADE Account</div>
-    <div class="panel-subtitle">Enter your API credentials to get started. Your keys are stored securely in the OS keychain.</div>
+    <div class="panel-title">Choose Your Broker</div>
+    <div class="panel-subtitle">Select a broker to connect, or start with dry-run mode to explore without an account.</div>
 
     {% if error %}
     <div class="error-message">{{ error }}</div>
     {% endif %}
 
-    {% if success %}
-    <div class="success-message">{{ success }}</div>
-    {% endif %}
+    <!-- Broker Selection -->
+    <div class="broker-cards">
+      <div class="broker-card has-badge" id="card-schwab" onclick="selectBroker('schwab')">
+        <span class="broker-badge">Recommended</span>
+        <div class="broker-name">Charles Schwab</div>
+        <div class="broker-desc">Connect via Schwab's developer API. Supports SPX options trading with OAuth token authentication.</div>
+      </div>
 
-    <form method="POST" action="/setup" id="setup-form">
+      <div class="broker-card" id="card-etrade" onclick="selectBroker('etrade')">
+        <div class="broker-radio"></div>
+        <div class="broker-name">E*TRADE</div>
+        <div class="broker-desc">Legacy E*TRADE / Morgan Stanley integration. Requires E*TRADE API keys.</div>
+      </div>
+
+      <div class="broker-card" id="card-dry_run" onclick="selectBroker('dry_run')">
+        <div class="broker-radio"></div>
+        <div class="broker-name">Dry Run</div>
+        <div class="broker-desc">No broker needed. Simulated trades with real market data. Great for testing strategies.</div>
+      </div>
+    </div>
+
+    <!-- Schwab Form -->
+    <form method="POST" action="/setup" id="schwab-form" class="credential-form">
+      <input type="hidden" name="broker_type" value="schwab">
+
+      <div class="form-group">
+        <label class="form-label" for="schwab_app_key">App Key</label>
+        <input type="text" class="form-input" id="schwab_app_key" name="schwab_app_key"
+               placeholder="From developer.schwab.com" required>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="schwab_app_secret">App Secret</label>
+        <input type="password" class="form-input" id="schwab_app_secret" name="schwab_app_secret"
+               placeholder="From developer.schwab.com" required>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="schwab_account_number">Account Number</label>
+        <input type="text" class="form-input" id="schwab_account_number" name="schwab_account_number"
+               placeholder="Your Schwab account number">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="schwab_callback_url">Callback URL</label>
+        <input type="text" class="form-input" id="schwab_callback_url" name="schwab_callback_url"
+               placeholder="https://127.0.0.1" value="https://127.0.0.1">
+      </div>
+
+      <button type="submit" class="btn btn-primary">Save & Continue</button>
+
+      <div class="info-box">
+        <strong>Need API keys?</strong> Register at
+        <a href="https://developer.schwab.com" target="_blank" rel="noopener">developer.schwab.com</a>
+        to create your application and get credentials.
+      </div>
+    </form>
+
+    <!-- E*TRADE Form -->
+    <form method="POST" action="/setup" id="etrade-form" class="credential-form">
+      <input type="hidden" name="broker_type" value="etrade">
+
       <div class="form-group">
         <label class="form-label" for="consumer_key">Consumer Key</label>
         <input type="text" class="form-input" id="consumer_key" name="consumer_key"
-               placeholder="Enter your E*TRADE consumer key" required
-               value="{{ consumer_key or '' }}">
+               placeholder="Enter your E*TRADE consumer key" required>
       </div>
 
       <div class="form-group">
         <label class="form-label" for="consumer_secret">Consumer Secret</label>
         <input type="password" class="form-input" id="consumer_secret" name="consumer_secret"
-               placeholder="Enter your E*TRADE consumer secret" required
-               value="{{ consumer_secret or '' }}">
+               placeholder="Enter your E*TRADE consumer secret" required>
       </div>
 
       <div class="form-group">
         <label class="form-label" for="account_id">Account ID</label>
         <input type="text" class="form-input" id="account_id" name="account_id"
-               placeholder="Enter your E*TRADE account ID" required
-               value="{{ account_id or '' }}">
+               placeholder="Enter your E*TRADE account ID" required>
       </div>
 
       <div class="form-group">
         <label class="form-label" for="environment">Environment</label>
         <select class="form-select" id="environment" name="environment">
-          <option value="sandbox" {% if environment != 'production' %}selected{% endif %}>Sandbox (Testing)</option>
-          <option value="production" {% if environment == 'production' %}selected{% endif %}>Production (Live Trading)</option>
+          <option value="sandbox">Sandbox (Testing)</option>
+          <option value="production">Production (Live Trading)</option>
         </select>
       </div>
 
       <button type="submit" class="btn btn-primary">Save & Continue</button>
 
-      {% if is_configured %}
-      <a href="/" class="btn btn-secondary" style="display: block; text-align: center; text-decoration: none;">
-        Cancel
-      </a>
-      {% endif %}
+      <div class="info-box">
+        <strong>Need API keys?</strong> Log in to your E*TRADE account and visit the
+        <a href="https://us.etrade.com/etx/ris/apikey" target="_blank" rel="noopener">
+          API Key Management
+        </a> page to create your keys.
+      </div>
     </form>
 
-    <div class="secure-badge">
+    <!-- Dry Run Form -->
+    <form method="POST" action="/setup" id="dry_run-form" class="credential-form">
+      <input type="hidden" name="broker_type" value="dry_run">
+      <button type="submit" class="btn btn-primary">Start in Dry Run Mode</button>
+    </form>
+
+    {% if is_configured %}
+    <a href="/" class="btn btn-secondary" style="display: block; text-align: center; text-decoration: none;">
+      Cancel
+    </a>
+    {% endif %}
+
+    <div class="secure-badge" id="secure-badge" style="display:none;">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
       </svg>
-      Credentials stored securely in OS keychain
-    </div>
-
-    <div class="info-box">
-      <strong>Need API keys?</strong> Log in to your E*TRADE account and visit the
-      <a href="https://us.etrade.com/etx/ris/apikey" target="_blank" rel="noopener">
-        API Key Management
-      </a> page to create your keys.
+      Credentials stored securely in OS keychain / config file
     </div>
   </div>
 </div>
+
+<script>
+let selectedBroker = null;
+
+function selectBroker(broker) {
+  selectedBroker = broker;
+
+  // Update card selection
+  document.querySelectorAll('.broker-card').forEach(card => card.classList.remove('selected'));
+  document.getElementById('card-' + broker).classList.add('selected');
+
+  // Show the correct form
+  document.querySelectorAll('.credential-form').forEach(form => form.classList.remove('active'));
+  const form = document.getElementById(broker + '-form');
+  if (form) form.classList.add('active');
+
+  // Show secure badge for broker forms
+  const badge = document.getElementById('secure-badge');
+  badge.style.display = (broker === 'schwab' || broker === 'etrade') ? '' : 'none';
+}
+</script>
 
 </body>
 </html>

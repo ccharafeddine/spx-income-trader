@@ -31,7 +31,8 @@ from config.settings import (
     BASE_DIR, DATABASE_PATH, LOG_FILE,
     DASHBOARD_PORT, DASHBOARD_HOST, STRATEGY_PARAMS,
     ETRADE_CONFIG, is_etrade_configured, save_etrade_credentials, clear_etrade_credentials,
-    get_trading_mode, save_trading_mode, get_etrade_credentials
+    get_trading_mode, save_trading_mode, get_etrade_credentials,
+    is_schwab_configured, is_any_broker_configured, load_strategy_params,
 )
 from src.data.yahoo_finance import YahooFinanceProvider
 from src.utils.version import APP_VERSION
@@ -51,14 +52,15 @@ ET = pytz.timezone('US/Eastern')
 
 @app.before_request
 def check_setup_required():
-    """Redirect to setup if E*TRADE credentials are not configured."""
-    # Allow setup, static, and auth routes without credentials
-    allowed_paths = ['/setup', '/static', '/api/setup/status', '/auth/etrade/']
+    """Redirect to setup if no broker is configured."""
+    # Allow setup, static, auth, and broker API routes without credentials
+    allowed_paths = ['/setup', '/static', '/api/setup/status', '/auth/etrade/',
+                     '/api/schwab-auth-status', '/api/broker/']
     if any(request.path.startswith(p) for p in allowed_paths):
         return None
 
-    # Check if credentials are configured
-    if not is_etrade_configured():
+    # Check if any broker is configured
+    if not is_any_broker_configured():
         return redirect(url_for('setup'))
 
 # Shared Yahoo Finance provider (has its own 60s cache)
@@ -555,40 +557,61 @@ def compute_account(conn, spx_price):
 
 @app.route('/setup', methods=['GET', 'POST'])
 def setup():
-    """Setup/onboarding page for E*TRADE credentials."""
+    """Setup/onboarding page for broker configuration."""
     error = None
     success = None
 
     if request.method == 'POST':
-        consumer_key = request.form.get('consumer_key', '').strip()
-        consumer_secret = request.form.get('consumer_secret', '').strip()
-        account_id = request.form.get('account_id', '').strip()
-        environment = request.form.get('environment', 'sandbox')
+        broker_type = request.form.get('broker_type', '')
 
-        # Validate fields
-        if not consumer_key or not consumer_secret or not account_id:
-            error = 'All fields are required.'
-        else:
-            # Save to keychain
-            sandbox = environment != 'production'
-            if save_etrade_credentials(consumer_key, consumer_secret, account_id, sandbox):
-                return redirect(url_for('index'))
+        if broker_type == 'dry_run':
+            # Set active broker to dry_run in YAML
+            _set_active_broker('dry_run')
+            return redirect(url_for('index'))
+
+        elif broker_type == 'schwab':
+            app_key = request.form.get('schwab_app_key', '').strip()
+            app_secret = request.form.get('schwab_app_secret', '').strip()
+            account_number = request.form.get('schwab_account_number', '').strip()
+            callback_url = request.form.get('schwab_callback_url', 'https://127.0.0.1').strip()
+
+            if not app_key or not app_secret:
+                error = 'App Key and App Secret are required.'
             else:
-                error = 'Failed to save credentials. Make sure keyring is installed.'
+                if _save_schwab_credentials(app_key, app_secret, account_number, callback_url):
+                    _set_active_broker('schwab')
+                    return redirect(url_for('index'))
+                else:
+                    error = 'Failed to save Schwab credentials.'
 
-        masked_key = ('****' + consumer_key[-4:]) if len(consumer_key) > 4 else '****'
+        elif broker_type == 'etrade':
+            consumer_key = request.form.get('consumer_key', '').strip()
+            consumer_secret = request.form.get('consumer_secret', '').strip()
+            account_id = request.form.get('account_id', '').strip()
+            environment = request.form.get('environment', 'sandbox')
+
+            if not consumer_key or not consumer_secret or not account_id:
+                error = 'All fields are required.'
+            else:
+                sandbox = environment != 'production'
+                if save_etrade_credentials(consumer_key, consumer_secret, account_id, sandbox):
+                    _set_active_broker('etrade')
+                    return redirect(url_for('index'))
+                else:
+                    error = 'Failed to save credentials. Make sure keyring is installed.'
+        else:
+            error = 'Please select a broker.'
+
         return render_template('setup.html',
             error=error,
-            consumer_key=masked_key,
-            account_id=account_id,
-            environment=environment,
-            is_configured=is_etrade_configured()
+            is_configured=is_any_broker_configured(),
+            active_broker=STRATEGY_PARAMS.get('broker', {}).get('active', 'dry_run'),
         )
 
     # GET request
     return render_template('setup.html',
-        is_configured=is_etrade_configured(),
-        environment='sandbox' if ETRADE_CONFIG.get('sandbox', True) else 'production'
+        is_configured=is_any_broker_configured(),
+        active_broker=STRATEGY_PARAMS.get('broker', {}).get('active', 'dry_run'),
     )
 
 
@@ -629,7 +652,15 @@ def settings():
                 message = 'No changes detected.'
                 message_type = 'success'
 
-    # Prepare masked values for display
+    # Active broker info
+    active_broker = STRATEGY_PARAMS.get('broker', {}).get('active', 'dry_run')
+    schwab_cfg = STRATEGY_PARAMS.get('broker', {}).get('schwab', {})
+    schwab_key = schwab_cfg.get('app_key', '')
+    schwab_account = schwab_cfg.get('account_number', '')
+    masked_schwab_key = '****' + schwab_key[-4:] if len(schwab_key) > 4 else schwab_key
+    masked_schwab_account = '****' + schwab_account[-4:] if len(schwab_account) > 4 else schwab_account
+
+    # E*TRADE masked values
     key = ETRADE_CONFIG.get('consumer_key') or ''
     account = ETRADE_CONFIG.get('account_id') or ''
     masked_key = '****' + key[-4:] if len(key) > 4 else key
@@ -638,8 +669,12 @@ def settings():
     return render_template('settings.html',
         message=message,
         message_type=message_type,
+        active_broker=active_broker,
         masked_key=masked_key,
         masked_account=masked_account,
+        masked_schwab_key=masked_schwab_key,
+        masked_schwab_account=masked_schwab_account,
+        schwab_callback_url=schwab_cfg.get('callback_url', 'https://127.0.0.1'),
         is_production=not ETRADE_CONFIG.get('sandbox', True),
         credential_source=ETRADE_CONFIG.get('credential_source', 'none').title()
     )
@@ -647,8 +682,11 @@ def settings():
 
 @app.route('/api/setup/status')
 def api_setup_status():
-    """Check if credentials are configured."""
-    return jsonify({'configured': is_etrade_configured()})
+    """Check if any broker is configured."""
+    return jsonify({
+        'configured': is_any_broker_configured(),
+        'active_broker': STRATEGY_PARAMS.get('broker', {}).get('active', 'dry_run'),
+    })
 
 
 @app.route('/api/test-connection')
@@ -689,6 +727,98 @@ def api_clear_credentials():
     except Exception as e:
         logger.error(f"Failed to clear credentials: {e}")
         return jsonify({'success': False, 'error': 'Failed to clear credentials'})
+
+
+# ---------------------------------------------------------------------------
+# Broker configuration helpers
+# ---------------------------------------------------------------------------
+
+def _save_schwab_credentials(app_key: str, app_secret: str, account_number: str,
+                              callback_url: str = 'https://127.0.0.1') -> bool:
+    """Save Schwab credentials to strategy_params.yaml."""
+    try:
+        with open(SETTINGS_FILE, 'r') as f:
+            params = yaml.safe_load(f) or {}
+
+        if 'broker' not in params:
+            params['broker'] = {}
+        if 'schwab' not in params['broker']:
+            params['broker']['schwab'] = {}
+
+        params['broker']['schwab']['app_key'] = app_key
+        params['broker']['schwab']['app_secret'] = app_secret
+        params['broker']['schwab']['account_number'] = account_number
+        params['broker']['schwab']['callback_url'] = callback_url
+
+        with open(SETTINGS_FILE, 'w') as f:
+            yaml.dump(params, f, default_flow_style=False, sort_keys=False)
+
+        # Update in-memory config
+        STRATEGY_PARAMS['broker'] = params['broker']
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save Schwab credentials: {e}")
+        return False
+
+
+def _set_active_broker(broker_name: str) -> bool:
+    """Set the active broker in strategy_params.yaml."""
+    if broker_name not in ('dry_run', 'etrade', 'schwab'):
+        return False
+    try:
+        with open(SETTINGS_FILE, 'r') as f:
+            params = yaml.safe_load(f) or {}
+
+        if 'broker' not in params:
+            params['broker'] = {}
+        params['broker']['active'] = broker_name
+
+        with open(SETTINGS_FILE, 'w') as f:
+            yaml.dump(params, f, default_flow_style=False, sort_keys=False)
+
+        # Update in-memory config
+        STRATEGY_PARAMS.setdefault('broker', {})['active'] = broker_name
+        return True
+    except Exception as e:
+        logger.error(f"Failed to set active broker: {e}")
+        return False
+
+
+@app.route('/api/broker/active', methods=['GET'])
+def api_broker_active_get():
+    """Get the currently active broker."""
+    return jsonify({
+        'active': STRATEGY_PARAMS.get('broker', {}).get('active', 'dry_run'),
+        'schwab_configured': is_schwab_configured(),
+        'etrade_configured': is_etrade_configured(),
+    })
+
+
+@app.route('/api/broker/active', methods=['POST'])
+def api_broker_active_set():
+    """Set the active broker."""
+    data = request.get_json()
+    broker = data.get('broker', '')
+    if _set_active_broker(broker):
+        return jsonify({'success': True, 'active': broker})
+    return jsonify({'success': False, 'error': f'Invalid broker: {broker}'}), 400
+
+
+@app.route('/api/schwab/credentials', methods=['POST'])
+def api_schwab_credentials():
+    """Save Schwab credentials to strategy_params.yaml."""
+    data = request.get_json()
+    app_key = (data.get('app_key') or '').strip()
+    app_secret = (data.get('app_secret') or '').strip()
+    account_number = (data.get('account_number') or '').strip()
+    callback_url = (data.get('callback_url') or 'https://127.0.0.1').strip()
+
+    if not app_key or not app_secret:
+        return jsonify({'success': False, 'error': 'App Key and App Secret are required.'}), 400
+
+    if _save_schwab_credentials(app_key, app_secret, account_number, callback_url):
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'error': 'Failed to save credentials.'}), 500
 
 
 # ---------------------------------------------------------------------------

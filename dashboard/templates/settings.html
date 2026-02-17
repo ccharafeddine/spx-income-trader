@@ -688,12 +688,12 @@ header {
       <div class="mode-card" id="mode-card-live" onclick="selectTradingMode('live')">
         <div class="mode-radio"></div>
         <div class="mode-name">Live Trading</div>
-        <div class="mode-desc">Real orders placed through E*TRADE. Requires valid credentials and active connection.</div>
+        <div class="mode-desc">Real orders placed through your broker. Requires valid credentials and active connection.</div>
       </div>
     </div>
 
     <div class="mode-warning" id="live-mode-warning">
-      Live trading will place real orders with real money through your E*TRADE account. Make sure your credentials and connection are active before enabling this mode.
+      Live trading will place real orders with real money through your broker account. Make sure your credentials and connection are active before enabling this mode.
     </div>
 
     <button type="button" class="btn btn-primary" id="save-trading-mode-btn">Save Trading Mode</button>
@@ -709,8 +709,110 @@ header {
     <div id="trading-mode-result"></div>
   </div>
 
-  <!-- API Credentials -->
+  <!-- Active Broker -->
   <div class="panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">Active Broker</div>
+        <div class="panel-subtitle">Select which broker to use for trading</div>
+      </div>
+      <span class="status-badge success" id="broker-badge">{{ active_broker or 'dry_run' }}</span>
+    </div>
+
+    <div class="form-group">
+      <select class="form-select" id="active-broker-select" onchange="onBrokerChanged()">
+        <option value="schwab" {% if active_broker == 'schwab' %}selected{% endif %}>Charles Schwab</option>
+        <option value="etrade" {% if active_broker == 'etrade' %}selected{% endif %}>E*TRADE</option>
+        <option value="dry_run" {% if active_broker == 'dry_run' or not active_broker %}selected{% endif %}>Dry Run (No Broker)</option>
+      </select>
+    </div>
+
+    <button type="button" class="btn btn-primary" id="save-broker-btn" onclick="saveActiveBroker()">Save Broker Selection</button>
+    <div id="broker-result" style="margin-top:12px; padding:12px; border-radius:6px; font-size:13px; display:none;"></div>
+  </div>
+
+  <!-- Schwab API Credentials -->
+  <div class="panel broker-section" id="schwab-section" style="display:none;">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">Schwab API Credentials</div>
+        <div class="panel-subtitle">Manage your Schwab developer API keys</div>
+      </div>
+      <div class="cred-source">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        Stored in config file
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="schwab_app_key">App Key</label>
+        <input type="text" class="form-input masked" id="schwab_app_key"
+               placeholder="Enter key or leave blank to keep current"
+               value="{{ masked_schwab_key or '' }}">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="schwab_app_secret">App Secret</label>
+        <input type="password" class="form-input" id="schwab_app_secret"
+               placeholder="Enter secret or leave blank to keep current">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="schwab_account_number">Account Number</label>
+        <input type="text" class="form-input" id="schwab_account_number"
+               placeholder="Account number"
+               value="{{ masked_schwab_account or '' }}">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="schwab_callback_url">Callback URL</label>
+        <input type="text" class="form-input" id="schwab_callback_url"
+               value="{{ schwab_callback_url or 'https://127.0.0.1' }}">
+      </div>
+    </div>
+
+    <div class="btn-group">
+      <button type="button" class="btn btn-primary" onclick="saveSchwabCredentials()">Save Schwab Credentials</button>
+    </div>
+    <div id="schwab-cred-result" style="margin-top:12px; padding:12px; border-radius:6px; font-size:13px; display:none;"></div>
+  </div>
+
+  <!-- Schwab Token Status -->
+  <div class="panel broker-section" id="schwab-token-section" style="display:none;">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">Schwab Token Status</div>
+        <div class="panel-subtitle">OAuth token for Schwab API access</div>
+      </div>
+      <span class="status-badge" id="schwab-token-badge">Checking...</span>
+    </div>
+
+    <div class="pdt-indicator">
+      <span class="dot" id="schwab-token-dot"></span>
+      <span id="schwab-token-text">Checking token status...</span>
+    </div>
+
+    <div class="pdt-grid" style="grid-template-columns: repeat(3, 1fr);">
+      <div class="pdt-stat">
+        <div class="value" id="schwab-token-valid">-</div>
+        <div class="label">Token Valid</div>
+      </div>
+      <div class="pdt-stat">
+        <div class="value" id="schwab-hours-remaining">-</div>
+        <div class="label">Hours Remaining</div>
+      </div>
+      <div class="pdt-stat">
+        <div class="value" id="schwab-expiring-soon">-</div>
+        <div class="label">Expiring Soon</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- E*TRADE API Credentials -->
+  <div class="panel broker-section" id="etrade-creds-section" style="display:none;">
     <div class="panel-header">
       <div>
         <div class="panel-title">E*TRADE API Credentials</div>
@@ -770,7 +872,7 @@ header {
   </div>
 
   <!-- E*TRADE Connection -->
-  <div class="panel">
+  <div class="panel broker-section" id="etrade-conn-section" style="display:none;">
     <div class="panel-header">
       <div>
         <div class="panel-title">E*TRADE Connection</div>
@@ -875,6 +977,174 @@ header {
 </div>
 
 <script>
+// ---------------------------------------------------------------------------
+// Active Broker Selection
+// ---------------------------------------------------------------------------
+
+const activeBroker = '{{ active_broker or "dry_run" }}';
+
+function showBrokerSections(broker) {
+  // Hide all broker-specific sections
+  document.getElementById('schwab-section').style.display = 'none';
+  document.getElementById('schwab-token-section').style.display = 'none';
+  document.getElementById('etrade-creds-section').style.display = 'none';
+  document.getElementById('etrade-conn-section').style.display = 'none';
+
+  if (broker === 'schwab') {
+    document.getElementById('schwab-section').style.display = '';
+    document.getElementById('schwab-token-section').style.display = '';
+    loadSchwabTokenStatus();
+  } else if (broker === 'etrade') {
+    document.getElementById('etrade-creds-section').style.display = '';
+    document.getElementById('etrade-conn-section').style.display = '';
+    loadETradeStatus();
+  }
+  // dry_run: nothing shown
+
+  // Update badge
+  const badge = document.getElementById('broker-badge');
+  const labels = {schwab: 'Schwab', etrade: 'E*TRADE', dry_run: 'Dry Run'};
+  badge.textContent = labels[broker] || broker;
+}
+
+function onBrokerChanged() {
+  const broker = document.getElementById('active-broker-select').value;
+  showBrokerSections(broker);
+}
+
+async function saveActiveBroker() {
+  const broker = document.getElementById('active-broker-select').value;
+  const resultDiv = document.getElementById('broker-result');
+
+  try {
+    const response = await fetch('/api/broker/active', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({broker: broker}),
+    });
+    const data = await response.json();
+
+    if (data.success) {
+      resultDiv.className = 'success';
+      resultDiv.style.background = 'var(--green-dim)';
+      resultDiv.style.border = '1px solid var(--green)';
+      resultDiv.style.color = 'var(--green)';
+      resultDiv.textContent = 'Active broker updated. Restart the bot for changes to take effect.';
+      resultDiv.style.display = 'block';
+      showBrokerSections(broker);
+    } else {
+      resultDiv.style.background = 'var(--red-dim)';
+      resultDiv.style.border = '1px solid var(--red)';
+      resultDiv.style.color = 'var(--red)';
+      resultDiv.textContent = data.error || 'Failed to update broker.';
+      resultDiv.style.display = 'block';
+    }
+  } catch (error) {
+    resultDiv.style.background = 'var(--red-dim)';
+    resultDiv.style.border = '1px solid var(--red)';
+    resultDiv.style.color = 'var(--red)';
+    resultDiv.textContent = 'Error: ' + error.message;
+    resultDiv.style.display = 'block';
+  }
+}
+
+async function saveSchwabCredentials() {
+  const appKey = document.getElementById('schwab_app_key').value.trim();
+  const appSecret = document.getElementById('schwab_app_secret').value.trim();
+  const accountNumber = document.getElementById('schwab_account_number').value.trim();
+  const callbackUrl = document.getElementById('schwab_callback_url').value.trim();
+  const resultDiv = document.getElementById('schwab-cred-result');
+
+  // Skip if masked placeholder
+  if (appKey.startsWith('****') && !appSecret) {
+    resultDiv.style.background = 'var(--green-dim)';
+    resultDiv.style.border = '1px solid var(--green)';
+    resultDiv.style.color = 'var(--green)';
+    resultDiv.textContent = 'No changes detected.';
+    resultDiv.style.display = 'block';
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/schwab/credentials', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        app_key: appKey.startsWith('****') ? '' : appKey,
+        app_secret: appSecret,
+        account_number: accountNumber.startsWith('****') ? '' : accountNumber,
+        callback_url: callbackUrl || 'https://127.0.0.1',
+      }),
+    });
+    const data = await response.json();
+
+    if (data.success) {
+      resultDiv.style.background = 'var(--green-dim)';
+      resultDiv.style.border = '1px solid var(--green)';
+      resultDiv.style.color = 'var(--green)';
+      resultDiv.textContent = 'Schwab credentials saved.';
+      resultDiv.style.display = 'block';
+    } else {
+      resultDiv.style.background = 'var(--red-dim)';
+      resultDiv.style.border = '1px solid var(--red)';
+      resultDiv.style.color = 'var(--red)';
+      resultDiv.textContent = data.error || 'Failed to save credentials.';
+      resultDiv.style.display = 'block';
+    }
+  } catch (error) {
+    resultDiv.style.background = 'var(--red-dim)';
+    resultDiv.style.border = '1px solid var(--red)';
+    resultDiv.style.color = 'var(--red)';
+    resultDiv.textContent = 'Error: ' + error.message;
+    resultDiv.style.display = 'block';
+  }
+}
+
+async function loadSchwabTokenStatus() {
+  try {
+    const response = await fetch('/api/schwab-auth-status');
+    const data = await response.json();
+
+    const badge = document.getElementById('schwab-token-badge');
+    const dot = document.getElementById('schwab-token-dot');
+    const text = document.getElementById('schwab-token-text');
+
+    if (!data.configured) {
+      badge.className = 'status-badge error';
+      badge.textContent = 'Not Configured';
+      dot.className = 'dot red';
+      text.textContent = 'Schwab credentials not configured';
+      return;
+    }
+
+    if (data.authenticated) {
+      badge.className = 'status-badge success';
+      badge.textContent = 'Authenticated';
+      dot.className = 'dot green';
+      text.textContent = 'Schwab token is valid';
+    } else {
+      badge.className = 'status-badge error';
+      badge.textContent = 'Not Authenticated';
+      dot.className = 'dot red';
+      text.textContent = 'Token expired or missing. Run auth script to authenticate.';
+    }
+
+    const ts = data.token_status || {};
+    document.getElementById('schwab-token-valid').textContent = ts.valid ? 'Yes' : 'No';
+    document.getElementById('schwab-token-valid').className = 'value ' + (ts.valid ? 'green' : 'red');
+    document.getElementById('schwab-hours-remaining').textContent =
+      ts.hours_remaining != null ? ts.hours_remaining.toFixed(1) + 'h' : '-';
+    document.getElementById('schwab-expiring-soon').textContent =
+      ts.expiring_soon ? 'Yes' : 'No';
+    document.getElementById('schwab-expiring-soon').className = 'value ' + (ts.expiring_soon ? 'amber' : 'green');
+  } catch (error) {
+    console.error('Failed to load Schwab token status:', error);
+  }
+}
+
+// Show correct sections on page load
+showBrokerSections(activeBroker);
+
 // ---------------------------------------------------------------------------
 // Trading Mode
 // ---------------------------------------------------------------------------
@@ -1362,11 +1632,16 @@ document.getElementById('etrade-verifier').addEventListener('keydown', (e) => {
   }
 });
 
-// Load E*TRADE status on page load
-loadETradeStatus();
+// Load E*TRADE status on page load (only if E*TRADE is active)
+if (activeBroker === 'etrade') {
+  loadETradeStatus();
+  setInterval(loadETradeStatus, 60000);
+}
 
-// Refresh every 60 seconds
-setInterval(loadETradeStatus, 60000);
+// Refresh Schwab token status periodically if Schwab is active
+if (activeBroker === 'schwab') {
+  setInterval(loadSchwabTokenStatus, 60000);
+}
 </script>
 
 </body>

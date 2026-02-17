@@ -94,6 +94,35 @@ def is_etrade_configured() -> bool:
     return bool(creds['consumer_key'] and creds['consumer_secret'])
 
 
+def is_schwab_configured() -> bool:
+    """Check if Schwab credentials are configured in strategy_params.yaml."""
+    params = load_strategy_params()
+    schwab_cfg = params.get('broker', {}).get('schwab', {})
+    return bool(schwab_cfg.get('app_key') and schwab_cfg.get('app_secret'))
+
+
+def is_any_broker_configured() -> bool:
+    """Check if any broker is configured (Schwab, E*TRADE, or dry_run).
+
+    Returns True if:
+    - broker.active is 'dry_run' (always valid)
+    - broker.active is 'schwab' and Schwab creds are set
+    - broker.active is 'etrade' and E*TRADE creds are set
+    - E*TRADE creds exist (backward compat)
+    - Schwab creds exist
+    """
+    params = load_strategy_params()
+    active = params.get('broker', {}).get('active', '')
+    if active == 'dry_run':
+        return True
+    if active == 'schwab' and is_schwab_configured():
+        return True
+    if active == 'etrade' and is_etrade_configured():
+        return True
+    # Fallback: any broker has creds
+    return is_etrade_configured() or is_schwab_configured()
+
+
 def get_etrade_credentials() -> dict:
     """Public accessor for E*TRADE credential details."""
     return _get_etrade_credentials()
