@@ -610,8 +610,32 @@ class DesktopApp:
             logger.warning(f"Failed to save minimize_to_tray setting: {e}")
 
     @staticmethod
-    def _create_icon_image(color):
-        """Create a small circle icon image for the system tray."""
+    def _load_branded_icon():
+        """Load the branded icon PNG for the system tray.
+
+        Checks packaged (_MEIPASS) path first, then source-tree path.
+        Returns a 64x64 RGBA Image or None if the file can't be loaded.
+        """
+        from PIL import Image
+        candidates = []
+        # Packaged (PyInstaller): <exe_dir>/_internal/assets/icon.png
+        meipass = getattr(sys, '_MEIPASS', None)
+        if meipass:
+            candidates.append(Path(meipass) / 'assets' / 'icon.png')
+        # Source tree: <project_root>/assets/icon.png
+        candidates.append(PROJECT_ROOT / 'assets' / 'icon.png')
+        for p in candidates:
+            if p.exists():
+                try:
+                    img = Image.open(str(p)).convert('RGBA')
+                    return img.resize((64, 64), Image.LANCZOS)
+                except Exception:
+                    continue
+        return None
+
+    @staticmethod
+    def _create_fallback_icon(color):
+        """Fallback: plain colored circle if branded icon can't be loaded."""
         from PIL import Image, ImageDraw
         size = 64
         img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
@@ -620,10 +644,22 @@ class DesktopApp:
         return img
 
     def _get_tray_icon_image(self):
-        """Return green circle if bot is running, red circle if stopped."""
-        if self._is_bot_running():
-            return self._create_icon_image('#00cc66')
-        return self._create_icon_image('#cc3333')
+        """Return branded icon with a colored status dot overlay.
+
+        Green dot = bot running, red dot = bot stopped.
+        Falls back to a plain colored circle if the PNG is unavailable.
+        """
+        from PIL import ImageDraw
+        color = '#00cc66' if self._is_bot_running() else '#cc3333'
+        base = self._load_branded_icon()
+        if base is None:
+            return self._create_fallback_icon(color)
+        img = base.copy()
+        draw = ImageDraw.Draw(img)
+        # Status dot: bottom-right corner, 16px diameter with 2px dark border
+        draw.ellipse([44, 44, 62, 62], fill='#1a1a1a', outline='#1a1a1a', width=2)
+        draw.ellipse([46, 46, 60, 60], fill=color)
+        return img
 
     def _update_tray_icon(self):
         """Update the tray icon to reflect current bot status."""

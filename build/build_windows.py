@@ -48,9 +48,11 @@ DATA_FILES = [
     (PROJECT_ROOT / "config" / "strategy_params.yaml",           "config"),
 ]
 
-# Include icon in bundle if it exists
+# Include icons in bundle if they exist
 if ICON_ICO.exists():
     DATA_FILES.append((ICON_ICO, "assets"))
+if ICON_PNG.exists():
+    DATA_FILES.append((ICON_PNG, "assets"))
 
 # If dashboard/static exists, include everything in it (preserving subdirs)
 STATIC_DIR = PROJECT_ROOT / "dashboard" / "static"

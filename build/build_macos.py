@@ -30,6 +30,7 @@ BUILD_DIR = PROJECT_ROOT / "build" / "_py2app"        # temp build artifacts
 ENTRY_POINT = PROJECT_ROOT / "app_desktop.py"
 ICON_ICNS = PROJECT_ROOT / "assets" / "icon.icns"
 ICON_ICO = PROJECT_ROOT / "assets" / "icon.ico"
+ICON_PNG = PROJECT_ROOT / "assets" / "icon.png"
 APP_NAME = "SPX Income Trader"
 BUNDLE_ID = "com.spxincometrader.app"
 VERSION = "1.0.0"
@@ -46,6 +47,9 @@ DATA_FILES = [
     ]),
     ("config", [
         str(PROJECT_ROOT / "config" / "strategy_params.yaml"),
+    ]),
+    ("assets", [
+        str(ICON_PNG),
     ]),
 ]
 
