@@ -333,6 +333,37 @@ class PDTTracker:
         )
         return False
 
+    def can_open_trade(self) -> bool:
+        """
+        Check if a new trade entry is allowed under PDT rules.
+
+        Returns True if:
+        - PDT protection is disabled
+        - Account equity is at or above threshold
+        - Day trade slots are available
+
+        This gates new entries to prevent opening positions that
+        cannot be actively closed without triggering PDT violations.
+        """
+        if not self.enabled:
+            return True
+
+        equity = self._get_current_equity()
+        if equity >= self.threshold:
+            return True
+
+        remaining = self.get_remaining_day_trades()
+        if remaining > 0:
+            return True
+
+        next_frees = self.get_next_slot_frees_on()
+        frees_msg = f" Next slot frees {next_frees.isoformat()}." if next_frees else ""
+        logger.warning(
+            f"PDT: New trade BLOCKED - no day trade slots available "
+            f"({self.max_day_trades}/{self.max_day_trades} used).{frees_msg}"
+        )
+        return False
+
     def get_next_slot_frees_on(self, from_date: Optional[date] = None) -> Optional[date]:
         """
         Get the date when the next day trade slot will free up.
@@ -386,6 +417,7 @@ class PDTTracker:
             'window_days': self.window_days,
             'next_slot_frees_on': next_frees.isoformat() if next_frees else None,
             'can_close_early': self.can_close_early(),
+            'can_open_trade': self.can_open_trade(),
         }
 
     def check_and_record_day_trade(

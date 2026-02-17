@@ -129,6 +129,12 @@ header::after {
 .pdt-badge.green { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
 .pdt-badge.amber { background: rgba(245,158,11,0.15); color: var(--amber); border: 1px solid var(--amber); }
 .pdt-badge.red { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+.pdt-container { position: relative; display: inline-block; }
+.pdt-frees-subtitle {
+  display: none; position: absolute; left: 0; right: 0; text-align: center;
+  font-size: 9px; font-family: var(--font-mono); color: var(--red);
+  white-space: nowrap; top: 100%; margin-top: 1px;
+}
 /* Bot controls (desktop mode only) */
 .bot-controls { display: flex; align-items: center; gap: 8px; }
 .bot-mode-select {
@@ -1844,7 +1850,10 @@ header::after {
     </div>
     <span class="mode-badge" id="mode-badge">--</span>
     <span class="broker-badge" id="broker-badge" style="display:none">--</span>
-    <a href="/settings" class="pdt-badge" id="pdt-badge" title="PDT Rule Status - Click for settings">PDT: -/-</a>
+    <div class="pdt-container">
+      <a href="/settings" class="pdt-badge" id="pdt-badge" title="PDT Rule Status - Click for settings">PDT: -/-</a>
+      <div class="pdt-frees-subtitle" id="pdt-frees-subtitle"></div>
+    </div>
     <div class="bot-controls" id="bot-controls" style="display:none">
       <select id="bot-mode-select" class="bot-mode-select">
         <option value="dry-run">Dry Run</option>
@@ -2678,6 +2687,7 @@ async function updatePDTBadge() {
     if (!data) return;
 
     const badge = document.getElementById('pdt-badge');
+    const subtitle = document.getElementById('pdt-frees-subtitle');
     if (!badge) return;
 
     const remaining = data.day_trades_remaining;
@@ -2686,17 +2696,30 @@ async function updatePDTBadge() {
     if (!data.enabled) {
       badge.textContent = 'PDT: OFF';
       badge.className = 'pdt-badge';
+      if (subtitle) subtitle.style.display = 'none';
     } else {
       badge.textContent = `PDT: ${remaining}/${max}`;
       if (remaining === 0) {
         badge.className = 'pdt-badge red';
-        badge.title = 'No day trade slots available - early exits blocked';
-      } else if (remaining === 1) {
-        badge.className = 'pdt-badge amber';
-        badge.title = '1 day trade slot remaining - use with caution';
+        if (data.next_slot_frees_on && subtitle) {
+          const d = new Date(data.next_slot_frees_on + 'T00:00:00');
+          const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          subtitle.textContent = `Frees ${label}`;
+          subtitle.style.display = 'block';
+          badge.title = `No day trade slots - entries & early exits blocked. Next slot frees ${label}`;
+        } else {
+          badge.title = 'No day trade slots available - entries & early exits blocked';
+          if (subtitle) subtitle.style.display = 'none';
+        }
       } else {
-        badge.className = 'pdt-badge green';
-        badge.title = `${remaining} day trade slots available`;
+        if (remaining === 1) {
+          badge.className = 'pdt-badge amber';
+          badge.title = '1 day trade slot remaining - use with caution';
+        } else {
+          badge.className = 'pdt-badge green';
+          badge.title = `${remaining} day trade slots available`;
+        }
+        if (subtitle) subtitle.style.display = 'none';
       }
     }
   } catch (e) {

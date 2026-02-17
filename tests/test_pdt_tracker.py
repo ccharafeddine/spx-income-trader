@@ -471,6 +471,78 @@ class TestDisabledPDT:
 
 
 # ============================================================================
+# TEST: CAN OPEN TRADE (ENTRY GATE)
+# ============================================================================
+
+class TestCanOpenTrade:
+    """Test PDT entry gating for new trades."""
+
+    def test_disabled_allows_entry(self, temp_db):
+        """Disabled PDT should always allow new entries."""
+        tracker = PDTTracker(db_path=temp_db, enabled=False)
+        assert tracker.can_open_trade() is True
+
+    def test_above_threshold_allows_entry(self, tracker_with_equity):
+        """Above $25k should always allow new entries."""
+        tracker_with_equity._equity_value[0] = 50000.0
+        tracker_with_equity._cached_equity = None
+
+        # Use all 3 slots
+        today = date.today()
+        tracker_with_equity.record_day_trade('t1', today, 'profit_target')
+        tracker_with_equity.record_day_trade('t2', today, 'profit_target')
+        tracker_with_equity.record_day_trade('t3', today, 'profit_target')
+
+        assert tracker_with_equity.can_open_trade() is True
+
+    def test_below_threshold_with_slots_allows_entry(self, tracker_with_equity):
+        """Below $25k with remaining slots should allow entries."""
+        tracker_with_equity._equity_value[0] = 20000.0
+        tracker_with_equity._cached_equity = None
+
+        tracker_with_equity.record_day_trade('t1', date.today(), 'profit_target')
+
+        assert tracker_with_equity.can_open_trade() is True
+        assert tracker_with_equity.get_remaining_day_trades() == 2
+
+    def test_below_threshold_no_slots_blocks_entry(self, tracker_with_equity):
+        """Below $25k with no remaining slots should block entries."""
+        tracker_with_equity._equity_value[0] = 20000.0
+        tracker_with_equity._cached_equity = None
+
+        today = date.today()
+        tracker_with_equity.record_day_trade('t1', today, 'profit_target')
+        tracker_with_equity.record_day_trade('t2', today, 'profit_target')
+        tracker_with_equity.record_day_trade('t3', today, 'profit_target')
+
+        assert tracker_with_equity.can_open_trade() is False
+
+    def test_crosses_above_threshold_unblocks(self, tracker_with_equity):
+        """Crossing above $25k should immediately unblock entries."""
+        tracker_with_equity._equity_value[0] = 20000.0
+        tracker_with_equity._cached_equity = None
+
+        today = date.today()
+        tracker_with_equity.record_day_trade('t1', today, 'profit_target')
+        tracker_with_equity.record_day_trade('t2', today, 'profit_target')
+        tracker_with_equity.record_day_trade('t3', today, 'profit_target')
+
+        assert tracker_with_equity.can_open_trade() is False
+
+        # Account grows above threshold
+        tracker_with_equity._equity_value[0] = 30000.0
+        tracker_with_equity._cached_equity = None
+
+        assert tracker_with_equity.can_open_trade() is True
+
+    def test_status_includes_can_open_trade(self, tracker_with_equity):
+        """get_pdt_status() should include can_open_trade field."""
+        status = tracker_with_equity.get_pdt_status()
+        assert 'can_open_trade' in status
+        assert isinstance(status['can_open_trade'], bool)
+
+
+# ============================================================================
 # TEST: PDT STATUS FOR DASHBOARD
 # ============================================================================
 

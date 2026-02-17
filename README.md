@@ -2,7 +2,7 @@
 
 Fully automated options income system trading SPX 0DTE credit spreads. 100% mechanical strategy execution with zero human intervention, real-time position management, and a native desktop application for monitoring.
 
-Built with Python. Trades live through E*TRADE. Runs as a standalone desktop app on Windows and macOS.
+Built with Python. Trades live through E*TRADE or Charles Schwab. Runs as a standalone desktop app on Windows and macOS.
 
 ---
 
@@ -33,20 +33,24 @@ The entire pipeline runs autonomously from market open to close. The bot handles
 - 2% daily loss circuit breaker halts new entries automatically
 - Credit quality gates reject low-premium setups
 - Max position limits enforced across all strategies
-- PDT rule compliance tracking
+- PDT rule compliance: tracks day trades in a rolling 5-business-day window, blocks both early exits and new trade entries when all slots are exhausted (accounts under $25k)
 
 **Broker Integration**
-- Full E*TRADE API integration: OAuth flow, token auto-renewal (90-min cycle), order preview/place/confirm pipeline
-- Reactive 401 handling with automatic token refresh and retry
+- Multi-broker architecture with pluggable broker interface
+- **E*TRADE**: Full API integration with OAuth flow, token auto-renewal (90-min cycle), order preview/place/confirm pipeline
+- **Charles Schwab**: schwab-py integration with OAuth2 authorization, automatic token refresh, and full options order support
+- Broker selection via `strategy_params.yaml` (`broker.active: schwab` or `broker.active: etrade`)
+- Reactive 401 handling with automatic token refresh and retry on both brokers
 - Proactive token freshness checks before order placement
 - Rate limit (429) protection with exponential backoff
-- Dry-run mode for paper trading with real market data and simulated fills
+- Dry-run mode for paper trading with real market data and simulated fills (Black-Scholes pricing)
 
 **Dashboard**
 - Real-time web UI with account summary, candlestick charts, and position monitoring
 - Signal log showing every detected setup with strikes, credit, risk, and SPX price
 - Trade journal with entry analysis (pulse bar checklist), market context, and exit review
 - Filterable by strategy, direction, outcome, and date range
+- PDT status badge with real-time slot count and next-frees date display
 - Hot-reloadable settings (strategy parameters, trading mode, credentials)
 - CSV export for offline analysis
 
@@ -90,11 +94,12 @@ Strategy Engine
     |--- ORB (opening range breakout)
     |
     v
-Portfolio Manager (position limits, risk gates, circuit breaker)
+Portfolio Manager (position limits, risk gates, circuit breaker, PDT entry gate)
     |
     v
 Broker Interface
     |--- E*TRADE Broker (live orders via OAuth API)
+    |--- Schwab Broker (live orders via schwab-py OAuth2)
     |--- Dry-Run Broker (real data, simulated fills via Black-Scholes)
     |
     v
@@ -104,7 +109,7 @@ Position Manager (P&L tracking, exit management, 1pm check)
 SQLite Database + Flask Dashboard
 ```
 
-**Tech stack:** Python, Flask, SQLite, Yahoo Finance, E*TRADE API, pywebview, PyInstaller/py2app
+**Tech stack:** Python, Flask, SQLite, Yahoo Finance, E*TRADE API, schwab-py, pywebview, PyInstaller/py2app
 
 ---
 
@@ -127,10 +132,55 @@ python app_desktop.py
 # macOS:   dist/SPX Income Trader.app
 ```
 
+**Broker Setup:**
+
+- **Schwab**: Run through the OAuth2 authorization flow via the Settings page. The bot handles token refresh automatically. Set `broker.active: schwab` in `strategy_params.yaml`.
+- **E*TRADE**: Configure your consumer key and secret via the Settings page or OS keychain. OAuth token renewal runs on a 90-minute cycle. Set `broker.active: etrade` in `strategy_params.yaml`.
+- **Dry Run** (default): No broker config needed. Uses real market data with simulated fills.
+
 **Configuration:**
-- `config/strategy_params.yaml` for strategy parameters (thresholds, spread width, profit target, timing windows)
+- `config/strategy_params.yaml` for strategy parameters (thresholds, spread width, profit target, timing windows, broker selection)
 - Dashboard Settings page for credentials, trading mode (dry-run/live), and account settings
 - Credentials stored in OS keychain, never in files
+
+---
+
+## Building from Source
+
+Requires **Python 3.13** (pythonnet does not support 3.14+).
+
+**Windows (PyInstaller):**
+
+```bash
+# Create a Python 3.13 virtual environment
+py -3.13 -m venv .venv313
+.venv313\Scripts\activate
+pip install -r requirements.txt
+
+# Build (output: dist/SPX Income Trader/)
+python build/build_windows.py --clean
+
+# Debug build with console visible
+python build/build_windows.py --clean --debug
+```
+
+**macOS (py2app):**
+
+```bash
+# Create a Python 3.13 virtual environment
+python3.13 -m venv .venv313
+source .venv313/bin/activate
+pip install -r requirements.txt
+
+# Build (output: dist/SPX Income Trader.app)
+python build/build_macos.py --clean
+```
+
+**Packaged app data paths:**
+- Windows: `%LOCALAPPDATA%\SPXIncomeTrader\SPXIncomeTrader\`
+- macOS: `~/Library/Application Support/SPXIncomeTrader/`
+
+The packaged app copies the database and seeds `strategy_params.yaml` on first run.
 
 ---
 
@@ -149,11 +199,14 @@ src/
         bar_builder.py       # 30-min bar aggregation from tick data
         pulse_detector.py    # Pulse bar pattern detection
         bollinger_filter.py  # Bollinger Band filter and trend bias
-        pdt_tracker.py       # Pattern Day Trader rule tracking
+        pdt_tracker.py       # Pattern Day Trader rule tracking and entry gating
     brokers/
         base.py              # Abstract broker interface
+        broker_factory.py    # Broker selection and instantiation
         etrade_broker.py     # E*TRADE live trading (OAuth, orders)
         etrade_auth.py       # E*TRADE OAuth token management
+        schwab_broker.py     # Charles Schwab live trading (schwab-py)
+        schwab_auth.py       # Schwab OAuth2 token management
         dry_run_broker.py    # Simulated execution with real data
     models/
         bar.py               # Bar dataclass
@@ -187,7 +240,7 @@ build/
     build_windows.py         # PyInstaller build script
     build_macos.py           # py2app build script
 
-tests/                       # 75 unit tests
+tests/                       # 418 unit tests
 
 app_desktop.py               # Desktop app entry point (pywebview + Flask)
 ```
@@ -196,12 +249,14 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask)
 
 ## Testing
 
-75 unit tests covering:
+418 unit tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows)
 - Position management (sizing, P&L calculation, exit triggers)
 - Risk gates (circuit breaker, position limits, credit quality)
-- PDT compliance tracking
+- PDT compliance tracking and entry gating
 - Bar building and market state management
+- Drawdown management and consecutive loss tracking
+- VIX data provider fallback chains
 
 ```bash
 python -m pytest tests/ -v

@@ -1187,6 +1187,16 @@ class TradingBot:
         strategy_name = strategy_type.value
         logger.info(f"Executing {strategy_name.upper()} trade: {direction.value.upper()} @ ${current_price:,.2f}")
 
+        # PDT entry gate - block if no day trade slots available
+        if not self.pdt_tracker.can_open_trade():
+            logger.warning(f"{strategy_name}: Trade BLOCKED by PDT entry gate - no day trade slots")
+            self.db.log_event("pdt_entry_blocked", f"PDT blocked {strategy_name} entry", {
+                "strategy": strategy_name,
+                "direction": direction.value,
+                "price": current_price,
+            })
+            return False
+
         try:
             # 1. Get options chain
             if expiration_str:
@@ -1435,6 +1445,16 @@ class TradingBot:
                     f"Breakout confirmed: {breakout_time.strftime('%H:%M:%S')} ET"
                 )
             logger.info("=" * 60)
+
+            # PDT entry gate - block if no day trade slots available
+            if not self.pdt_tracker.can_open_trade():
+                logger.warning("DI setup BLOCKED by PDT entry gate - no day trade slots")
+                self.db.log_event("pdt_entry_blocked", "PDT blocked DI entry", {
+                    "strategy": "daily_income",
+                    "direction": direction.value,
+                    "price": current_price,
+                })
+                return
 
             # Get options chain (format: YYYY-MM-DD for dry_run_broker compatibility)
             expiration = datetime.now(self.tz).strftime("%Y-%m-%d")
