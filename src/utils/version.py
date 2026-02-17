@@ -18,12 +18,12 @@ APP_VERSION = "1.0.0"
 # Default URL pointing to a raw JSON file in the repo.
 # Override via strategy_params.yaml: app.update_check_url
 DEFAULT_UPDATE_URL = (
-    "https://raw.githubusercontent.com/your-org/spx-income-trader/main/version.json"
+    "https://raw.githubusercontent.com/ccharafeddine/spx-income-trader/main/version.json"
 )
 
 # Where users can download new releases
 DEFAULT_DOWNLOAD_URL = (
-    "https://github.com/your-org/spx-income-trader/releases/latest"
+    "https://github.com/ccharafeddine/spx-income-trader/releases/latest"
 )
 
 

@@ -240,7 +240,7 @@ build/
     build_windows.py         # PyInstaller build script
     build_macos.py           # py2app build script
 
-tests/                       # 418 unit tests
+tests/                       # 424 unit tests
 
 app_desktop.py               # Desktop app entry point (pywebview + Flask)
 ```
@@ -249,7 +249,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask)
 
 ## Testing
 
-418 unit tests covering:
+424 unit tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows)
 - Position management (sizing, P&L calculation, exit triggers)
 - Risk gates (circuit breaker, position limits, credit quality)
