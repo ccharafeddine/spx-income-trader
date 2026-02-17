@@ -116,6 +116,10 @@ PY2APP_OPTIONS = {
         "yfinance",
         "pystray",
         "PIL",
+        # Schwab broker
+        "schwab",
+        "authlib",
+        "httpx",
     ],
     "includes": [
         "keyring.backends",

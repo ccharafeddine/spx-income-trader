@@ -106,6 +106,10 @@ HIDDEN_IMPORTS = [
     "requests_oauthlib",
     "yaml",
     "plotly",
+    # Schwab broker
+    "schwab",
+    "authlib",
+    "httpx",
 ]
 
 # Packages whose submodules PyInstaller should collect (dynamic imports)
@@ -118,6 +122,7 @@ COLLECT_SUBMODULES = [
     "pystray",
     "webview",
     "clr_loader",
+    "schwab",
 ]
 
 # Packages to exclude (dev-only, not needed at runtime)
