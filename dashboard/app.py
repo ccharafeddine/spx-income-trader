@@ -22,10 +22,12 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Settings files
-SETTINGS_FILE = PROJECT_ROOT / 'config' / 'strategy_params.yaml'
-RUNTIME_SETTINGS_FILE = PROJECT_ROOT / 'database' / 'runtime_settings.json'
-SETTINGS_CHANGED_FILE = PROJECT_ROOT / 'database' / '.settings_changed'
+from src.utils.app_paths import CONFIG_DIR, DATA_DIR
+
+# Settings files - use writable paths that work in both dev and packaged mode
+SETTINGS_FILE = CONFIG_DIR / 'strategy_params.yaml'
+RUNTIME_SETTINGS_FILE = DATA_DIR / 'database' / 'runtime_settings.json'
+SETTINGS_CHANGED_FILE = DATA_DIR / 'database' / '.settings_changed'
 
 from config.settings import (
     BASE_DIR, DATABASE_PATH, LOG_FILE,
@@ -33,6 +35,7 @@ from config.settings import (
     ETRADE_CONFIG, is_etrade_configured, save_etrade_credentials, clear_etrade_credentials,
     get_trading_mode, save_trading_mode, get_etrade_credentials,
     is_schwab_configured, is_any_broker_configured, load_strategy_params,
+    save_schwab_credentials, clear_schwab_credentials,
 )
 from src.data.yahoo_finance import YahooFinanceProvider
 from src.utils.version import APP_VERSION
@@ -45,10 +48,35 @@ app = Flask(__name__)
 app.secret_key = os.urandom(32)
 ET = pytz.timezone('US/Eastern')
 
+# Per-session API token for CSRF protection.
+# Embedded in every served page; validated on all state-changing requests.
+# Since the dashboard binds to 127.0.0.1, this token prevents cross-origin
+# requests from malicious websites from controlling the trading bot.
+import secrets
+API_TOKEN = secrets.token_hex(32)
+
 
 # ---------------------------------------------------------------------------
-# Middleware: Redirect to setup if not configured
+# Middleware: CSRF token validation + setup redirect
 # ---------------------------------------------------------------------------
+
+@app.before_request
+def validate_api_token():
+    """Validate API token on all state-changing requests (CSRF protection)."""
+    if request.method in ('GET', 'HEAD', 'OPTIONS'):
+        return None
+
+    # Allow setup form POST (no token embedded yet), static, and OAuth callbacks
+    csrf_exempt = ['/setup', '/auth/etrade/']
+    if any(request.path.startswith(p) for p in csrf_exempt):
+        return None
+
+    # Check token in header or form data
+    token = request.headers.get('X-API-Token') or request.form.get('_api_token')
+    if not token or token != API_TOKEN:
+        logger.warning(f"CSRF token validation failed for {request.method} {request.path}")
+        return jsonify({'error': 'Invalid or missing API token'}), 403
+
 
 @app.before_request
 def check_setup_required():
@@ -62,6 +90,12 @@ def check_setup_required():
     # Check if any broker is configured
     if not is_any_broker_configured():
         return redirect(url_for('setup'))
+
+@app.context_processor
+def inject_api_token():
+    """Make API token available in all templates for CSRF protection."""
+    return {'api_token': API_TOKEN}
+
 
 # Shared Yahoo Finance provider (has its own 60s cache)
 yahoo = YahooFinanceProvider()
@@ -718,9 +752,11 @@ def api_test_connection():
 
 @app.route('/api/clear-credentials', methods=['POST'])
 def api_clear_credentials():
-    """Clear stored credentials from keychain."""
+    """Clear stored credentials from keychain (both E*TRADE and Schwab)."""
     try:
-        if clear_etrade_credentials():
+        etrade_ok = clear_etrade_credentials()
+        schwab_ok = clear_schwab_credentials()
+        if etrade_ok or schwab_ok:
             return jsonify({'success': True})
         else:
             return jsonify({'success': False, 'error': 'Failed to clear credentials'})
@@ -735,8 +771,12 @@ def api_clear_credentials():
 
 def _save_schwab_credentials(app_key: str, app_secret: str, account_number: str,
                               callback_url: str = 'https://127.0.0.1') -> bool:
-    """Save Schwab credentials to strategy_params.yaml."""
+    """Save Schwab credentials to OS keyring (secure storage)."""
     try:
+        if not save_schwab_credentials(app_key, app_secret, account_number, callback_url):
+            return False
+
+        # Also update non-secret fields in YAML for reference (account_number, callback_url)
         with open(SETTINGS_FILE, 'r') as f:
             params = yaml.safe_load(f) or {}
 
@@ -745,16 +785,19 @@ def _save_schwab_credentials(app_key: str, app_secret: str, account_number: str,
         if 'schwab' not in params['broker']:
             params['broker']['schwab'] = {}
 
-        params['broker']['schwab']['app_key'] = app_key
-        params['broker']['schwab']['app_secret'] = app_secret
         params['broker']['schwab']['account_number'] = account_number
         params['broker']['schwab']['callback_url'] = callback_url
+        # Remove secrets from YAML if they were there from a previous version
+        params['broker']['schwab'].pop('app_key', None)
+        params['broker']['schwab'].pop('app_secret', None)
 
         with open(SETTINGS_FILE, 'w') as f:
             yaml.dump(params, f, default_flow_style=False, sort_keys=False)
 
         # Update in-memory config
-        STRATEGY_PARAMS['broker'] = params['broker']
+        STRATEGY_PARAMS.setdefault('broker', {}).setdefault('schwab', {})
+        STRATEGY_PARAMS['broker']['schwab']['account_number'] = account_number
+        STRATEGY_PARAMS['broker']['schwab']['callback_url'] = callback_url
         return True
     except Exception as e:
         logger.error(f"Failed to save Schwab credentials: {e}")
@@ -1730,6 +1773,145 @@ def api_journal():
     })
 
 
+@app.route('/api/journal/calendar')
+def api_journal_calendar():
+    """Monthly calendar view data for the trade journal."""
+    now = datetime.now(ET)
+    year = request.args.get('year', now.year, type=int)
+    month = request.args.get('month', now.month, type=int)
+
+    # Clamp to valid range
+    if month < 1 or month > 12 or year < 2020 or year > 2099:
+        return jsonify({'error': 'Invalid month/year'}), 400
+
+    # Compute first/last day of month
+    first_day = f"{year:04d}-{month:02d}-01"
+    if month == 12:
+        last_day = f"{year + 1:04d}-01-01"
+    else:
+        last_day = f"{year:04d}-{month + 1:02d}-01"
+
+    try:
+        conn = get_db_connection()
+
+        # Get trades for the month
+        rows = conn.execute(
+            """SELECT entry_time, pnl, strategy_type, status, direction
+               FROM trades
+               WHERE DATE(entry_time) >= ? AND DATE(entry_time) < ?""",
+            (first_day, last_day)
+        ).fetchall()
+
+        # Group by date
+        days_data = {}
+        for row in rows:
+            entry_time = row['entry_time'] or ''
+            date_str = entry_time[:10] if entry_time else None
+            if not date_str:
+                continue
+
+            if date_str not in days_data:
+                days_data[date_str] = {
+                    'trades': 0, 'pnl': 0.0,
+                    'wins': 0, 'losses': 0,
+                    'strategies': set()
+                }
+            d = days_data[date_str]
+            d['trades'] += 1
+            pnl = row['pnl'] or 0
+            d['pnl'] += pnl
+            if pnl > 0:
+                d['wins'] += 1
+            elif pnl < 0:
+                d['losses'] += 1
+            strat = row['strategy_type'] or 'daily_income'
+            d['strategies'].add(strat)
+
+        # Get system events for no-trade reasons
+        events = conn.execute(
+            """SELECT DATE(timestamp) as event_date, event_type, message
+               FROM system_events
+               WHERE DATE(timestamp) >= ? AND DATE(timestamp) < ?""",
+            (first_day, last_day)
+        ).fetchall()
+
+        # Build no-trade reasons from events
+        event_reasons = {}
+        for ev in events:
+            event_date = ev['event_date']
+            if event_date and event_date not in days_data:
+                etype = (ev['event_type'] or '').lower()
+                msg = (ev['message'] or '').lower()
+                reason = None
+                if 'circuit_breaker' in etype or 'circuit_breaker' in msg:
+                    reason = 'circuit_breaker'
+                elif 'pdt' in etype or 'pdt' in msg:
+                    reason = 'pdt_restricted'
+                elif 'bot_started' in etype or 'bot_stopped' in etype:
+                    reason = 'no_setups'
+                if reason and event_date not in event_reasons:
+                    event_reasons[event_date] = reason
+
+        # Check daily_stats for days bot ran but had no trades
+        daily_rows = conn.execute(
+            """SELECT date FROM daily_stats
+               WHERE date >= ? AND date < ? AND trades_count = 0""",
+            (first_day, last_day)
+        ).fetchall()
+        for dr in daily_rows:
+            ds = dr['date']
+            if ds and ds not in days_data and ds not in event_reasons:
+                event_reasons[ds] = 'no_setups'
+
+        conn.close()
+    except Exception as e:
+        logger.error(f"Calendar API error: {e}")
+        return jsonify({'error': 'Database error'}), 500
+
+    # Build response - convert sets to lists, round pnl
+    result_days = {}
+    total_pnl = 0.0
+    total_trades = 0
+    total_wins = 0
+    total_losses = 0
+    trading_days = 0
+
+    for date_str, d in days_data.items():
+        d['strategies'] = sorted(d['strategies'])
+        d['pnl'] = round(d['pnl'], 2)
+        result_days[date_str] = d
+        total_pnl += d['pnl']
+        total_trades += d['trades']
+        total_wins += d['wins']
+        total_losses += d['losses']
+        if d['trades'] > 0:
+            trading_days += 1
+
+    # Add no-trade days with reasons
+    for date_str, reason in event_reasons.items():
+        if date_str not in result_days:
+            result_days[date_str] = {
+                'trades': 0, 'pnl': 0, 'wins': 0, 'losses': 0,
+                'strategies': [], 'no_trade_reason': reason
+            }
+
+    summary = {
+        'total_pnl': round(total_pnl, 2),
+        'trades': total_trades,
+        'wins': total_wins,
+        'losses': total_losses,
+        'win_rate': round(total_wins / (total_wins + total_losses) * 100, 1) if (total_wins + total_losses) > 0 else 0,
+        'trading_days': trading_days,
+    }
+
+    return jsonify({
+        'year': year,
+        'month': month,
+        'days': result_days,
+        'summary': summary,
+    })
+
+
 @app.route('/api/journal/notes', methods=['POST'])
 def api_journal_save_notes():
     """Save or update journal notes for a trade."""
@@ -2404,7 +2586,8 @@ def api_risk_status():
                 elif streaks['active'] == 'loss':
                     streaks['loss_streak'] = active_count
 
-                # Count previous (frozen) streak from remaining trades
+                # Count previous (frozen) streak from remaining trades.
+                # Store in separate keys so they don't overwrite the active streak.
                 remaining = rows[active_count:]
                 if remaining:
                     prev_count = 0
@@ -2415,14 +2598,14 @@ def api_risk_status():
                                 prev_count += 1
                             else:
                                 break
-                        streaks['win_streak'] = prev_count
+                        streaks['prev_win_streak'] = prev_count
                     elif prev_pnl < 0:
                         for r in remaining:
                             if r[0] < 0:
                                 prev_count += 1
                             else:
                                 break
-                        streaks['loss_streak'] = prev_count
+                        streaks['prev_loss_streak'] = prev_count
     except Exception:
         pass
 
@@ -2716,8 +2899,48 @@ def _load_settings() -> dict:
     return settings
 
 
+# Allowlist of settings paths that can be modified via the API.
+# Prevents arbitrary config injection (e.g., broker credentials, risk overrides).
+ALLOWED_SETTINGS_PATHS = {
+    'strategy.pulse_threshold',
+    'strategy.spread_width',
+    'strategy.profit_target_pct',
+    'strategy.stop_loss_pct',
+    'strategy.max_daily_trades',
+    'strategy.max_contracts_override',
+    'timing.morning_start',
+    'timing.morning_end',
+    'timing.afternoon_start',
+    'timing.afternoon_end',
+    'timing.afternoon_enabled',
+    'portfolio.risk_per_trade_pct',
+    'portfolio.min_contracts',
+    'portfolio.max_contracts',
+    'portfolio.max_daily_loss_pct',
+    'portfolio.max_daily_risk_pct',
+    'tag_n_turn.enabled',
+    'tag_n_turn.bb_period',
+    'tag_n_turn.bb_std',
+    'tag_n_turn.min_dte',
+    'tag_n_turn.max_dte',
+    'orb.enabled',
+    'orb.range_minutes',
+    'bnb.enabled',
+    'risk.max_daily_loss',
+    'risk.max_account_risk_pct',
+}
+
+
 def _save_runtime_settings(changes: dict) -> bool:
-    """Save runtime setting changes (doesn't modify YAML)."""
+    """Save runtime setting changes (doesn't modify YAML).
+
+    Only allows paths in ALLOWED_SETTINGS_PATHS to prevent arbitrary injection.
+    """
+    # Validate all paths against allowlist
+    rejected = [p for p in changes if p not in ALLOWED_SETTINGS_PATHS]
+    if rejected:
+        raise ValueError(f"Disallowed settings paths: {', '.join(rejected)}")
+
     # Load existing overrides
     overrides = {}
     if RUNTIME_SETTINGS_FILE.exists():
@@ -2755,11 +2978,26 @@ def _notify_bot_settings_changed():
         pass
 
 
+def _redact_secrets(d: dict, parent_key: str = '') -> dict:
+    """Deep-copy a dict, replacing sensitive values with '****'."""
+    secret_keys = {'app_key', 'app_secret', 'consumer_key', 'consumer_secret',
+                   'password', 'secret', 'token', 'twilio_token', 'twilio_sid'}
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            out[k] = _redact_secrets(v, k)
+        elif k in secret_keys and isinstance(v, str) and v:
+            out[k] = '****' + v[-4:] if len(v) > 4 else '****'
+        else:
+            out[k] = v
+    return out
+
+
 @app.route('/api/settings', methods=['GET'])
 def api_get_settings():
-    """Get current settings (YAML + runtime overrides)."""
+    """Get current settings (YAML + runtime overrides), with secrets redacted."""
     settings = _load_settings()
-    return jsonify(settings)
+    return jsonify(_redact_secrets(settings))
 
 
 @app.route('/api/settings', methods=['POST'])
@@ -2772,6 +3010,8 @@ def api_update_settings():
     try:
         _save_runtime_settings(changes)
         return jsonify({'success': True})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
     except Exception as e:
         logger.error(f"Settings update failed: {e}")
         return jsonify({'success': False, 'error': 'Failed to update settings'})
