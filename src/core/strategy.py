@@ -45,6 +45,15 @@ class SPXIncomeStrategy:
 
         self.tz = pytz.timezone("America/New_York")
 
+        # Setup window from config (defaults match original hardcoded values)
+        timing = STRATEGY_PARAMS.get('timing', {})
+        morning_start_str = timing.get('morning_start', '09:30')
+        morning_end_str = timing.get('morning_end', '11:30')
+        h, m = morning_start_str.split(':')
+        self._morning_start = time(int(h), int(m))
+        h, m = morning_end_str.split(':')
+        self._morning_end = time(int(h), int(m))
+
         # Expected credit ranges based on moneyness
         self.credit_expectations = {
             "OTM": (2.40, 2.60),
@@ -97,17 +106,14 @@ class SPXIncomeStrategy:
             return None
     
     def _is_setup_window(self, dt: datetime) -> bool:
-        """Check if time is within setup window (9:30-11:30 EST)"""
-        morning_start = time(9, 30)
-        morning_end = time(11, 30)
-        
+        """Check if time is within setup window (from config timing.morning_start/end)."""
         if dt.tzinfo is None:
             dt = self.tz.localize(dt)
         else:
             dt = dt.astimezone(self.tz)
-        
+
         current_time = dt.time()
-        return morning_start <= current_time <= morning_end
+        return self._morning_start <= current_time <= self._morning_end
     
     def construct_spread(
         self,

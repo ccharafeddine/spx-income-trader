@@ -2,15 +2,21 @@
 Backtest Engine
 
 Replays historical SPX bars through the existing strategy engine.
-Uses the same PulseDetector, BarBuilder, and SPXIncomeStrategy as live
-trading, but drives them from a for-loop over historical data instead
-of the real-time main loop.
+Uses the same PulseDetector, BarBuilder, SPXIncomeStrategy, TagNTurnStrategy,
+BnBStrategy, and ORBStrategy as live trading, but drives them from a for-loop
+over historical data instead of the real-time main loop.
+
+Supports 4 strategies running in parallel with 2 position slots:
+  - 0DTE slot: shared by Daily Income, ORB, and B&B (1 trade/day max)
+  - Swing slot: Tag 'n Turn only (positions can span multiple days)
 """
 
 import logging
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, date, time, timedelta
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -22,6 +28,9 @@ from src.models.trade import Trade, TradeStatus
 from src.core.pulse_detector import PulseBarDetector
 from src.core.bar_builder import BarBuilder
 from src.core.strategy import SPXIncomeStrategy
+from src.core.tag_n_turn import TagNTurnStrategy
+from src.core.bnb_strategy import BnBStrategy
+from src.core.orb_strategy import ORBStrategy
 from src.backtest.sim_broker import BacktestBroker
 from src.backtest.data_loader import get_trading_days, get_bars_for_day
 
@@ -88,11 +97,14 @@ class DailyResult:
 
 class BacktestEngine:
     """
-    Replays historical bars through the strategy engine.
+    Replays historical bars through 4 strategy engines in parallel.
 
-    Uses the SAME PulseDetector, BarBuilder, and SPXIncomeStrategy as
-    live trading. Only the data source (CSV vs live) and broker (instant
-    fills vs real) differ.
+    Mirrors the live trading architecture with 2 position slots:
+      - 0DTE slot: Daily Income, ORB, and B&B share (max 1 trade/day)
+      - Swing slot: Tag 'n Turn (positions can span multiple days)
+
+    When no `strategies` config is provided, only Daily Income runs
+    (backward compatible with existing callers).
     """
 
     def __init__(
@@ -108,6 +120,7 @@ class BacktestEngine:
         slippage: float = 0.02,
         max_daily_loss_pct: float = 2.0,
         progress_callback=None,
+        strategies: Optional[Dict] = None,
     ):
         self.bars_df = bars_df
         self.vix_daily = vix_daily
@@ -122,7 +135,7 @@ class BacktestEngine:
             slippage=slippage,
         )
 
-        # Initialize strategy (SAME classes as live trading)
+        # Initialize DI strategy (SAME class as live trading)
         self.strategy = SPXIncomeStrategy(
             pulse_threshold=pulse_threshold,
             spread_width=spread_width,
@@ -130,18 +143,86 @@ class BacktestEngine:
             min_credit=min_credit,
         )
         self.pulse_detector = PulseBarDetector(pulse_threshold)
+        self._di_spread_width = spread_width
+        self._di_min_credit = min_credit
+
+        # Initialize parallel strategies (TNT, B&B, ORB)
+        self._init_strategies(strategies or {})
 
         # Results
         self.trades: List[BacktestTrade] = []
         self.daily_results: List[DailyResult] = []
-        self.equity_curve: List[Dict] = []  # [{date, equity}]
+        self.equity_curve: List[Dict] = []
 
-        # State
-        self._active_trade: Optional[Trade] = None
-        self._pending_setup = None  # {direction, bar, trigger_price}
+        # 0DTE slot (shared by DI, ORB, B&B)
+        self._0dte_trade: Optional[Trade] = None
+        self._0dte_strategy_type: Optional[str] = None
+        self._pending_setup = None  # DI pulse -> breakout pending
+
+        # Swing slot (TNT only, persists across days)
+        self._tnt_trade: Optional[Trade] = None
+        self._tnt_position: Optional[Dict] = None  # For TNT exit checks
+        self._tnt_entry_date: Optional[date] = None
+
+        # Daily counters
         self._daily_pnl: float = 0.0
         self._daily_trades: int = 0
+        self._0dte_trades_today: int = 0
+        self._tnt_trades_today: int = 0
         self._circuit_breaker_tripped: bool = False
+
+        # Backward compat alias
+        self._active_trade = None
+
+    def _init_strategies(self, strategies: Dict):
+        """Initialize parallel strategy instances for backtest."""
+        tmp = Path(tempfile.mkdtemp())
+
+        # Tag 'n Turn
+        tnt_cfg = strategies.get('tag_n_turn', {})
+        self._tnt_enabled = tnt_cfg.get('enabled', False)
+        self._tnt_strat: Optional[TagNTurnStrategy] = None
+        if self._tnt_enabled:
+            cfg = {
+                'enabled': True,
+                'bb_period': tnt_cfg.get('bb_period', 50),
+                'bb_std': tnt_cfg.get('bb_std', 2.0),
+                'pulse_threshold': tnt_cfg.get('pulse_threshold', 10.0),
+                'max_hold_days': tnt_cfg.get('max_hold_days', 7),
+                'use_credit_spreads': True,
+                'max_contracts_override': tnt_cfg.get('max_contracts_override', 2),
+                'spread_width': tnt_cfg.get('spread_width', 10.0),
+                'min_credit': tnt_cfg.get('min_credit', 2.00),
+                'min_dte': tnt_cfg.get('min_dte', 3),
+                'max_dte': tnt_cfg.get('max_dte', 7),
+            }
+            self._tnt_strat = TagNTurnStrategy(cfg, persistence_path=tmp / 'tnt.json')
+
+        # B&B (Bed & Breakfast)
+        bnb_cfg = strategies.get('bnb', {})
+        self._bnb_enabled = bnb_cfg.get('enabled', False)
+        self._bnb_strat: Optional[BnBStrategy] = None
+        if self._bnb_enabled:
+            cfg = {
+                'enabled': True,
+                'pulse_threshold': bnb_cfg.get('pulse_threshold', 10.0),
+                'max_contracts_override': bnb_cfg.get('max_contracts_override', 3),
+                'aggressive_roll': bnb_cfg.get('aggressive_roll', True),
+            }
+            self._bnb_strat = BnBStrategy(cfg, persistence_path=tmp / 'bnb.json')
+
+        # ORB (Opening Range Breakout)
+        orb_cfg = strategies.get('orb', {})
+        self._orb_enabled = orb_cfg.get('enabled', False)
+        self._orb_strat: Optional[ORBStrategy] = None
+        if self._orb_enabled:
+            cfg = {
+                'enabled': True,
+                'min_threshold': orb_cfg.get('min_threshold', 10.0),
+                'max_threshold': orb_cfg.get('max_threshold', 40.0),
+                'max_contracts_override': orb_cfg.get('max_contracts_override', 3),
+            }
+            self._orb_strat = ORBStrategy(cfg, persistence_path=tmp / 'orb.json')
 
     def run(self) -> Dict:
         """
@@ -155,17 +236,24 @@ class BacktestEngine:
 
         logger.info(
             f"Starting backtest: {total_days} trading days, "
-            f"${self.initial_capital:,.0f} capital"
+            f"${self.initial_capital:,.0f} capital, "
+            f"strategies: DI"
+            f"{'+TNT' if self._tnt_enabled else ''}"
+            f"{'+BnB' if self._bnb_enabled else ''}"
+            f"{'+ORB' if self._orb_enabled else ''}"
         )
 
-        # Suppress strategy module logging during backtest to avoid
-        # polluting the live trading log with thousands of entries
+        # Suppress strategy module logging during backtest
         _suppressed_loggers = [
             'src.core.pulse_detector',
             'src.core.strategy',
             'src.core.position_manager',
             'src.core.portfolio_manager',
             'src.core.bar_builder',
+            'src.core.tag_n_turn',
+            'src.core.bnb_strategy',
+            'src.core.orb_strategy',
+            'src.core.bollinger_filter',
         ]
         _saved_levels = {}
         for name in _suppressed_loggers:
@@ -206,27 +294,31 @@ class BacktestEngine:
         }
 
     def _process_day(self, trading_day: date):
-        """Process a single trading day."""
+        """Process a single trading day with all active strategies."""
         day_bars = get_bars_for_day(self.bars_df, trading_day)
         if day_bars.empty:
             return
 
-        # Reset daily state
+        # Reset daily state (but NOT cross-day positions like TNT)
         self._daily_pnl = 0.0
         self._daily_trades = 0
+        self._0dte_trades_today = 0
+        self._tnt_trades_today = 0
         self._circuit_breaker_tripped = False
         self._pending_setup = None
+
+        # Start-of-day hooks for parallel strategies
+        if self._bnb_enabled and self._bnb_strat:
+            self._bnb_strat.on_day_start()
+        if self._orb_enabled and self._orb_strat:
+            self._orb_strat.reset_daily()
 
         # Get VIX for the day (fallback to 15 if not available)
         vix = self.vix_daily.get(trading_day, 15.0)
 
-        # Build Bar objects from DataFrame rows
-        bar_builder = BarBuilder(interval_minutes=30)
         bars_for_day: List[Bar] = []
-
         spx_open = float(day_bars.iloc[0]['open'])
         spx_close = float(day_bars.iloc[-1]['close'])
-
         max_daily_loss = self.initial_capital * (self.max_daily_loss_pct / 100.0)
 
         for timestamp, row in day_bars.iterrows():
@@ -253,38 +345,102 @@ class BacktestEngine:
                 dt=bar_dt,
             )
 
-            # Monitor active position
-            if self._active_trade:
-                self._monitor_position(bar, bar_dt)
+            # ---- Monitor ALL active positions (before circuit breaker gate) ----
+            if self._0dte_trade:
+                self._monitor_0dte_position(bar, bar_dt)
 
-            # Circuit breaker check
+            if self._tnt_trade:
+                self._monitor_tnt_position(bar, bar_dt, trading_day)
+
+            # ---- Circuit breaker check ----
             if self._daily_pnl <= -max_daily_loss:
                 self._circuit_breaker_tripped = True
+
+            # ---- Feed bars to all strategies (always, even if breaker tripped) ----
+            # TNT needs continuous bar feeding for BB filter
+            if self._tnt_enabled and self._tnt_strat:
+                self._tnt_strat.on_bar_complete(bar)
+
+            # ORB: Set opening range on first bar of the day
+            if self._orb_enabled and self._orb_strat:
+                if bar_dt.time() == time(9, 30):
+                    self._orb_strat.set_opening_range(bar)
+
+            # B&B: Process bars for end-of-day signals (15:00-16:00)
+            # and Just Breakfast exit checks
+            if self._bnb_enabled and self._bnb_strat:
+                bnb_action = self._bnb_strat.on_bar_complete(bar, bar.close)
+                if bnb_action:
+                    self._handle_bnb_action(bnb_action, bar, bar_dt, vix)
 
             if self._circuit_breaker_tripped:
                 continue
 
-            # Skip if already traded today (1 trade per day max)
-            if self._daily_trades >= 1:
-                continue
+            # ---- Check entries for all strategies ----
 
-            # Check breakout trigger on each bar
-            if self._pending_setup and not self._active_trade:
-                self._check_breakout(bar, bar_dt, vix)
+            # TNT: separate swing slot (checked before 0DTE strategies)
+            if (self._tnt_enabled and self._tnt_strat
+                    and self._tnt_trades_today < 1
+                    and not self._tnt_trade):
+                tnt_signal = self._tnt_strat.check_entry_signal(bar.close)
+                if tnt_signal:
+                    self._execute_tnt_entry(bar, bar_dt, tnt_signal, vix)
 
-            # Check for new setups (only in setup window: 9:30-11:30)
-            bar_time = bar_dt.time()
-            if time(9, 30) <= bar_time <= time(11, 30):
-                if not self._pending_setup and not self._active_trade:
-                    self._check_for_setup(bar, bar_dt, vix)
+            # 0DTE slot: B&B -> ORB -> DI (priority order matches live bot)
+            if self._0dte_trades_today < 1 and not self._0dte_trade:
+                # B&B entry (overnight signal, 9:30-10:00)
+                if self._bnb_enabled and self._bnb_strat:
+                    bnb_signal = self._bnb_strat.check_entry_signal(bar.close, bar_dt)
+                    if bnb_signal:
+                        ok = self._execute_0dte_entry(
+                            bar, bar_dt, bnb_signal['direction'], vix,
+                            strategy_type='bnb',
+                            quantity=self._bnb_strat.max_contracts_override,
+                        )
+                        if not ok:
+                            self._bnb_strat.rollback_entry()
 
-            # Expire pending setup after 11:30
-            if self._pending_setup and bar_time > time(11, 30):
-                self._pending_setup = None
+                # ORB breakout
+                if (self._orb_enabled and self._orb_strat
+                        and not self._0dte_trade):
+                    orb_signal = self._orb_strat.check_breakout(bar.close)
+                    if orb_signal:
+                        ok = self._execute_0dte_entry(
+                            bar, bar_dt, orb_signal['direction'], vix,
+                            strategy_type='orb',
+                            quantity=self._orb_strat.max_contracts_override,
+                        )
+                        if not ok:
+                            self._orb_strat.rollback_entry()
 
-        # End of day: expire any active position at settlement
-        if self._active_trade:
-            self._expire_position(spx_close, trading_day)
+                # DI: pulse -> breakout flow
+                if not self._0dte_trade:
+                    bar_time = bar_dt.time()
+
+                    # Check breakout trigger
+                    if self._pending_setup:
+                        self._check_breakout(bar, bar_dt, vix)
+
+                    # Check for new DI setups (9:30-11:30 window)
+                    if time(9, 30) <= bar_time <= time(11, 30):
+                        if not self._pending_setup and not self._0dte_trade:
+                            self._check_for_setup(bar, bar_dt, vix)
+
+                    # Expire pending DI setup after 11:30
+                    if self._pending_setup and bar_time > time(11, 30):
+                        self._pending_setup = None
+
+        # ---- End of day ----
+
+        # Expire 0DTE positions at settlement
+        if self._0dte_trade:
+            self._expire_0dte_position(spx_close, trading_day)
+
+        # TNT: Do NOT expire - swing positions carry across days
+
+        # B&B: Finalize overnight signal for next day
+        if self._bnb_enabled and self._bnb_strat:
+            self._bnb_strat.on_day_end(spx_close)
 
         # Record daily result
         daily = DailyResult(
@@ -304,13 +460,16 @@ class BacktestEngine:
             'daily_pnl': self._daily_pnl,
         })
 
+    # ------------------------------------------------------------------
+    # DI: Setup detection and breakout (unchanged from original)
+    # ------------------------------------------------------------------
+
     def _check_for_setup(self, bar: Bar, bar_dt: datetime, vix: float):
-        """Check if a completed bar creates a valid pulse setup."""
+        """Check if a completed bar creates a valid DI pulse setup."""
         direction = self.strategy.evaluate_setup(bar, bar.close)
         if direction is None:
             return
 
-        # Set trigger price: breakout above bar high (bullish) or below low (bearish)
         if direction == TradeDirection.BULLISH:
             trigger_price = bar.high
         else:
@@ -324,18 +483,17 @@ class BacktestEngine:
         }
 
         logger.debug(
-            f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} Pulse {direction.value} setup: "
+            f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} DI Pulse {direction.value} setup: "
             f"trigger {'above' if direction == TradeDirection.BULLISH else 'below'} "
             f"${trigger_price:,.2f}"
         )
 
     def _check_breakout(self, bar: Bar, bar_dt: datetime, vix: float):
-        """Check if current bar triggers the pending setup's breakout."""
+        """Check if current bar triggers the pending DI setup's breakout."""
         setup = self._pending_setup
         direction = setup['direction']
         trigger_price = setup['trigger_price']
 
-        # Check if breakout occurred within this bar
         triggered = False
         if direction == TradeDirection.BULLISH and bar.high > trigger_price:
             triggered = True
@@ -345,82 +503,271 @@ class BacktestEngine:
         if not triggered:
             return
 
-        # Execute trade
-        self._execute_entry(bar, bar_dt, direction, vix)
+        # Execute DI entry into the 0DTE slot
+        self._execute_0dte_entry(
+            bar, bar_dt, direction, vix,
+            strategy_type='daily_income',
+            setup_bar=setup['bar'],
+        )
 
-    def _execute_entry(self, bar: Bar, bar_dt: datetime, direction: TradeDirection, vix: float):
-        """Execute a trade entry."""
+    # ------------------------------------------------------------------
+    # Entry execution
+    # ------------------------------------------------------------------
+
+    def _execute_0dte_entry(
+        self,
+        bar: Bar,
+        bar_dt: datetime,
+        direction,
+        vix: float,
+        strategy_type: str = 'daily_income',
+        setup_bar: Optional[Bar] = None,
+        quantity: Optional[int] = None,
+        spread_width: Optional[float] = None,
+        min_credit: Optional[float] = None,
+    ) -> bool:
+        """Execute a 0DTE trade entry into the shared slot.
+
+        Returns True if trade was successfully placed.
+        """
+        # Normalize direction to TradeDirection enum
+        if isinstance(direction, str):
+            direction = TradeDirection.BULLISH if 'bullish' in direction.lower() else TradeDirection.BEARISH
+
         current_price = bar.close
-
-        # Get options chain
         expiration_str = bar_dt.strftime('%Y-%m-%d')
         chain = self.broker.get_options_chain('SPX', expiration_str)
-
         if not chain:
-            return
+            return False
 
-        # Construct spread using the SAME strategy logic
+        # Temporarily swap strategy params if overridden
+        sw = spread_width or self._di_spread_width
+        mc = min_credit or self._di_min_credit
+        saved_sw = self.strategy.spread_width
+        saved_mc = self.strategy.min_credit
+        self.strategy.spread_width = sw
+        self.strategy.min_credit = mc
+
         spread = self.strategy.construct_spread(current_price, direction, chain)
+
+        self.strategy.spread_width = saved_sw
+        self.strategy.min_credit = saved_mc
+
         if spread is None:
             self._pending_setup = None
-            return
+            return False
 
-        # Calculate quantity
-        quantity = min(self.max_contracts, 1)  # Backtest uses fixed sizing
-
-        # Place order (instant fill)
-        order_id = self.broker.place_spread_order(spread, quantity)
+        qty = quantity or min(self.max_contracts, 1)
+        order_id = self.broker.place_spread_order(spread, qty)
         order_status = self.broker.get_order_status(order_id)
 
         if order_status['status'] != 'filled':
             self._pending_setup = None
-            return
+            return False
 
-        # Create Trade object (SAME as live trading)
         trade = Trade(
             id=str(uuid.uuid4()),
             spread=spread,
             status=TradeStatus.ACTIVE,
-            setup_bar=self._pending_setup['bar'],
+            setup_bar=setup_bar or bar,
             entry_price=order_status['fill_price'],
             entry_time=bar_dt,
             entry_order_id=order_id,
-            quantity=quantity,
+            quantity=qty,
         )
 
-        self._active_trade = trade
+        self._0dte_trade = trade
+        self._0dte_strategy_type = strategy_type
         self._pending_setup = None
+        self._0dte_trades_today += 1
         self._daily_trades += 1
 
         logger.debug(
-            f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} ENTRY: {direction.value} "
-            f"${spread.short_leg.strike}/{spread.long_leg.strike} "
+            f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} {strategy_type.upper()} ENTRY: "
+            f"{direction.value} ${spread.short_leg.strike}/{spread.long_leg.strike} "
             f"credit=${order_status['fill_price']:.2f}"
         )
 
-    def _monitor_position(self, bar: Bar, bar_dt: datetime):
-        """Monitor active position for exit conditions."""
-        trade = self._active_trade
+        return True
+
+    def _execute_tnt_entry(
+        self,
+        bar: Bar,
+        bar_dt: datetime,
+        tnt_signal: Dict,
+        vix: float,
+    ) -> bool:
+        """Execute a TNT swing trade entry into the swing slot."""
+        direction = tnt_signal['direction']
+        current_price = bar.close
+
+        # TNT uses multi-day DTE for better option pricing
+        tnt_cfg = self._tnt_strat.config if self._tnt_strat else {}
+        dte_mid = (tnt_cfg.get('min_dte', 3) + tnt_cfg.get('max_dte', 7)) / 2
+        tnt_spread_width = tnt_cfg.get('spread_width', 10.0)
+        tnt_min_credit = tnt_cfg.get('min_credit', 2.00)
+        tnt_qty = tnt_cfg.get('max_contracts_override', 2)
+
+        # Temporarily set DTE on broker for realistic TNT option pricing
+        saved_dte = self.broker._current_dte
+        self.broker._current_dte = dte_mid
+
+        expiration_str = bar_dt.strftime('%Y-%m-%d')
+        chain = self.broker.get_options_chain('SPX', expiration_str)
+
+        self.broker._current_dte = saved_dte
+
+        if not chain:
+            self._tnt_strat._reset_to_idle("No options chain available")
+            return False
+
+        # Temporarily swap strategy params for TNT spread construction
+        saved_sw = self.strategy.spread_width
+        saved_mc = self.strategy.min_credit
+        self.strategy.spread_width = tnt_spread_width
+        self.strategy.min_credit = tnt_min_credit
+
+        spread = self.strategy.construct_spread(current_price, direction, chain)
+
+        self.strategy.spread_width = saved_sw
+        self.strategy.min_credit = saved_mc
+
+        if spread is None:
+            self._tnt_strat._reset_to_idle("Spread construction failed")
+            return False
+
+        order_id = self.broker.place_spread_order(spread, tnt_qty)
+        order_status = self.broker.get_order_status(order_id)
+
+        if order_status['status'] != 'filled':
+            self._tnt_strat._reset_to_idle("Order not filled")
+            return False
+
+        trade = Trade(
+            id=str(uuid.uuid4()),
+            spread=spread,
+            status=TradeStatus.ACTIVE,
+            setup_bar=bar,
+            entry_price=order_status['fill_price'],
+            entry_time=bar_dt,
+            entry_order_id=order_id,
+            quantity=tnt_qty,
+        )
+
+        self._tnt_trade = trade
+        self._tnt_entry_date = bar_dt.date()
+        self._tnt_trades_today += 1
+        self._daily_trades += 1
+
+        # Notify TNT strategy of position open
+        self._tnt_position = {
+            'id': trade.id,
+            'direction': direction.value,
+            'entry_price': current_price,
+            'target_price': tnt_signal.get('target_price', 0),
+            'stop_price': tnt_signal.get('stop_price', 0),
+            'entry_time': bar_dt.isoformat(),
+        }
+        self._tnt_strat.on_position_opened(self._tnt_position)
+
+        logger.debug(
+            f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} TNT ENTRY: "
+            f"{direction.value} ${spread.short_leg.strike}/{spread.long_leg.strike} "
+            f"credit=${order_status['fill_price']:.2f}, "
+            f"target=${tnt_signal.get('target_price', 0):,.2f}, "
+            f"stop=${tnt_signal.get('stop_price', 0):,.2f}"
+        )
+
+        return True
+
+    # ------------------------------------------------------------------
+    # Position monitoring
+    # ------------------------------------------------------------------
+
+    def _monitor_0dte_position(self, bar: Bar, bar_dt: datetime):
+        """Monitor the 0DTE position (DI/ORB/B&B) for exit conditions."""
+        trade = self._0dte_trade
         if not trade or trade.status != TradeStatus.ACTIVE:
             return
 
-        # Get current spread value
         current_value = self.broker.get_position_value(trade.spread)
         trade.update_pnl(current_value)
-
-        # Inject SPX price for 1pm check
         trade._current_spx_price = bar.close
 
-        # Check exit conditions using the SAME strategy logic
+        # Use DI exit logic (profit target, 1pm management, expiration)
         should_exit, reason = self.strategy.should_exit(trade, current_value, bar_dt)
 
         if should_exit:
-            self._close_position(trade, bar, bar_dt, reason, current_value)
+            self._close_0dte_position(trade, bar, bar_dt, reason, current_value)
 
-    def _close_position(self, trade: Trade, bar: Bar, bar_dt: datetime, reason: str, current_value: float):
-        """Close an active position."""
+    def _monitor_tnt_position(self, bar: Bar, bar_dt: datetime, trading_day: date):
+        """Monitor the TNT swing position for exit conditions."""
+        trade = self._tnt_trade
+        if not trade or trade.status != TradeStatus.ACTIVE:
+            return
+
+        current_value = self.broker.get_position_value(trade.spread)
+        trade.update_pnl(current_value)
+
+        # Check target/stop via TNT strategy (works with simulated price)
+        tnt_exit = None
+        if self._tnt_strat:
+            tnt_exit = self._tnt_strat.check_exit_conditions(bar.close)
+
+        # Manual max_hold check (TNT uses datetime.now() internally, wrong for backtest)
+        if not tnt_exit and self._tnt_entry_date and self._tnt_strat:
+            days_held = (trading_day - self._tnt_entry_date).days
+            if days_held >= self._tnt_strat.max_hold_days:
+                tnt_exit = {
+                    'reason': 'max_hold_exceeded',
+                    'exit_price': bar.close,
+                    'strategy': 'tag_n_turn',
+                }
+
+        if tnt_exit:
+            reason = tnt_exit.get('reason', 'unknown')
+            self._close_tnt_position(trade, bar, bar_dt, reason, current_value)
+
+    # ------------------------------------------------------------------
+    # B&B action handling
+    # ------------------------------------------------------------------
+
+    def _handle_bnb_action(self, action: Dict, bar: Bar, bar_dt: datetime, vix: float):
+        """Handle B&B actions (exit or roll_to_daily) from on_bar_complete."""
+        if not self._0dte_trade or self._0dte_strategy_type != 'bnb':
+            return
+
+        act = action.get('action')
+        if act == 'exit':
+            # Just Breakfast 30-min exit
+            current_value = self.broker.get_position_value(self._0dte_trade.spread)
+            self._close_0dte_position(
+                self._0dte_trade, bar, bar_dt,
+                'Just Breakfast 30-min exit', current_value,
+            )
+        elif act == 'roll_to_daily':
+            # Roll to DI: keep position, switch strategy type so DI exit logic applies
+            self._0dte_strategy_type = 'daily_income'
+            logger.debug(
+                f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} B&B rolled to Daily Income"
+            )
+
+    # ------------------------------------------------------------------
+    # Position closing
+    # ------------------------------------------------------------------
+
+    def _close_0dte_position(
+        self,
+        trade: Trade,
+        bar: Bar,
+        bar_dt: datetime,
+        reason: str,
+        current_value: float,
+    ):
+        """Close the active 0DTE position."""
+        strategy_type = self._0dte_strategy_type or 'daily_income'
+
         if "expiration" in reason.lower():
-            # Settlement at bar price
             final_pnl = trade.spread.profit_at_price(bar.close) * trade.quantity
             trade.exit_price = 0.0
             trade.exit_time = bar_dt
@@ -430,12 +777,10 @@ class BacktestEngine:
             max_profit = trade.spread.max_profit * trade.quantity
             trade.pnl_percent = (final_pnl / max_profit * 100) if max_profit > 0 else 0
         else:
-            # Active close
             limit_price = min(current_value + 0.10, trade.spread.spread_width)
             order_id = self.broker.close_spread(trade.spread, trade.quantity, limit_price)
             order_status = self.broker.get_order_status(order_id)
             exit_price = order_status['fill_price']
-
             trade.close(
                 exit_price=exit_price,
                 exit_time=bar_dt,
@@ -443,43 +788,73 @@ class BacktestEngine:
             )
 
         self._daily_pnl += trade.pnl or 0
-
-        # Record trade
-        bt_trade = BacktestTrade(
-            trade_id=trade.id,
-            entry_time=trade.entry_time,
-            exit_time=trade.exit_time,
-            direction=trade.spread.direction.value,
-            short_strike=trade.spread.short_leg.strike,
-            long_strike=trade.spread.long_leg.strike,
-            credit_received=trade.spread.credit_received,
-            entry_price=trade.entry_price,
-            exit_price=trade.exit_price or 0,
-            pnl=trade.pnl or 0,
-            pnl_pct=trade.pnl_percent or 0,
-            exit_reason=trade.exit_reason or '',
-            quantity=trade.quantity,
-            spx_at_entry=trade.spread.underlying_price_at_entry or 0,
-            spx_at_exit=bar.close,
-            vix_at_entry=self.broker._current_vix,
-            duration_minutes=int((trade.exit_time - trade.entry_time).total_seconds() / 60)
-            if trade.exit_time else 0,
-        )
-        self.trades.append(bt_trade)
+        self._record_trade(trade, bar, strategy_type)
 
         logger.debug(
-            f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} EXIT: {reason} "
-            f"P&L=${trade.pnl:+.2f}"
+            f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} {strategy_type.upper()} EXIT: "
+            f"{reason} P&L=${trade.pnl:+.2f}"
         )
 
+        self._0dte_trade = None
+        self._0dte_strategy_type = None
         self._active_trade = None
 
-    def _expire_position(self, settlement_price: float, trading_day: date):
-        """Expire active position at end of day (4:00 PM settlement)."""
-        trade = self._active_trade
+        # Notify ORB strategy of close
+        if strategy_type == 'orb' and self._orb_strat:
+            self._orb_strat.on_position_closed(bar.close, reason)
+
+    def _close_tnt_position(
+        self,
+        trade: Trade,
+        bar: Bar,
+        bar_dt: datetime,
+        reason: str,
+        current_value: float,
+    ):
+        """Close the active TNT swing position."""
+        limit_price = min(current_value + 0.10, trade.spread.spread_width)
+        order_id = self.broker.close_spread(trade.spread, trade.quantity, limit_price)
+        order_status = self.broker.get_order_status(order_id)
+        exit_price = order_status['fill_price']
+
+        trade.close(
+            exit_price=exit_price,
+            exit_time=bar_dt,
+            reason=f"TNT: {reason}",
+        )
+
+        self._daily_pnl += trade.pnl or 0
+        self._record_trade(trade, bar, 'tag_n_turn')
+
+        logger.debug(
+            f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} TNT EXIT: "
+            f"{reason} P&L=${trade.pnl:+.2f}"
+        )
+
+        # Notify TNT strategy
+        if self._tnt_strat:
+            self._tnt_strat.on_position_closed({
+                'reason': reason,
+                'exit_price': bar.close,
+                'exit_time': bar_dt.isoformat(),
+                'pnl': trade.pnl or 0,
+            })
+
+        self._tnt_trade = None
+        self._tnt_position = None
+        self._tnt_entry_date = None
+
+    # ------------------------------------------------------------------
+    # 0DTE expiration at end of day
+    # ------------------------------------------------------------------
+
+    def _expire_0dte_position(self, settlement_price: float, trading_day: date):
+        """Expire the 0DTE position at end of day (4:00 PM settlement)."""
+        trade = self._0dte_trade
         if not trade:
             return
 
+        strategy_type = self._0dte_strategy_type or 'daily_income'
         expire_dt = ET.localize(datetime.combine(trading_day, time(16, 0)))
         final_pnl = trade.spread.profit_at_price(settlement_price) * trade.quantity
 
@@ -492,10 +867,7 @@ class BacktestEngine:
         trade.pnl_percent = (final_pnl / max_profit * 100) if max_profit > 0 else 0
 
         # Update balance for expiration P&L
-        # For expiration, P&L = credit received - any ITM obligation
-        # The broker already credited us at entry, so we just need to debit any ITM loss
         if final_pnl < trade.spread.max_profit * trade.quantity:
-            # Position lost money relative to max profit
             itm_cost = (trade.spread.max_profit * trade.quantity - final_pnl) / 100
             self.broker.balance -= itm_cost
 
@@ -520,12 +892,48 @@ class BacktestEngine:
             vix_at_entry=self.broker._current_vix,
             duration_minutes=int((expire_dt - trade.entry_time).total_seconds() / 60)
             if trade.entry_time else 0,
+            strategy_type=strategy_type,
         )
         self.trades.append(bt_trade)
 
         logger.debug(
-            f"[BT] {trading_day} EXPIRED: SPX=${settlement_price:,.2f} "
-            f"P&L=${final_pnl:+.2f}"
+            f"[BT] {trading_day} {strategy_type.upper()} EXPIRED: "
+            f"SPX=${settlement_price:,.2f} P&L=${final_pnl:+.2f}"
         )
 
+        # Notify ORB strategy of close
+        if strategy_type == 'orb' and self._orb_strat:
+            self._orb_strat.on_position_closed(settlement_price, 'Expiration (4:00 PM)')
+
+        self._0dte_trade = None
+        self._0dte_strategy_type = None
         self._active_trade = None
+
+    # ------------------------------------------------------------------
+    # Trade recording helper
+    # ------------------------------------------------------------------
+
+    def _record_trade(self, trade: Trade, bar: Bar, strategy_type: str):
+        """Record a closed trade to the results list."""
+        bt_trade = BacktestTrade(
+            trade_id=trade.id,
+            entry_time=trade.entry_time,
+            exit_time=trade.exit_time,
+            direction=trade.spread.direction.value,
+            short_strike=trade.spread.short_leg.strike,
+            long_strike=trade.spread.long_leg.strike,
+            credit_received=trade.spread.credit_received,
+            entry_price=trade.entry_price,
+            exit_price=trade.exit_price or 0,
+            pnl=trade.pnl or 0,
+            pnl_pct=trade.pnl_percent or 0,
+            exit_reason=trade.exit_reason or '',
+            quantity=trade.quantity,
+            spx_at_entry=trade.spread.underlying_price_at_entry or 0,
+            spx_at_exit=bar.close,
+            vix_at_entry=self.broker._current_vix,
+            duration_minutes=int((trade.exit_time - trade.entry_time).total_seconds() / 60)
+            if trade.exit_time else 0,
+            strategy_type=strategy_type,
+        )
+        self.trades.append(bt_trade)

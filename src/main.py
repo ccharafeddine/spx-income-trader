@@ -611,6 +611,17 @@ class TradingBot:
                             pulse_bars=self._journal_pulse_bars,
                             positions_count=len(self.position_manager.get_open_positions()))
 
+                # Check for dashboard settings changes
+                settings_changed_file = Path(BASE_DIR) / 'database' / '.settings_changed'
+                if settings_changed_file.exists():
+                    try:
+                        settings_changed_file.unlink()
+                        if self.notifier:
+                            self.notifier.reload_config()
+                            logger.info("Settings changed: notification config reloaded")
+                    except OSError:
+                        pass
+
                 # Check if market is open -- record market_open/market_close transitions
                 market_open_now = self._is_market_open(current_time)
                 if self.recorder:

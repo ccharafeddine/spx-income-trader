@@ -3876,8 +3876,6 @@ ALLOWED_SETTINGS_PATHS = {
     'strategy.pulse_threshold',
     'strategy.spread_width',
     'strategy.profit_target_pct',
-    'strategy.stop_loss_pct',
-    'strategy.max_daily_trades',
     'strategy.max_contracts_override',
     'timing.morning_start',
     'timing.morning_end',

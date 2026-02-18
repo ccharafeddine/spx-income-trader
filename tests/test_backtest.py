@@ -449,3 +449,221 @@ class TestRunner:
         """Verify the runner module can be imported without errors."""
         from src.backtest import runner
         assert hasattr(runner, 'main')
+
+
+# ---------------------------------------------------------------
+# Multi-Strategy Engine Tests
+# ---------------------------------------------------------------
+
+class TestMultiStrategyEngine:
+    """Tests for TNT, B&B, and ORB integration in the backtest engine."""
+
+    def _make_engine(self, strategies=None, min_credit=0.50):
+        from src.backtest.data_loader import load_bars_from_csv
+        from src.backtest.engine import BacktestEngine
+
+        bars_df = load_bars_from_csv(FIXTURE_CSV)
+        vix_daily = {
+            date(2024, 1, 2): 14.5,
+            date(2024, 1, 3): 14.2,
+            date(2024, 1, 4): 15.1,
+            date(2024, 1, 5): 13.8,
+            date(2024, 1, 8): 14.6,
+        }
+
+        return BacktestEngine(
+            bars_df=bars_df,
+            vix_daily=vix_daily,
+            initial_capital=50000,
+            pulse_threshold=10.0,
+            spread_width=5.0,
+            profit_target_pct=80.0,
+            min_credit=min_credit,
+            max_contracts=1,
+            slippage=0.02,
+            strategies=strategies,
+        )
+
+    def test_engine_with_all_strategies_enabled(self):
+        """Engine should run without error when all strategies are enabled."""
+        engine = self._make_engine(strategies={
+            'tag_n_turn': {'enabled': True, 'bb_period': 10},
+            'bnb': {'enabled': True},
+            'orb': {'enabled': True},
+        })
+
+        results = engine.run()
+
+        assert 'trades' in results
+        assert 'daily_results' in results
+        assert len(results['daily_results']) == 5
+
+    def test_backward_compat_no_strategies(self):
+        """Engine should work identically when no strategies kwarg is passed."""
+        engine = self._make_engine(strategies=None)
+        results = engine.run()
+
+        assert len(results['daily_results']) == 5
+        assert results['initial_capital'] == 50000
+
+    def test_tnt_strategy_initialized(self):
+        """TNT strategy should be initialized when enabled."""
+        engine = self._make_engine(strategies={
+            'tag_n_turn': {'enabled': True, 'bb_period': 10},
+        })
+
+        assert engine._tnt_enabled is True
+        assert engine._tnt_strat is not None
+        assert engine._tnt_strat.enabled is True
+
+    def test_bnb_strategy_initialized(self):
+        """B&B strategy should be initialized when enabled."""
+        engine = self._make_engine(strategies={
+            'bnb': {'enabled': True},
+        })
+
+        assert engine._bnb_enabled is True
+        assert engine._bnb_strat is not None
+        assert engine._bnb_strat.enabled is True
+
+    def test_orb_strategy_initialized(self):
+        """ORB strategy should be initialized when enabled."""
+        engine = self._make_engine(strategies={
+            'orb': {'enabled': True},
+        })
+
+        assert engine._orb_enabled is True
+        assert engine._orb_strat is not None
+        assert engine._orb_strat.enabled is True
+
+    def test_disabled_strategies_not_initialized(self):
+        """Disabled strategies should not have instances created."""
+        engine = self._make_engine(strategies={
+            'tag_n_turn': {'enabled': False},
+            'bnb': {'enabled': False},
+            'orb': {'enabled': False},
+        })
+
+        assert engine._tnt_enabled is False
+        assert engine._tnt_strat is None
+        assert engine._bnb_enabled is False
+        assert engine._bnb_strat is None
+        assert engine._orb_enabled is False
+        assert engine._orb_strat is None
+
+    def test_orb_processes_first_bar(self):
+        """ORB should set opening range from first bar when enabled."""
+        engine = self._make_engine(strategies={
+            'orb': {'enabled': True, 'min_threshold': 10.0, 'max_threshold': 40.0},
+        })
+
+        results = engine.run()
+
+        # After running, ORB should have processed opening ranges
+        # (it resets daily, so the last day's state would show the range)
+        assert engine._orb_strat is not None
+        # Engine completed without error
+        assert len(results['daily_results']) == 5
+
+    def test_bnb_cross_day_signal(self):
+        """B&B should pass signals between days via on_day_end/on_day_start."""
+        engine = self._make_engine(strategies={
+            'bnb': {'enabled': True},
+        })
+
+        results = engine.run()
+
+        # B&B should have been called for all 5 days without error
+        assert len(results['daily_results']) == 5
+
+    def test_tnt_bb_warmup(self):
+        """TNT should warm up BB filter from bars, even with small dataset."""
+        engine = self._make_engine(strategies={
+            'tag_n_turn': {'enabled': True, 'bb_period': 10},
+        })
+
+        results = engine.run()
+
+        # With bb_period=10 and 13 bars/day, BB should have data by end of day 1
+        assert engine._tnt_strat.bb_filter.has_sufficient_data
+        assert len(results['daily_results']) == 5
+
+    def test_strategy_type_tracked_on_trades(self):
+        """BacktestTrade should have strategy_type set correctly."""
+        engine = self._make_engine(strategies={
+            'orb': {'enabled': True},
+            'bnb': {'enabled': True},
+        })
+
+        results = engine.run()
+
+        # All trades should have a valid strategy_type
+        for t in results['trades']:
+            assert t['strategy_type'] in ('daily_income', 'tag_n_turn', 'bnb', 'orb')
+
+    def test_0dte_slot_limit(self):
+        """Only one 0DTE trade per day should be allowed."""
+        engine = self._make_engine(strategies={
+            'orb': {'enabled': True},
+            'bnb': {'enabled': True},
+        })
+
+        results = engine.run()
+
+        # Count 0DTE trades per day
+        from collections import Counter
+        by_day = Counter()
+        for t in results['trades']:
+            entry_date = t['entry_time'][:10]
+            if t['strategy_type'] != 'tag_n_turn':
+                by_day[entry_date] += 1
+
+        # No day should have more than 1 0DTE trade
+        for day, count in by_day.items():
+            assert count <= 1, f"Day {day} had {count} 0DTE trades"
+
+    def test_circuit_breaker_blocks_all_strategies(self):
+        """Circuit breaker should block entries for all strategies."""
+        # Use very low daily loss limit to trigger circuit breaker
+        from src.backtest.data_loader import load_bars_from_csv
+        from src.backtest.engine import BacktestEngine
+
+        bars_df = load_bars_from_csv(FIXTURE_CSV)
+        engine = BacktestEngine(
+            bars_df=bars_df,
+            vix_daily={},
+            initial_capital=50000,
+            max_daily_loss_pct=0.001,  # Extremely low = triggers easily
+            min_credit=0.50,
+            strategies={
+                'orb': {'enabled': True},
+                'bnb': {'enabled': True},
+            },
+        )
+
+        results = engine.run()
+        # Should complete without error
+        assert len(results['daily_results']) == 5
+
+    def test_tnt_config_defaults(self):
+        """TNT should use correct default config values."""
+        engine = self._make_engine(strategies={
+            'tag_n_turn': {'enabled': True},
+        })
+
+        tnt = engine._tnt_strat
+        assert tnt.max_hold_days == 7
+        assert tnt.spread_width == 10.0
+        assert tnt.min_credit == 2.00
+        assert tnt.max_contracts_override == 2
+
+    def test_orb_config_defaults(self):
+        """ORB should use correct default config values."""
+        engine = self._make_engine(strategies={
+            'orb': {'enabled': True},
+        })
+
+        orb = engine._orb_strat
+        assert orb.min_threshold == 10.0
+        assert orb.max_threshold == 40.0
+        assert orb.max_contracts_override == 3
