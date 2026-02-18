@@ -129,11 +129,20 @@ def test_save_daily_journal_upsert(db):
 # --------------------------------------------------------------------------
 
 @pytest.fixture
-def client():
-    """Flask test client."""
+def client(tmp_path):
+    """Flask test client with a temporary database containing the full schema."""
+    db_file = str(tmp_path / 'test_app.db')
+
+    # Initialize the temp DB with the full schema
+    schema_path = Path(__file__).parent.parent / 'database' / 'schema.sql'
+    conn = sqlite3.connect(db_file)
+    conn.executescript(schema_path.read_text())
+    conn.close()
+
     app.config['TESTING'] = True
-    with app.test_client() as c:
-        yield c
+    with patch('dashboard.app.DATABASE_PATH', db_file):
+        with app.test_client() as c:
+            yield c
 
 
 def test_journal_daily_endpoint_not_found(client):
