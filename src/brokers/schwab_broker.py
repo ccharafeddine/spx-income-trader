@@ -199,9 +199,26 @@ class SchwabBroker(BrokerInterface):
 
             # 401: token may have expired, schwab-py auto-refresh may have failed
             if resp.status_code == 401 and retry_count == 0:
+                # Check if the refresh token itself has expired (7-day lifetime)
+                if hasattr(self.auth, 'check_token_health'):
+                    health = self.auth.check_token_health()
+                    if health['action'] == 'expired':
+                        raise SchwabAPIError(
+                            "Schwab refresh token expired. Re-authentication required. "
+                            "Run: python -m src.brokers.schwab_auth",
+                            status_code=401,
+                        )
+
                 logger.warning(f"HTTP 401 ({context}) - re-creating client and retrying")
                 self.auth._client = None  # Force client re-creation
-                new_client = self._get_client()
+                try:
+                    new_client = self._get_client()
+                except Exception as e:
+                    raise SchwabAPIError(
+                        f"Failed to re-create Schwab client after 401 ({context}): {e}. "
+                        "Refresh token may have expired - re-authenticate.",
+                        status_code=401,
+                    )
                 # Re-bind the function to the new client
                 method_name = func.__name__
                 new_func = getattr(new_client, method_name, None)

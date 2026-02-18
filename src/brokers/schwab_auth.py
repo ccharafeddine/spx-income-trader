@@ -56,7 +56,15 @@ class SchwabAuth:
         self.app_key = kr_key or app_key or ''
         self.app_secret = kr_secret or app_secret or ''
         self.callback_url = callback_url
-        self.token_path = token_path or str(BASE_DIR / 'database' / 'schwab_token.json')
+
+        # Resolve token path: default to DATA_DIR/database/, resolve relative paths
+        if token_path:
+            p = Path(token_path)
+            if not p.is_absolute():
+                p = BASE_DIR / token_path
+            self.token_path = str(p)
+        else:
+            self.token_path = str(BASE_DIR / 'database' / 'schwab_token.json')
         self._meta_path = str(Path(self.token_path).with_name('schwab_token_meta.json'))
 
         self._client = None
@@ -147,6 +155,22 @@ class SchwabAuth:
                 'hours_remaining': 0,
                 'expiring_soon': True,
             }
+
+    def check_token_health(self) -> dict:
+        """Check refresh token health and return status with actionable info.
+
+        Returns dict with keys: ok, hours_remaining, action ('none', 'warn', 'critical', 'expired')
+        """
+        status = self.get_token_status()
+        hrs = status.get('hours_remaining', 0)
+
+        if not status['valid']:
+            return {'ok': False, 'hours_remaining': 0, 'action': 'expired'}
+        if hrs <= 12:
+            return {'ok': False, 'hours_remaining': hrs, 'action': 'critical'}
+        if hrs <= 48:
+            return {'ok': True, 'hours_remaining': hrs, 'action': 'warn'}
+        return {'ok': True, 'hours_remaining': hrs, 'action': 'none'}
 
     def get_client(self):
         """Get the authenticated schwab Client. Raises if not authenticated."""

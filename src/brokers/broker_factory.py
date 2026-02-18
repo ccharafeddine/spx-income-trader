@@ -47,13 +47,16 @@ def get_broker(config: dict) -> BrokerInterface:
     elif active == 'schwab':
         from .schwab_broker import SchwabBroker
         from .schwab_auth import SchwabAuth
+        from config.settings import get_schwab_credentials
         schwab_cfg = broker_cfg.get('schwab', {})
+        # Use get_schwab_credentials() which checks keyring first, then YAML
+        schwab_creds = get_schwab_credentials()
         logger.info("Creating SchwabBroker")
         auth = SchwabAuth(
-            app_key=schwab_cfg.get('app_key', ''),
-            app_secret=schwab_cfg.get('app_secret', ''),
-            callback_url=schwab_cfg.get('callback_url', 'https://127.0.0.1'),
-            token_path=schwab_cfg.get('token_path', 'database/schwab_token.json'),
+            app_key=schwab_creds.get('app_key', ''),
+            app_secret=schwab_creds.get('app_secret', ''),
+            callback_url=schwab_creds.get('callback_url', 'https://127.0.0.1'),
+            token_path=schwab_cfg.get('token_path'),
         )
         return SchwabBroker(config=schwab_cfg, auth=auth)
 

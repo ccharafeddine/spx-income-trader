@@ -35,7 +35,7 @@ from config.settings import (
     ETRADE_CONFIG, is_etrade_configured, save_etrade_credentials, clear_etrade_credentials,
     get_trading_mode, save_trading_mode, get_etrade_credentials,
     is_schwab_configured, is_any_broker_configured, load_strategy_params,
-    save_schwab_credentials, clear_schwab_credentials,
+    save_schwab_credentials, clear_schwab_credentials, get_schwab_credentials,
 )
 from src.data.yahoo_finance import YahooFinanceProvider
 from src.utils.version import APP_VERSION
@@ -67,7 +67,7 @@ def validate_api_token():
         return None
 
     # Allow setup form POST (no token embedded yet), static, and OAuth callbacks
-    csrf_exempt = ['/setup', '/auth/etrade/']
+    csrf_exempt = ['/setup', '/auth/etrade/', '/auth/schwab/']
     if any(request.path.startswith(p) for p in csrf_exempt):
         return None
 
@@ -83,7 +83,7 @@ def check_setup_required():
     """Redirect to setup if no broker is configured."""
     # Allow setup, static, auth, and broker API routes without credentials
     allowed_paths = ['/setup', '/static', '/api/setup/status', '/auth/etrade/',
-                     '/api/schwab-auth-status', '/api/broker/']
+                     '/auth/schwab/', '/api/schwab-auth-status', '/api/broker/']
     if any(request.path.startswith(p) for p in allowed_paths):
         return None
 
@@ -1057,6 +1057,118 @@ def auth_etrade_disconnect():
     return jsonify({'success': True, 'message': 'Disconnected from E*TRADE'})
 
 
+# ---------------------------------------------------------------------------
+# Schwab OAuth2 flow
+# After authorizing on Schwab's site, the browser redirects to the callback
+# URL (https://127.0.0.1) with the auth code. That page won't load (no
+# local server), but the URL with the code is in the address bar. The user
+# copies that URL and pastes it here. Auto-submit fires immediately on paste
+# to beat the ~30-second auth code expiry.
+# ---------------------------------------------------------------------------
+
+_pending_schwab_oauth = {}
+
+
+def _resolve_schwab_token_path():
+    """Resolve the Schwab token file path (absolute)."""
+    schwab_cfg = STRATEGY_PARAMS.get('broker', {}).get('schwab', {})
+    token_path = schwab_cfg.get('token_path')
+    if token_path:
+        from pathlib import Path as _Path
+        p = _Path(token_path)
+        if not p.is_absolute():
+            from config.settings import BASE_DIR
+            p = BASE_DIR / token_path
+        return str(p)
+    from config.settings import BASE_DIR
+    return str(BASE_DIR / 'database' / 'schwab_token.json')
+
+
+@app.route('/auth/schwab/start')
+def auth_schwab_start():
+    """Initiate Schwab OAuth2 flow. Returns auth URL for the browser."""
+    try:
+        import schwab.auth as schwab_auth
+        schwab_creds = get_schwab_credentials()
+        app_key = schwab_creds.get('app_key', '')
+        callback_url = schwab_creds.get('callback_url', 'https://127.0.0.1')
+
+        if not app_key:
+            return jsonify({'error': 'Schwab app_key not configured. Save credentials first.'}), 400
+
+        auth_context = schwab_auth.get_auth_context(app_key, callback_url)
+        _pending_schwab_oauth['auth_context'] = {
+            'callback_url': auth_context.callback_url,
+            'authorization_url': auth_context.authorization_url,
+            'state': auth_context.state,
+        }
+
+        logger.info("Schwab OAuth2 flow initiated")
+        return jsonify({'auth_url': auth_context.authorization_url})
+
+    except Exception as e:
+        logger.error(f"Failed to start Schwab OAuth flow: {e}")
+        return jsonify({'error': f'Failed to start authentication: {e}'}), 500
+
+
+@app.route('/auth/schwab/complete', methods=['POST'])
+def auth_schwab_complete():
+    """Exchange the redirect URL (pasted by user) for tokens."""
+    ctx_data = _pending_schwab_oauth.get('auth_context')
+    if not ctx_data:
+        return jsonify({'success': False, 'message': 'No OAuth flow in progress. Click Connect first.'}), 400
+
+    redirect_url = request.json.get('redirect_url', '').strip()
+    if not redirect_url or 'code=' not in redirect_url:
+        return jsonify({'success': False, 'message': 'Invalid URL. Paste the full URL from your browser address bar.'}), 400
+
+    try:
+        import schwab.auth as schwab_auth
+        from src.brokers.schwab_auth import SchwabAuth
+
+        schwab_creds = get_schwab_credentials()
+
+        auth_context = schwab_auth.AuthContext(
+            callback_url=ctx_data['callback_url'],
+            authorization_url=ctx_data['authorization_url'],
+            state=ctx_data['state'],
+        )
+
+        token_path = _resolve_schwab_token_path()
+        from pathlib import Path as _Path
+        _Path(token_path).parent.mkdir(parents=True, exist_ok=True)
+
+        def token_write_func(token_data, *args, **kwargs):
+            with open(token_path, 'w') as f:
+                json.dump(token_data, f, indent=2)
+            try:
+                os.chmod(token_path, 0o600)
+            except OSError:
+                pass
+
+        schwab_auth.client_from_received_url(
+            api_key=schwab_creds.get('app_key', ''),
+            app_secret=schwab_creds.get('app_secret', ''),
+            auth_context=auth_context,
+            received_url=redirect_url,
+            token_write_func=token_write_func,
+        )
+
+        # Write metadata
+        auth_obj = SchwabAuth(token_path=token_path)
+        auth_obj._write_metadata()
+
+        # Clear pending state
+        _pending_schwab_oauth.pop('auth_context', None)
+
+        logger.info("Schwab OAuth2 authentication completed successfully")
+        return jsonify({'success': True, 'message': 'Schwab connected successfully! Token saved.'})
+
+    except Exception as e:
+        logger.error(f"Schwab OAuth callback failed: {e}")
+        return jsonify({'success': False, 'message': f'Token exchange failed: {e}'}), 400
+
+
 def _try_renew_etrade_token():
     """Attempt background token renewal. Returns status dict."""
     token_file = ETRADE_CONFIG.get('token_file')
@@ -1355,12 +1467,14 @@ def api_schwab_auth_status():
 
     try:
         from src.brokers.schwab_auth import SchwabAuth
+        # Use get_schwab_credentials() which checks keyring first, then YAML
+        schwab_creds = get_schwab_credentials()
         schwab_cfg = STRATEGY_PARAMS.get('broker', {}).get('schwab', {})
         auth = SchwabAuth(
-            app_key=schwab_cfg.get('app_key', ''),
-            app_secret=schwab_cfg.get('app_secret', ''),
-            callback_url=schwab_cfg.get('callback_url', 'https://127.0.0.1'),
-            token_path=schwab_cfg.get('token_path', 'database/schwab_token.json'),
+            app_key=schwab_creds.get('app_key', ''),
+            app_secret=schwab_creds.get('app_secret', ''),
+            callback_url=schwab_creds.get('callback_url', 'https://127.0.0.1'),
+            token_path=schwab_cfg.get('token_path'),
         )
         authenticated = auth.is_authenticated()
         token_status = auth.get_token_status()
@@ -1580,7 +1694,8 @@ def api_journal():
     day_type_filter = request.args.get('day_type', '')
     exit_reason_filter = request.args.get('exit_reason', '')
 
-    cutoff = (datetime.now(ET).date() - timedelta(days=days)).isoformat()
+    # days=0 means all time (no cutoff)
+    cutoff = None if days == 0 else (datetime.now(ET).date() - timedelta(days=days)).isoformat()
 
     # Get SPX price and all trades
     spx = yahoo.get_spx_quote() or {}
@@ -1599,11 +1714,12 @@ def api_journal():
     # Include open positions as well
     all_trades = all_closed + open_pos
 
-    # Filter by cutoff date
-    all_trades = [
-        t for t in all_trades
-        if (t.get('entry_time', '') or '') >= cutoff
-    ]
+    # Filter by cutoff date (skip if all-time)
+    if cutoff:
+        all_trades = [
+            t for t in all_trades
+            if (t.get('entry_time', '') or '') >= cutoff
+        ]
 
     # Load signals for correlation
     all_signals = load_signals()
@@ -1827,6 +1943,51 @@ def api_journal():
     })
 
 
+@app.route('/api/journal/totals')
+def api_journal_totals():
+    """All-time stats using the same classify_trades + exit analysis as the journal."""
+    try:
+        conn = get_db_connection()
+        spx = yahoo.get_spx_quote() or {}
+        spx_price = spx.get('price')
+        _, closed = classify_trades(conn, spx_price)
+        open_pos, _ = classify_trades(conn, spx_price)
+        conn.close()
+    except Exception as e:
+        logger.error(f"Journal totals error: {e}")
+        return jsonify({'error': 'Database error'}), 500
+
+    all_trades = closed + open_pos
+
+    # Compute exit analysis for each trade (same as journal endpoint)
+    valid = []
+    dur_hours = []
+    cap_vals = []
+    for t in all_trades:
+        ea = _compute_exit_analysis(t)
+        if t.get('flag'):
+            continue  # exclude flagged trades from stats
+        valid.append(ea)
+        if ea['duration_hours'] is not None:
+            dur_hours.append(ea['duration_hours'])
+        if ea['pct_of_max_profit'] is not None:
+            cap_vals.append(ea['pct_of_max_profit'])
+
+    wins = [e for e in valid if e['outcome'] == 'win']
+    losses = [e for e in valid if e['outcome'] == 'loss']
+    total_pnl = sum((e['pnl'] or 0) for e in valid)
+
+    return jsonify({
+        'trades': len(valid),
+        'wins': len(wins),
+        'losses': len(losses),
+        'win_rate': round(len(wins) / len(valid) * 100, 1) if valid else 0,
+        'total_pnl': round(total_pnl, 2),
+        'avg_duration_hours': round(sum(dur_hours) / len(dur_hours), 1) if dur_hours else None,
+        'avg_capture': round(sum(cap_vals) / len(cap_vals), 1) if cap_vals else None,
+    })
+
+
 @app.route('/api/journal/calendar')
 def api_journal_calendar():
     """Monthly calendar view data for the trade journal."""
@@ -1850,19 +2011,26 @@ def api_journal_calendar():
 
         # Get trades for the month
         rows = conn.execute(
-            """SELECT entry_time, pnl, strategy_type, status, direction
+            """SELECT entry_time, exit_time, pnl, strategy_type, status,
+                      direction, credit_received, quantity
                FROM trades
                WHERE DATE(entry_time) >= ? AND DATE(entry_time) < ?""",
             (first_day, last_day)
         ).fetchall()
 
-        # Group by date
+        # Group by date (exclude flagged trades from stats)
         days_data = {}
+        month_dur_hours = []
+        month_cap_vals = []
         for row in rows:
             entry_time = row['entry_time'] or ''
             date_str = entry_time[:10] if entry_time else None
             if not date_str:
                 continue
+
+            # Skip flagged trades (same logic as _annotate_trade)
+            credit = row['credit_received'] or 0
+            is_flagged = credit < MIN_CREDIT_THRESHOLD
 
             if date_str not in days_data:
                 days_data[date_str] = {
@@ -1871,13 +2039,28 @@ def api_journal_calendar():
                     'strategies': set()
                 }
             d = days_data[date_str]
-            d['trades'] += 1
-            pnl = row['pnl'] or 0
-            d['pnl'] += pnl
-            if pnl > 0:
-                d['wins'] += 1
-            elif pnl < 0:
-                d['losses'] += 1
+            if not is_flagged:
+                d['trades'] += 1
+                pnl = row['pnl'] or 0
+                d['pnl'] += pnl
+                if pnl > 0:
+                    d['wins'] += 1
+                elif pnl < 0:
+                    d['losses'] += 1
+                # Duration
+                if row['entry_time'] and row['exit_time']:
+                    try:
+                        delta = datetime.fromisoformat(row['exit_time']) - datetime.fromisoformat(row['entry_time'])
+                        secs = delta.total_seconds()
+                        if secs >= 0:
+                            month_dur_hours.append(secs / 3600)
+                    except (ValueError, TypeError):
+                        pass
+                # Capture
+                qty = row['quantity'] or 1
+                max_profit = credit * 100 * qty
+                if pnl and max_profit > 0:
+                    month_cap_vals.append(pnl / max_profit * 100)
             strat = row['strategy_type'] or 'daily_income'
             d['strategies'].add(strat)
 
@@ -2003,6 +2186,8 @@ def api_journal_calendar():
         'losses': total_losses,
         'win_rate': round(total_wins / (total_wins + total_losses) * 100, 1) if (total_wins + total_losses) > 0 else 0,
         'trading_days': trading_days,
+        'avg_duration_hours': round(sum(month_dur_hours) / len(month_dur_hours), 1) if month_dur_hours else None,
+        'avg_capture': round(sum(month_cap_vals) / len(month_cap_vals), 1) if month_cap_vals else None,
     }
 
     return jsonify({
@@ -2929,11 +3114,13 @@ def api_validate_live():
         if conn_ok:
             try:
                 from datetime import date as _date, timedelta as _td
-                # Use options chain query as a proxy for permissions
-                tomorrow = _date.today() + _td(days=1)
-                chain = broker.get_options_chain('SPX', tomorrow.strftime('%Y-%m-%d'))
+                # Find next trading day (skip weekends) for options chain check
+                check_date = _date.today()
+                if check_date.weekday() >= 5:  # Saturday=5, Sunday=6
+                    check_date += _td(days=(7 - check_date.weekday()))  # Next Monday
+                chain = broker.get_options_chain('SPX', check_date.strftime('%Y-%m-%d'))
                 opts_ok = len(chain) > 0
-                opts_detail = (f'{len(chain)} strikes available'
+                opts_detail = (f'{len(chain)} strikes available ({check_date})'
                                if opts_ok
                                else 'No SPX option data returned - options may not be enabled')
             except Exception as e:

@@ -225,14 +225,55 @@ class TradingBot:
         logger.info("TradingBot initialized")
     
     def _start_token_renewal(self):
-        """Start background token renewal if broker has an auth object.
+        """Start background token renewal/health check for the active broker.
 
-        E*TRADE access tokens expire after 2 hours of inactivity.
-        This thread renews them every 90 minutes to keep the session alive
-        throughout the 6.5-hour trading day.
+        E*TRADE: Renews access tokens every 90 minutes (2-hour expiry).
+        Schwab: Checks refresh token health every 60 minutes (7-day expiry).
         """
         auth = getattr(self.broker, 'auth', None)
-        if auth is None or not hasattr(auth, '_renew_token'):
+        if auth is None:
+            return
+
+        # Schwab: periodic health check (access token refresh is automatic via schwab-py)
+        if hasattr(auth, 'check_token_health'):
+            def _schwab_health_loop():
+                interval = 60 * 60  # Check every hour
+                while not self._token_renewal_stop.wait(interval):
+                    try:
+                        health = auth.check_token_health()
+                        if health['action'] == 'expired':
+                            logger.error(
+                                "SCHWAB REFRESH TOKEN EXPIRED. "
+                                "Trading will fail until re-authenticated. "
+                                "Run: python -m src.brokers.schwab_auth"
+                            )
+                            self.db.log_event("schwab_token_expired",
+                                              "Schwab refresh token expired - re-auth required")
+                        elif health['action'] == 'critical':
+                            logger.error(
+                                f"Schwab token expires in {health['hours_remaining']:.1f} hours! "
+                                "Re-authenticate immediately."
+                            )
+                            self.db.log_event("schwab_token_critical",
+                                              f"Schwab token expires in {health['hours_remaining']:.1f}h")
+                        elif health['action'] == 'warn':
+                            logger.warning(
+                                f"Schwab token expires in {health['hours_remaining']:.1f} hours. "
+                                "Plan to re-authenticate soon."
+                            )
+                    except Exception as e:
+                        logger.error(f"Schwab token health check error: {e}")
+
+            self._token_renewal_stop.clear()
+            self._token_renewal_thread = threading.Thread(
+                target=_schwab_health_loop, name="schwab-token-health", daemon=True
+            )
+            self._token_renewal_thread.start()
+            logger.info("Schwab token health monitor started (hourly checks)")
+            return
+
+        # E*TRADE: active token renewal
+        if not hasattr(auth, '_renew_token'):
             return
 
         def _renewal_loop():

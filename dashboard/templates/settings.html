@@ -817,6 +817,39 @@ header {
         <div class="label">Expiring Soon</div>
       </div>
     </div>
+
+    <div id="schwab-connect-section" style="margin-top:12px;">
+      <div class="btn-group">
+        <button type="button" class="btn btn-primary" id="schwab-connect-btn">Connect to Schwab</button>
+      </div>
+
+      <!-- Step 2: paste redirect URL (shown after browser opens) -->
+      <div id="schwab-paste-section" style="display:none; margin-top:12px;">
+        <p style="font-size:12px; color:var(--text-dim); margin-bottom:6px;">
+          After logging in and authorizing, your browser will show a page that <strong>can't be reached</strong>. That's expected.
+          Copy the <strong>entire URL</strong> from your browser's address bar and paste it below.
+        </p>
+        <input type="text" id="schwab-redirect-url" placeholder="Paste the redirect URL here (https://127.0.0.1?code=...)"
+               style="width:100%; padding:10px 12px; background:var(--bg); border:1px solid var(--border); border-radius:6px;
+                      color:var(--text); font-family:var(--font-mono); font-size:12px;" autocomplete="off" spellcheck="false">
+        <p id="schwab-paste-hint" style="font-size:11px; color:var(--text-dim); margin-top:4px;">
+          Submits automatically when you paste.
+        </p>
+      </div>
+
+      <!-- Processing indicator -->
+      <div id="schwab-auth-progress" style="display:none; margin-top:12px;">
+        <p style="font-size:12px; color:var(--text-dim);">
+          Exchanging authorization code for token...
+        </p>
+        <div style="margin-top:8px; height:3px; background:rgba(255,255,255,0.05); border-radius:2px; overflow:hidden;">
+          <div style="height:100%; width:30%; background:var(--blue); border-radius:2px; animation:schwab-pulse 1.5s ease-in-out infinite;"></div>
+        </div>
+        <style>@keyframes schwab-pulse { 0%,100%{transform:translateX(-100%)} 50%{transform:translateX(250%)} }</style>
+      </div>
+
+      <div id="schwab-auth-result" style="margin-top:8px; font-size:13px; display:none;"></div>
+    </div>
   </div>
 
   <!-- E*TRADE API Credentials -->
@@ -1129,16 +1162,19 @@ async function loadSchwabTokenStatus() {
       return;
     }
 
+    const connectBtn = document.getElementById('schwab-connect-btn');
     if (data.authenticated) {
       badge.className = 'status-badge success';
       badge.textContent = 'Authenticated';
       dot.className = 'dot green';
       text.textContent = 'Schwab token is valid';
+      if (connectBtn) connectBtn.textContent = 'Re-authenticate with Schwab';
     } else {
       badge.className = 'status-badge error';
       badge.textContent = 'Not Authenticated';
       dot.className = 'dot red';
-      text.textContent = 'Token expired or missing. Run auth script to authenticate.';
+      text.textContent = 'Token expired or missing. Click "Connect to Schwab" below.';
+      if (connectBtn) connectBtn.textContent = 'Connect to Schwab';
     }
 
     const ts = data.token_status || {};
@@ -1156,6 +1192,8 @@ async function loadSchwabTokenStatus() {
 
 // Show correct sections on page load
 showBrokerSections(activeBroker);
+
+// (Schwab OAuth result is shown inline via JS, no URL redirect needed)
 
 // ---------------------------------------------------------------------------
 // Trading Mode
@@ -1654,6 +1692,102 @@ if (activeBroker === 'etrade') {
 if (activeBroker === 'schwab') {
   setInterval(loadSchwabTokenStatus, 60000);
 }
+
+// ---------------------------------------------------------------------------
+// Schwab OAuth2 Connect Flow
+// Step 1: Click Connect -> opens Schwab login in browser
+// Step 2: After authorizing, browser redirects to https://127.0.0.1?code=...
+//         (page won't load - that's expected)
+// Step 3: User copies the URL from browser address bar, pastes here
+// Step 4: Auto-submits on paste -> exchanges code for token
+// ---------------------------------------------------------------------------
+
+document.getElementById('schwab-connect-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('schwab-connect-btn');
+  const pasteSection = document.getElementById('schwab-paste-section');
+  const resultDiv = document.getElementById('schwab-auth-result');
+  const urlInput = document.getElementById('schwab-redirect-url');
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+  resultDiv.style.display = 'none';
+
+  try {
+    const response = await fetch('/auth/schwab/start');
+    const data = await response.json();
+
+    if (data.error) {
+      alert('Error: ' + data.error);
+      btn.disabled = false;
+      btn.textContent = 'Connect to Schwab';
+      return;
+    }
+
+    // Open auth URL in browser
+    window.open(data.auth_url, 'schwab_auth',
+      'width=800,height=700,scrollbars=yes,resizable=yes');
+
+    // Show paste section
+    btn.style.display = 'none';
+    pasteSection.style.display = 'block';
+    urlInput.value = '';
+    urlInput.focus();
+
+  } catch (error) {
+    alert('Error starting Schwab OAuth: ' + error.message);
+    btn.disabled = false;
+    btn.textContent = 'Connect to Schwab';
+  }
+});
+
+// Auto-submit when user pastes the redirect URL
+document.getElementById('schwab-redirect-url').addEventListener('input', async (e) => {
+  const url = e.target.value.trim();
+  if (!url || !url.includes('code=')) return;
+
+  const btn = document.getElementById('schwab-connect-btn');
+  const pasteSection = document.getElementById('schwab-paste-section');
+  const progress = document.getElementById('schwab-auth-progress');
+  const resultDiv = document.getElementById('schwab-auth-result');
+
+  // Immediately hide paste, show processing
+  pasteSection.style.display = 'none';
+  progress.style.display = 'block';
+
+  try {
+    const response = await fetch('/auth/schwab/complete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({redirect_url: url}),
+    });
+    const data = await response.json();
+
+    progress.style.display = 'none';
+    btn.style.display = '';
+    btn.disabled = false;
+    btn.textContent = 'Connect to Schwab';
+
+    resultDiv.style.display = 'block';
+    if (data.success) {
+      resultDiv.style.color = 'var(--green)';
+      resultDiv.textContent = data.message || 'Connected successfully!';
+      setTimeout(() => {
+        resultDiv.style.display = 'none';
+        loadSchwabTokenStatus();
+      }, 2000);
+    } else {
+      resultDiv.style.color = 'var(--red)';
+      resultDiv.textContent = 'Error: ' + (data.message || 'Unknown error');
+    }
+  } catch (error) {
+    progress.style.display = 'none';
+    btn.style.display = '';
+    btn.disabled = false;
+    btn.textContent = 'Connect to Schwab';
+    resultDiv.style.display = 'block';
+    resultDiv.style.color = 'var(--red)';
+    resultDiv.textContent = 'Error: ' + error.message;
+  }
+});
 </script>
 
 </body>
