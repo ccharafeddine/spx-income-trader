@@ -225,3 +225,21 @@ pdt:
 
   # Rolling window in business days (excludes weekends and NYSE holidays)
   pdt_window_days: 5
+
+# ============================================
+# NOTIFICATIONS
+# ============================================
+# Webhook URLs are sensitive - do not share or commit to version control.
+notifications:
+  slack:
+    enabled: false
+    webhook_url: ""
+    min_level: "info"      # info, warning, critical
+  discord:
+    enabled: false
+    webhook_url: ""
+    min_level: "info"
+  webhook:
+    enabled: false
+    url: ""
+    min_level: "warning"

@@ -3262,6 +3262,15 @@ ALLOWED_SETTINGS_PATHS = {
     'bnb.enabled',
     'risk.max_daily_loss',
     'risk.max_account_risk_pct',
+    'notifications.slack.enabled',
+    'notifications.slack.webhook_url',
+    'notifications.slack.min_level',
+    'notifications.discord.enabled',
+    'notifications.discord.webhook_url',
+    'notifications.discord.min_level',
+    'notifications.webhook.enabled',
+    'notifications.webhook.url',
+    'notifications.webhook.min_level',
 }
 
 
@@ -3315,7 +3324,8 @@ def _notify_bot_settings_changed():
 def _redact_secrets(d: dict, parent_key: str = '') -> dict:
     """Deep-copy a dict, replacing sensitive values with '****'."""
     secret_keys = {'app_key', 'app_secret', 'consumer_key', 'consumer_secret',
-                   'password', 'secret', 'token', 'twilio_token', 'twilio_sid'}
+                   'password', 'secret', 'token', 'twilio_token', 'twilio_sid',
+                   'webhook_url'}
     out = {}
     for k, v in d.items():
         if isinstance(v, dict):
@@ -3362,6 +3372,89 @@ def api_reset_settings():
     except Exception as e:
         logger.error(f"Settings reset failed: {e}")
         return jsonify({'success': False, 'error': 'Failed to reset settings'})
+
+
+# ---------------------------------------------------------------------------
+# Notifications API
+# ---------------------------------------------------------------------------
+
+@app.route('/api/notifications/test', methods=['POST'])
+def api_notifications_test():
+    """Send a test notification to a single channel."""
+    data = request.json or {}
+    channel = data.get('channel')
+    if channel not in ('slack', 'discord', 'webhook'):
+        return jsonify({'success': False, 'message': 'Invalid channel'}), 400
+
+    try:
+        from src.utils.notifications import NotificationManager
+        nm = NotificationManager()
+
+        # Override config from request data so test uses the URL being configured
+        # (not yet saved to YAML)
+        if channel == 'slack' and data.get('webhook_url'):
+            nm.slack_config = {'enabled': True, 'webhook_url': data['webhook_url'], 'min_level': 'info'}
+        elif channel == 'discord' and data.get('webhook_url'):
+            nm.discord_config = {'enabled': True, 'webhook_url': data['webhook_url'], 'min_level': 'info'}
+        elif channel == 'webhook' and data.get('url'):
+            nm.webhook_config = {'enabled': True, 'url': data['url'], 'min_level': 'info'}
+
+        success, error = nm.send_test(channel)
+        if success:
+            return jsonify({'success': True, 'message': 'Test notification sent!'})
+        else:
+            return jsonify({'success': False, 'message': error or 'Failed to send'})
+    except Exception as e:
+        logger.error(f"Notification test failed: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/api/notifications/save', methods=['POST'])
+def api_notifications_save():
+    """Save notification settings directly to strategy_params.yaml."""
+    data = request.json
+    if not data:
+        return jsonify({'success': False, 'error': 'No data provided'}), 400
+
+    try:
+        # Load existing YAML
+        settings = {}
+        if SETTINGS_FILE.exists():
+            with open(SETTINGS_FILE, 'r') as f:
+                settings = yaml.safe_load(f) or {}
+
+        # Build notifications section from request
+        notifications = {
+            'slack': {
+                'enabled': bool(data.get('slack_enabled', False)),
+                'webhook_url': data.get('slack_webhook_url', ''),
+                'min_level': data.get('slack_min_level', 'info'),
+            },
+            'discord': {
+                'enabled': bool(data.get('discord_enabled', False)),
+                'webhook_url': data.get('discord_webhook_url', ''),
+                'min_level': data.get('discord_min_level', 'info'),
+            },
+            'webhook': {
+                'enabled': bool(data.get('webhook_enabled', False)),
+                'url': data.get('webhook_url', ''),
+                'min_level': data.get('webhook_min_level', 'warning'),
+            },
+        }
+
+        settings['notifications'] = notifications
+
+        # Write back to YAML
+        with open(SETTINGS_FILE, 'w') as f:
+            yaml.dump(settings, f, default_flow_style=False, sort_keys=False)
+
+        # Notify bot to reload
+        _notify_bot_settings_changed()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Notification settings save failed: {e}")
+        return jsonify({'success': False, 'error': 'Failed to save notification settings'})
 
 
 # ---------------------------------------------------------------------------

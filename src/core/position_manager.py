@@ -41,6 +41,7 @@ class PositionManager:
 
         self.open_trades: List[Trade] = []
         self.recently_closed: List[Dict] = []  # [{id, pnl}] for portfolio tracking
+        self.recently_closed_trades: List[Dict] = []  # Rich data for notifications
         self.tz = pytz.timezone("America/New_York")
 
         # Daily market cache (set once per day by TradingBot)
@@ -484,6 +485,23 @@ class PositionManager:
 
             # Track for portfolio risk updates
             self.recently_closed.append({'id': trade.id, 'pnl': trade.pnl or 0.0})
+
+            # Rich data for notifications
+            max_risk = trade.spread.max_risk * trade.quantity if trade.spread.max_risk else 0
+            duration = ''
+            if trade.entry_time and trade.exit_time:
+                dur = trade.exit_time - trade.entry_time
+                hours, remainder = divmod(int(dur.total_seconds()), 3600)
+                minutes = remainder // 60
+                duration = f"{hours}h {minutes}m" if hours else f"{minutes}m"
+            self.recently_closed_trades.append({
+                'direction': trade.spread.direction.value,
+                'pnl': trade.pnl or 0.0,
+                'pnl_pct': ((trade.pnl or 0) / max_risk * 100) if max_risk else 0,
+                'reason': reason,
+                'strikes': f"{trade.spread.short_leg.strike}/{trade.spread.long_leg.strike}",
+                'duration': duration,
+            })
 
             # Update database
             self.db.save_trade(trade)

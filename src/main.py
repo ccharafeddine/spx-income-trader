@@ -249,6 +249,12 @@ class TradingBot:
                             )
                             self.db.log_event("schwab_token_expired",
                                               "Schwab refresh token expired - re-auth required")
+                            if self.notifier:
+                                self.notifier.send(
+                                    "Schwab Token Expired",
+                                    "Refresh token expired. Re-authenticate immediately.",
+                                    level='critical'
+                                )
                         elif health['action'] == 'critical':
                             logger.error(
                                 f"Schwab token expires in {health['hours_remaining']:.1f} hours! "
@@ -256,11 +262,23 @@ class TradingBot:
                             )
                             self.db.log_event("schwab_token_critical",
                                               f"Schwab token expires in {health['hours_remaining']:.1f}h")
+                            if self.notifier:
+                                self.notifier.send(
+                                    "Schwab Token Critical",
+                                    f"Token expires in {health['hours_remaining']:.1f} hours. Re-authenticate now.",
+                                    level='critical'
+                                )
                         elif health['action'] == 'warn':
                             logger.warning(
                                 f"Schwab token expires in {health['hours_remaining']:.1f} hours. "
                                 "Plan to re-authenticate soon."
                             )
+                            if self.notifier:
+                                self.notifier.send(
+                                    "Schwab Token Warning",
+                                    f"Token expires in {health['hours_remaining']:.1f} hours. Plan to re-authenticate.",
+                                    level='warning'
+                                )
                     except Exception as e:
                         logger.error(f"Schwab token health check error: {e}")
 
@@ -437,7 +455,8 @@ class TradingBot:
         if self.notifier:
             self.notifier.send(
                 "Trading Bot Started",
-                f"Mode: {TRADING_MODE}\nTime: {datetime.now(self.tz).strftime('%H:%M:%S EST')}"
+                f"Mode: {TRADING_MODE}\nTime: {datetime.now(self.tz).strftime('%H:%M:%S EST')}",
+                level='info'
             )
         
         # Log system event
@@ -612,6 +631,20 @@ class TradingBot:
                 self._drain_recently_closed()
                 if closed_pnl != 0:
                     logger.info(f"Daily realized P&L: ${self.portfolio.daily_realized_pnl:.2f}")
+
+                # Notify on closed trades
+                if self.notifier:
+                    for closed in self.position_manager.recently_closed_trades:
+                        self.notifier.send(
+                            f"Trade Closed: {closed['direction'].upper()}",
+                            f"P&L: ${closed['pnl']:+.2f} ({closed['pnl_pct']:+.1f}%)\n"
+                            f"Strikes: {closed['strikes']}\n"
+                            f"Reason: {closed['reason']}\n"
+                            f"Duration: {closed['duration']}\n"
+                            f"Daily Total: ${self.portfolio.daily_realized_pnl:+.2f}",
+                            level='info'
+                        )
+                self.position_manager.recently_closed_trades.clear()
 
                 # Update market state: build bars, feed parallel strategies
                 # (runs every cycle during market hours, NOT gated by setup window)
@@ -831,13 +864,24 @@ class TradingBot:
             return False
         daily_pnl = self.portfolio.daily_realized_pnl
         max_loss = self.portfolio.max_daily_loss
+        # Warn at 80% of limit
+        if (daily_pnl <= -max_loss * 0.8
+                and not getattr(self, '_cb_warning_sent', False)
+                and self.notifier):
+            self._cb_warning_sent = True
+            self.notifier.send(
+                "Circuit Breaker Warning",
+                f"Daily P&L ${daily_pnl:.2f} approaching limit -${max_loss:.0f}",
+                level='warning'
+            )
         if daily_pnl <= -max_loss:
             self.portfolio.circuit_breaker_triggered = True
             logger.warning(f"Max daily loss reached: ${daily_pnl:.2f} (limit: -${max_loss:.0f})")
             if self.notifier:
                 self.notifier.send(
                     "Daily Loss Limit Reached",
-                    f"Daily P&L: ${daily_pnl:.2f}\nStopping new trades."
+                    f"Daily P&L: ${daily_pnl:.2f}\nStopping new trades.",
+                    level='critical'
                 )
             return False
         return True
@@ -956,6 +1000,22 @@ class TradingBot:
                 f"{self._journal_trades_entered} trades, "
                 f"{len(self._journal_rejections)} rejections"
             )
+
+            # Send EOD summary notification
+            if self.notifier:
+                try:
+                    dm = self.portfolio.drawdown_manager
+                    self.notifier.send_eod_summary({
+                        'trades_count': self._journal_trades_entered,
+                        'daily_pnl': self.portfolio.daily_realized_pnl,
+                        'weekly_pnl': dm.weekly_realized_pnl if dm else 0.0,
+                        'monthly_pnl': dm.monthly_realized_pnl if dm else 0.0,
+                        'equity': self.portfolio.account_size,
+                        'no_trade_reason': no_trade_summary if self._journal_trades_entered == 0 else None,
+                    })
+                except Exception as eod_err:
+                    logger.warning(f"Failed to send EOD summary: {eod_err}")
+
         except Exception as e:
             logger.warning(f"Failed to save daily journal: {e}")
 
@@ -1000,6 +1060,23 @@ class TradingBot:
         """Process recently_closed trades into portfolio manager."""
         for closed in self.position_manager.recently_closed:
             self.portfolio.close_position(closed['id'], closed['pnl'])
+
+            # Check consecutive loss streak for notification
+            if closed['pnl'] < 0 and self.notifier:
+                dm = self.portfolio.drawdown_manager
+                if dm and dm.consec_pause_until is not None:
+                    self.notifier.send(
+                        "Trading Paused: Consecutive Losses",
+                        f"{dm.consecutive_losses} consecutive losses. "
+                        f"Trading paused until {dm.consec_pause_until.strftime('%Y-%m-%d %H:%M')}.",
+                        level='critical'
+                    )
+                elif dm and dm.consecutive_losses >= 3:
+                    self.notifier.send(
+                        "Loss Streak Warning",
+                        f"{dm.consecutive_losses} consecutive losses.",
+                        level='warning'
+                    )
         self.position_manager.recently_closed.clear()
 
     def _update_market_state(self, current_time):
@@ -1593,7 +1670,8 @@ class TradingBot:
                     f"{strategy_name.upper()} Trade: {spread.direction.value.upper()}",
                     f"Strikes: ${spread.short_leg.strike}/${spread.long_leg.strike}\n"
                     f"Credit: ${spread.credit_received:.2f}\n"
-                    f"Contracts: {quantity}"
+                    f"Contracts: {quantity}",
+                    level='info'
                 )
 
             logger.info(f"{strategy_name}: Trade entered {trade.id}")
@@ -1877,7 +1955,8 @@ class TradingBot:
                         f"Strikes: ${spread.short_leg.strike}/${spread.long_leg.strike}\n"
                         f"Credit: ${spread.credit_received:.2f}\n"
                         f"Max Profit: ${spread.max_profit:.2f}\n"
-                        f"Contracts: {quantity}"
+                        f"Contracts: {quantity}",
+                        level='info'
                     )
             else:
                 logger.error("Trade execution failed")
@@ -2011,7 +2090,8 @@ class TradingBot:
                 self.notifier.send(
                     "Trading Bot Stopped",
                     f"Trades today: {total_trades}\n"
-                    f"Daily P&L: ${self.portfolio.daily_realized_pnl:.2f}"
+                    f"Daily P&L: ${self.portfolio.daily_realized_pnl:.2f}",
+                    level='info'
                 )
             except Exception as e:
                 logger.warning(f"Failed to send shutdown notification: {e}")

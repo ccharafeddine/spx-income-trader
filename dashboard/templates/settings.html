@@ -1015,6 +1015,94 @@ header {
       letting trades run to expiration instead.
     </div>
   </div>
+
+  <!-- Notifications -->
+  <div class="panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">Notifications</div>
+        <div class="panel-subtitle">Slack, Discord, and webhook alerts for trade events</div>
+      </div>
+    </div>
+
+    <!-- Slack -->
+    <div style="margin-bottom: 20px;">
+      <div style="font-weight: 600; color: var(--text); margin-bottom: 8px;">Slack</div>
+      <div class="form-group" style="margin-bottom: 8px;">
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-dim);">
+          <input type="checkbox" id="notif-slack-enabled"> Enable Slack notifications
+        </label>
+      </div>
+      <div class="form-group" style="margin-bottom: 8px;">
+        <label class="form-label" for="notif-slack-url">Webhook URL</label>
+        <input type="text" class="form-input" id="notif-slack-url"
+               placeholder="https://hooks.slack.com/services/...">
+      </div>
+      <div class="form-group" style="margin-bottom: 8px;">
+        <label class="form-label" for="notif-slack-level">Min Level</label>
+        <select class="form-select" id="notif-slack-level">
+          <option value="info">Info</option>
+          <option value="warning">Warning</option>
+          <option value="critical">Critical</option>
+        </select>
+      </div>
+      <button type="button" class="btn" onclick="testNotification('slack')" style="font-size: 12px;">Send Test</button>
+      <span id="notif-slack-result" style="font-size: 12px; margin-left: 8px;"></span>
+    </div>
+
+    <!-- Discord -->
+    <div style="margin-bottom: 20px;">
+      <div style="font-weight: 600; color: var(--text); margin-bottom: 8px;">Discord</div>
+      <div class="form-group" style="margin-bottom: 8px;">
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-dim);">
+          <input type="checkbox" id="notif-discord-enabled"> Enable Discord notifications
+        </label>
+      </div>
+      <div class="form-group" style="margin-bottom: 8px;">
+        <label class="form-label" for="notif-discord-url">Webhook URL</label>
+        <input type="text" class="form-input" id="notif-discord-url"
+               placeholder="https://discord.com/api/webhooks/...">
+      </div>
+      <div class="form-group" style="margin-bottom: 8px;">
+        <label class="form-label" for="notif-discord-level">Min Level</label>
+        <select class="form-select" id="notif-discord-level">
+          <option value="info">Info</option>
+          <option value="warning">Warning</option>
+          <option value="critical">Critical</option>
+        </select>
+      </div>
+      <button type="button" class="btn" onclick="testNotification('discord')" style="font-size: 12px;">Send Test</button>
+      <span id="notif-discord-result" style="font-size: 12px; margin-left: 8px;"></span>
+    </div>
+
+    <!-- Generic Webhook -->
+    <div style="margin-bottom: 20px;">
+      <div style="font-weight: 600; color: var(--text); margin-bottom: 8px;">Generic Webhook</div>
+      <div class="form-group" style="margin-bottom: 8px;">
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-dim);">
+          <input type="checkbox" id="notif-webhook-enabled"> Enable webhook notifications
+        </label>
+      </div>
+      <div class="form-group" style="margin-bottom: 8px;">
+        <label class="form-label" for="notif-webhook-url">URL</label>
+        <input type="text" class="form-input" id="notif-webhook-url"
+               placeholder="https://example.com/webhook">
+      </div>
+      <div class="form-group" style="margin-bottom: 8px;">
+        <label class="form-label" for="notif-webhook-level">Min Level</label>
+        <select class="form-select" id="notif-webhook-level">
+          <option value="info">Info</option>
+          <option value="warning" selected>Warning</option>
+          <option value="critical">Critical</option>
+        </select>
+      </div>
+      <button type="button" class="btn" onclick="testNotification('webhook')" style="font-size: 12px;">Send Test</button>
+      <span id="notif-webhook-result" style="font-size: 12px; margin-left: 8px;"></span>
+    </div>
+
+    <button type="button" class="btn btn-primary" onclick="saveNotificationSettings()">Save Notifications</button>
+    <div id="notif-save-result" style="margin-top: 8px; font-size: 12px; display: none;"></div>
+  </div>
 </div>
 
 <script>
@@ -1788,6 +1876,123 @@ document.getElementById('schwab-redirect-url').addEventListener('input', async (
     resultDiv.textContent = 'Error: ' + error.message;
   }
 });
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+async function loadNotificationSettings() {
+  try {
+    const response = await fetch('/api/settings');
+    const settings = await response.json();
+    const notif = settings.notifications || {};
+
+    // Slack
+    const slack = notif.slack || {};
+    document.getElementById('notif-slack-enabled').checked = !!slack.enabled;
+    const slackUrl = slack.webhook_url || '';
+    if (slackUrl && !slackUrl.startsWith('****')) {
+      document.getElementById('notif-slack-url').value = slackUrl;
+    }
+    document.getElementById('notif-slack-level').value = slack.min_level || 'info';
+
+    // Discord
+    const discord = notif.discord || {};
+    document.getElementById('notif-discord-enabled').checked = !!discord.enabled;
+    const discordUrl = discord.webhook_url || '';
+    if (discordUrl && !discordUrl.startsWith('****')) {
+      document.getElementById('notif-discord-url').value = discordUrl;
+    }
+    document.getElementById('notif-discord-level').value = discord.min_level || 'info';
+
+    // Webhook
+    const webhook = notif.webhook || {};
+    document.getElementById('notif-webhook-enabled').checked = !!webhook.enabled;
+    const webhookUrl = webhook.url || '';
+    if (webhookUrl && !webhookUrl.startsWith('****')) {
+      document.getElementById('notif-webhook-url').value = webhookUrl;
+    }
+    document.getElementById('notif-webhook-level').value = webhook.min_level || 'warning';
+  } catch (error) {
+    console.error('Failed to load notification settings:', error);
+  }
+}
+
+async function saveNotificationSettings() {
+  const resultDiv = document.getElementById('notif-save-result');
+  resultDiv.style.display = 'none';
+
+  const payload = {
+    slack_enabled: document.getElementById('notif-slack-enabled').checked,
+    slack_webhook_url: document.getElementById('notif-slack-url').value.trim(),
+    slack_min_level: document.getElementById('notif-slack-level').value,
+    discord_enabled: document.getElementById('notif-discord-enabled').checked,
+    discord_webhook_url: document.getElementById('notif-discord-url').value.trim(),
+    discord_min_level: document.getElementById('notif-discord-level').value,
+    webhook_enabled: document.getElementById('notif-webhook-enabled').checked,
+    webhook_url: document.getElementById('notif-webhook-url').value.trim(),
+    webhook_min_level: document.getElementById('notif-webhook-level').value,
+  };
+
+  try {
+    const response = await fetch('/api/notifications/save', {
+      method: 'POST',
+      headers: API_HEADERS,
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    resultDiv.style.display = 'block';
+    if (data.success) {
+      resultDiv.style.color = 'var(--green)';
+      resultDiv.textContent = 'Notification settings saved.';
+    } else {
+      resultDiv.style.color = 'var(--red)';
+      resultDiv.textContent = data.error || 'Failed to save.';
+    }
+  } catch (error) {
+    resultDiv.style.display = 'block';
+    resultDiv.style.color = 'var(--red)';
+    resultDiv.textContent = 'Error: ' + error.message;
+  }
+}
+
+async function testNotification(channel) {
+  const resultSpan = document.getElementById('notif-' + channel + '-result');
+  resultSpan.textContent = 'Sending...';
+  resultSpan.style.color = 'var(--text-dim)';
+
+  // Collect the URL from the form (so user can test before saving)
+  const payload = {channel: channel};
+  if (channel === 'slack') {
+    payload.webhook_url = document.getElementById('notif-slack-url').value.trim();
+  } else if (channel === 'discord') {
+    payload.webhook_url = document.getElementById('notif-discord-url').value.trim();
+  } else if (channel === 'webhook') {
+    payload.url = document.getElementById('notif-webhook-url').value.trim();
+  }
+
+  try {
+    const response = await fetch('/api/notifications/test', {
+      method: 'POST',
+      headers: API_HEADERS,
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (data.success) {
+      resultSpan.style.color = 'var(--green)';
+      resultSpan.textContent = 'Sent!';
+    } else {
+      resultSpan.style.color = 'var(--red)';
+      resultSpan.textContent = data.message || 'Failed';
+    }
+  } catch (error) {
+    resultSpan.style.color = 'var(--red)';
+    resultSpan.textContent = 'Error: ' + error.message;
+  }
+}
+
+// Load notification settings on page load
+loadNotificationSettings();
 </script>
 
 </body>
