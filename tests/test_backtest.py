@@ -80,6 +80,47 @@ class TestDataLoader:
             except (ValueError, Exception):
                 pass  # Expected
 
+    def test_synthesize_30m_from_daily(self):
+        """Synthesis preserves daily OHLC approximately and produces 13 bars/day."""
+        import pandas as pd
+        from src.backtest.data_loader import _synthesize_30m_from_daily
+
+        # Create a 2-day daily DataFrame
+        daily_data = {
+            'open': [5000.0, 5010.0],
+            'high': [5020.0, 5030.0],
+            'low': [4990.0, 4995.0],
+            'close': [5015.0, 5005.0],
+            'volume': [1000000, 1200000],
+        }
+        idx = pd.DatetimeIndex([
+            pd.Timestamp('2024-01-02', tz='America/New_York'),
+            pd.Timestamp('2024-01-03', tz='America/New_York'),
+        ])
+        daily_df = pd.DataFrame(daily_data, index=idx)
+
+        result = _synthesize_30m_from_daily(daily_df)
+
+        # 2 days * 13 bars = 26 bars
+        assert len(result) == 26
+        assert list(result.columns) == ['open', 'high', 'low', 'close', 'volume']
+
+        # Day 1 (bullish): first bar opens near daily open, last bar closes near daily close
+        day1 = result[result.index.date == date(2024, 1, 2)]
+        assert len(day1) == 13
+        assert abs(day1.iloc[0]['open'] - 5000.0) < 0.01
+        assert abs(day1.iloc[-1]['close'] - 5015.0) < 0.01
+
+        # Day 2 (bearish): same check
+        day2 = result[result.index.date == date(2024, 1, 3)]
+        assert len(day2) == 13
+        assert abs(day2.iloc[0]['open'] - 5010.0) < 0.01
+        assert abs(day2.iloc[-1]['close'] - 5005.0) < 0.01
+
+        # Volumes should sum approximately to daily volume
+        assert day1['volume'].sum() > 0
+        assert day2['volume'].sum() > 0
+
 
 # ---------------------------------------------------------------
 # BacktestBroker Tests

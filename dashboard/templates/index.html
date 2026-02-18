@@ -2352,6 +2352,11 @@ header::after {
     <div class="settings-section">
       <div class="section-title">Position Sizing</div>
       <div class="setting-row">
+        <label>Max Contracts</label>
+        <input type="number" id="set-max-contracts" min="1" max="20" step="1" value="20" style="width:60px"
+               onchange="updateSetting('portfolio.position_sizing.max_contracts', parseInt(this.value))">
+      </div>
+      <div class="setting-row">
         <label>Daily Contracts</label>
         <input type="number" id="set-daily-contracts" min="1" max="10" value="5"
                onchange="updateSetting('strategy.max_contracts_override', parseInt(this.value))">
@@ -2360,6 +2365,23 @@ header::after {
         <label>Swing Contracts</label>
         <input type="number" id="set-tnt-contracts" min="1" max="10" value="2"
                onchange="updateSetting('tag_n_turn.max_contracts_override', parseInt(this.value))">
+      </div>
+      <div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06);">
+        <div style="font-size:12px; color:var(--text-dim); margin-bottom:6px;">
+          Account: <strong id="sidebar-acct-balance">-</strong>
+          <span id="sidebar-acct-mode" style="margin-left:4px; font-size:11px; opacity:0.6;"></span>
+        </div>
+        <div id="sidebar-acct-edit" style="display:none;">
+          <div class="setting-row">
+            <label>Paper Balance</label>
+            <input type="number" id="sidebar-acct-input" min="100" step="100" style="width:100px">
+          </div>
+          <button onclick="saveSidebarBalance()" style="padding:4px 12px; background:var(--blue); color:white; border:none; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer; margin-top:4px;">Update</button>
+          <span id="sidebar-acct-result" style="font-size:11px; margin-left:6px;"></span>
+        </div>
+        <div id="sidebar-acct-readonly" style="display:none; font-size:11px; color:var(--text-dim);">
+          Live balance fetched from broker.
+        </div>
       </div>
     </div>
 
@@ -3636,9 +3658,9 @@ async function updateStatus() {
     }
   }
 
-  // E*TRADE token warning banner
+  // E*TRADE token warning banner (only when etrade is active)
   const tokenBanner = document.getElementById('etrade-token-banner');
-  if (d.etrade_token) {
+  if (d.active_broker === 'etrade' && d.etrade_token) {
     const t = d.etrade_token;
     if (t.status === 'renewal_failed' || t.status === 'error') {
       tokenBanner.style.display = 'block';
@@ -3652,8 +3674,6 @@ async function updateStatus() {
       tokenBanner.style.borderBottom = '1px solid var(--red)';
       tokenBanner.style.color = 'var(--red)';
       tokenBanner.textContent = 'E*TRADE session expired. Click here to reconnect in Settings.';
-    } else if (t.status === 'renewed') {
-      tokenBanner.style.display = 'none';
     } else {
       tokenBanner.style.display = 'none';
     }
@@ -5481,8 +5501,29 @@ async function loadCurrentSettings() {
   document.getElementById('trending-threshold-val').textContent = '$' + trendingThreshold;
 
   // Position sizing
+  const sizing = data.portfolio?.position_sizing || {};
+  document.getElementById('set-max-contracts').value = sizing.max_contracts ?? 20;
   document.getElementById('set-daily-contracts').value = data.strategy?.max_contracts_override ?? 5;
   document.getElementById('set-tnt-contracts').value = data.tag_n_turn?.max_contracts_override ?? 2;
+
+  // Account balance in sidebar
+  const portfolio = data.portfolio || {};
+  const dryBal = portfolio.dry_run_account_size || portfolio.account_size || 50000;
+  const liveBal = portfolio.live_account_size || 0;
+  fetchJSON('/api/settings/trading-mode').then(modeData => {
+    const mode = modeData?.mode || 'dry_run';
+    const bal = mode === 'live' ? liveBal : dryBal;
+    document.getElementById('sidebar-acct-balance').textContent = '$' + Number(bal).toLocaleString();
+    document.getElementById('sidebar-acct-mode').textContent = mode === 'live' ? '(Live)' : '(Paper)';
+    if (mode === 'live') {
+      document.getElementById('sidebar-acct-readonly').style.display = '';
+      document.getElementById('sidebar-acct-edit').style.display = 'none';
+    } else {
+      document.getElementById('sidebar-acct-edit').style.display = '';
+      document.getElementById('sidebar-acct-readonly').style.display = 'none';
+      document.getElementById('sidebar-acct-input').value = Math.round(dryBal);
+    }
+  });
 
   // Risk controls
   const maxLoss = data.portfolio?.max_daily_loss_pct ?? 2;
@@ -5538,6 +5579,32 @@ async function loadCurrentSettings() {
 function updateSetting(path, value) {
   pendingChanges[path] = value;
   console.log('Pending change:', path, '=', value);
+}
+
+async function saveSidebarBalance() {
+  const val = parseFloat(document.getElementById('sidebar-acct-input').value);
+  const resultEl = document.getElementById('sidebar-acct-result');
+  if (!val || val <= 0) { resultEl.textContent = 'Invalid'; resultEl.style.color = 'var(--red)'; return; }
+  try {
+    const resp = await fetch('/api/account-size/save', {
+      method: 'POST',
+      headers: API_HEADERS,
+      body: JSON.stringify({account_size: val}),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      resultEl.textContent = 'Saved';
+      resultEl.style.color = 'var(--green)';
+      document.getElementById('sidebar-acct-balance').textContent = '$' + Number(val).toLocaleString();
+    } else {
+      resultEl.textContent = data.error || 'Failed';
+      resultEl.style.color = 'var(--red)';
+    }
+  } catch (e) {
+    resultEl.textContent = 'Error';
+    resultEl.style.color = 'var(--red)';
+  }
+  setTimeout(() => { resultEl.textContent = ''; }, 3000);
 }
 
 async function saveSettings() {

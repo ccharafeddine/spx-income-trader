@@ -158,11 +158,30 @@ class BacktestEngine:
             f"${self.initial_capital:,.0f} capital"
         )
 
-        for day_idx, trading_day in enumerate(trading_days):
-            self._process_day(trading_day)
+        # Suppress strategy module logging during backtest to avoid
+        # polluting the live trading log with thousands of entries
+        _suppressed_loggers = [
+            'src.core.pulse_detector',
+            'src.core.strategy',
+            'src.core.position_manager',
+            'src.core.portfolio_manager',
+            'src.core.bar_builder',
+        ]
+        _saved_levels = {}
+        for name in _suppressed_loggers:
+            lg = logging.getLogger(name)
+            _saved_levels[name] = lg.level
+            lg.setLevel(logging.CRITICAL)
 
-            if self.progress_callback:
-                self.progress_callback(day_idx + 1, total_days, trading_day)
+        try:
+            for day_idx, trading_day in enumerate(trading_days):
+                self._process_day(trading_day)
+
+                if self.progress_callback:
+                    self.progress_callback(day_idx + 1, total_days, trading_day)
+        finally:
+            for name, level in _saved_levels.items():
+                logging.getLogger(name).setLevel(level)
 
         logger.info(
             f"Backtest complete: {len(self.trades)} trades over {total_days} days"

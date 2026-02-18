@@ -3,13 +3,16 @@ Historical SPX Data Loader for Backtesting
 
 Loads historical 30-minute SPX bars from CSV or downloads them from
 Yahoo Finance. Also fetches daily VIX close for IV proxy in option pricing.
+
+When 30-minute data is unavailable (yfinance only provides ~60 days of
+intraday history), automatically falls back to daily bars and synthesizes
+realistic 30-minute bars that preserve daily OHLCV.
 """
 
 import logging
-import os
 from datetime import datetime, date, timedelta
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List
 
 import pandas as pd
 import pytz
@@ -18,9 +21,152 @@ logger = logging.getLogger(__name__)
 
 ET = pytz.timezone('America/New_York')
 
-# Default cache directory
-CACHE_DIR = Path(__file__).parent.parent.parent / 'database' / 'backtest_data'
 
+def _get_cache_dir() -> Path:
+    """Get cache directory, compatible with both source and packaged mode."""
+    try:
+        from src.utils.app_paths import DATA_DIR
+        cache = DATA_DIR / 'database' / 'backtest_data'
+    except ImportError:
+        cache = Path(__file__).parent.parent.parent / 'database' / 'backtest_data'
+    cache.mkdir(parents=True, exist_ok=True)
+    return cache
+
+
+# ---------- 30-min bar synthesis from daily data ----------
+
+# 13 bars per day: 9:30, 10:00, ..., 15:30
+_BAR_TIMES = [
+    '09:30', '10:00', '10:30', '11:00', '11:30', '12:00', '12:30',
+    '13:00', '13:30', '14:00', '14:30', '15:00', '15:30',
+]
+_N_BARS = len(_BAR_TIMES)
+
+# U-shaped volume weights (heavier at open/close)
+_VOL_WEIGHTS = [12, 10, 8, 7, 6, 6, 5, 5, 6, 7, 8, 10, 12]
+_VOL_TOTAL = sum(_VOL_WEIGHTS)
+
+# Keypoint positions for price path (indices into 14 boundary points)
+_IDX_EXTREME1 = 3   # ~10:30 (morning extreme)
+_IDX_EXTREME2 = 10  # ~14:00 (afternoon extreme)
+
+
+def _synthesize_30m_from_daily(daily_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Generate synthetic 30-minute bars from daily OHLCV data.
+
+    Creates 13 bars per trading day (9:30-15:30 ET).
+
+    Price path per day:
+      Bullish (close >= open): open -> dip near low -> rally near high -> close
+      Bearish (close < open):  open -> rally near high -> drop near low -> close
+
+    Extremes placed at ~10:30 and ~14:00 to approximate typical intraday
+    patterns. Each bar gets small wicks beyond its open-close range so
+    the pulse bar detector sees meaningful bar ranges.
+    """
+    rows = []
+
+    for dt_idx, daily in daily_df.iterrows():
+        day = dt_idx.date() if hasattr(dt_idx, 'date') else dt_idx
+        d_open = float(daily['open'])
+        d_high = float(daily['high'])
+        d_low = float(daily['low'])
+        d_close = float(daily['close'])
+        d_vol = int(daily.get('volume', 0) or 100000)
+        d_range = max(d_high - d_low, 0.01)
+
+        bullish = d_close >= d_open
+
+        # Build 4 keypoints: open, extreme1, extreme2, close
+        if bullish:
+            keypoints = [
+                (0, d_open),
+                (_IDX_EXTREME1, d_low + d_range * 0.05),
+                (_IDX_EXTREME2, d_high - d_range * 0.05),
+                (_N_BARS, d_close),
+            ]
+        else:
+            keypoints = [
+                (0, d_open),
+                (_IDX_EXTREME1, d_high - d_range * 0.05),
+                (_IDX_EXTREME2, d_low + d_range * 0.05),
+                (_N_BARS, d_close),
+            ]
+
+        # Piecewise linear interpolation -> 14 boundary prices
+        boundary = [0.0] * (_N_BARS + 1)
+        for seg in range(len(keypoints) - 1):
+            i1, p1 = keypoints[seg]
+            i2, p2 = keypoints[seg + 1]
+            for i in range(i1, i2 + 1):
+                t = (i - i1) / (i2 - i1) if i2 != i1 else 0
+                boundary[i] = p1 + t * (p2 - p1)
+
+        # Build bars from boundary prices
+        wick = d_range * 0.008  # small wicks for intra-bar range
+        for b in range(_N_BARS):
+            bar_o = boundary[b]
+            bar_c = boundary[b + 1]
+            bar_h = max(bar_o, bar_c) + wick
+            bar_l = min(bar_o, bar_c) - wick
+            # Clamp to daily extremes (allow tiny overshoot)
+            bar_h = min(bar_h, d_high + d_range * 0.001)
+            bar_l = max(bar_l, d_low - d_range * 0.001)
+
+            bar_dt = datetime.combine(
+                day, datetime.strptime(_BAR_TIMES[b], '%H:%M').time()
+            )
+            bar_dt = ET.localize(bar_dt)
+
+            rows.append({
+                'datetime': bar_dt,
+                'open': round(bar_o, 2),
+                'high': round(bar_h, 2),
+                'low': round(bar_l, 2),
+                'close': round(bar_c, 2),
+                'volume': int(d_vol * _VOL_WEIGHTS[b] / _VOL_TOTAL),
+            })
+
+    df = pd.DataFrame(rows).set_index('datetime')
+    logger.info(f"Synthesized {len(df)} 30-min bars from {len(daily_df)} daily bars")
+    return df
+
+
+def _download_daily_bars(
+    start_date: date,
+    end_date: date,
+    cache_dir: Path,
+) -> Path:
+    """Download daily SPX bars from Yahoo Finance (full history available)."""
+    import yfinance as yf
+
+    csv_path = cache_dir / f'spx_daily_{start_date}_{end_date}.csv'
+    if csv_path.exists():
+        logger.info(f"Using cached daily SPX data: {csv_path}")
+        return csv_path
+
+    logger.info(f"Downloading SPX daily bars: {start_date} to {end_date}")
+    data = yf.download(
+        '^GSPC',
+        start=str(start_date),
+        end=str(end_date + timedelta(days=1)),
+        interval='1d',
+        progress=False,
+    )
+
+    if data.empty:
+        raise ValueError(f"No SPX data available for {start_date} to {end_date}")
+
+    if hasattr(data.columns, 'nlevels') and data.columns.nlevels > 1:
+        data.columns = data.columns.get_level_values(0)
+
+    data.to_csv(csv_path)
+    logger.info(f"Saved {len(data)} daily bars to {csv_path}")
+    return csv_path
+
+
+# ---------- Public API ----------
 
 def download_spx_bars(
     start_date: date,
@@ -29,6 +175,10 @@ def download_spx_bars(
 ) -> Path:
     """
     Download historical SPX 30-minute bars from Yahoo Finance and save to CSV.
+
+    If intraday data is unavailable (yfinance only keeps ~60 days of 30-min
+    history), automatically falls back to downloading daily bars and
+    synthesizing 30-minute bars.
 
     Args:
         start_date: First date to download
@@ -40,7 +190,7 @@ def download_spx_bars(
     """
     import yfinance as yf
 
-    cache_dir = cache_dir or CACHE_DIR
+    cache_dir = cache_dir or _get_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     csv_path = cache_dir / f'spx_30m_{start_date}_{end_date}.csv'
@@ -79,16 +229,23 @@ def download_spx_bars(
 
         chunk_start = chunk_end.date() if isinstance(chunk_end, datetime) else chunk_end
 
-    if not all_frames:
-        raise ValueError(f"No SPX data available for {start_date} to {end_date}")
+    if all_frames:
+        df = pd.concat(all_frames)
+        df = df[~df.index.duplicated(keep='first')]
+        df = df.sort_index()
+        df.to_csv(csv_path)
+        logger.info(f"Saved {len(df)} 30-min bars to {csv_path}")
+        return csv_path
 
-    df = pd.concat(all_frames)
-    df = df[~df.index.duplicated(keep='first')]
-    df = df.sort_index()
+    # Fallback: download daily bars and synthesize 30-min bars
+    logger.info("30-min data unavailable from Yahoo Finance, falling back to daily bars")
+    daily_csv = _download_daily_bars(start_date, end_date, cache_dir)
+    daily_df = pd.read_csv(daily_csv, parse_dates=True, index_col=0)
+    daily_df.columns = [c.lower().strip() for c in daily_df.columns]
 
-    # Save with standard column names
-    df.to_csv(csv_path)
-    logger.info(f"Saved {len(df)} bars to {csv_path}")
+    synthetic = _synthesize_30m_from_daily(daily_df)
+    synthetic.to_csv(csv_path)
+    logger.info(f"Saved {len(synthetic)} synthetic 30-min bars to {csv_path}")
     return csv_path
 
 
@@ -105,7 +262,7 @@ def download_vix_daily(
     """
     import yfinance as yf
 
-    cache_dir = cache_dir or CACHE_DIR
+    cache_dir = cache_dir or _get_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     csv_path = cache_dir / f'vix_daily_{start_date}_{end_date}.csv'
@@ -159,6 +316,11 @@ def load_bars_from_csv(
 
     # Normalize column names to lowercase
     df.columns = [c.lower().strip() for c in df.columns]
+
+    # Ensure index is DatetimeIndex (may fail to auto-parse with tz offsets)
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index, utc=True)
+        df.index = df.index.tz_convert('America/New_York')
 
     # Ensure required columns exist
     required = {'open', 'high', 'low', 'close'}
