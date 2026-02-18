@@ -104,8 +104,19 @@ LOCKFILE = BASE_DIR / 'bot.lock'
 SIGNAL_LOG = BASE_DIR / 'logs' / 'signals.json'
 # Legacy path for backward compatibility with older dry-run logs
 _LEGACY_SIGNAL_LOG = BASE_DIR / 'logs' / 'dry_run_signals.json'
-STARTING_CAPITAL = 50000.00
 MIN_CREDIT_THRESHOLD = 1.00  # Signals below this were before safeguards
+
+
+def _get_starting_capital():
+    """Read account_size from YAML (not cached -- always fresh)."""
+    try:
+        if SETTINGS_FILE.exists():
+            with open(SETTINGS_FILE, 'r') as f:
+                settings = yaml.safe_load(f) or {}
+            return float(settings.get('portfolio', {}).get('account_size', 50000.0))
+    except Exception:
+        pass
+    return 50000.0
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -537,8 +548,10 @@ def _annotate_trade(trade):
         trade['flag_note'] = None
 
 
-def compute_account(conn, spx_price):
+def compute_account(conn, spx_price, starting_capital=None):
     """Compute account balance, realized/unrealized P&L."""
+    if starting_capital is None:
+        starting_capital = _get_starting_capital()
     open_positions, closed_trades = classify_trades(conn, spx_price)
     now = datetime.now(ET)
 
@@ -611,12 +624,12 @@ def compute_account(conn, spx_price):
         _annotate_trade(detail)
         position_details.append(detail)
 
-    current_balance = STARTING_CAPITAL + realized_pnl
-    total_return_pct = ((current_balance + unrealized_pnl - STARTING_CAPITAL)
-                        / STARTING_CAPITAL * 100)
+    current_balance = starting_capital + realized_pnl
+    total_return_pct = ((current_balance + unrealized_pnl - starting_capital)
+                        / starting_capital * 100) if starting_capital else 0
 
     return {
-        'starting_capital': STARTING_CAPITAL,
+        'starting_capital': starting_capital,
         'realized_pnl': round(realized_pnl, 2),
         'unrealized_pnl': round(unrealized_pnl, 2),
         'current_balance': round(current_balance, 2),
@@ -1275,10 +1288,11 @@ def api_status():
         account = compute_account(conn, spx_price)
         conn.close()
     except Exception:
+        _sc = _get_starting_capital()
         account = {
-            'starting_capital': STARTING_CAPITAL,
+            'starting_capital': _sc,
             'realized_pnl': 0, 'unrealized_pnl': 0,
-            'current_balance': STARTING_CAPITAL, 'total_equity': STARTING_CAPITAL,
+            'current_balance': _sc, 'total_equity': _sc,
             'total_return_pct': 0, 'daily_pnl': 0, 'positions': [],
             'closed_trades': [],
         }
@@ -2970,6 +2984,19 @@ def api_economic_events():
 # Trading Mode API
 # ---------------------------------------------------------------------------
 
+def _update_portfolio_yaml(updates: dict):
+    """Update specific portfolio fields in strategy_params.yaml."""
+    settings = {}
+    if SETTINGS_FILE.exists():
+        with open(SETTINGS_FILE, 'r') as f:
+            settings = yaml.safe_load(f) or {}
+    portfolio = settings.setdefault('portfolio', {})
+    portfolio.update(updates)
+    with open(SETTINGS_FILE, 'w') as f:
+        yaml.dump(settings, f, default_flow_style=False, sort_keys=False)
+    _notify_bot_settings_changed()
+
+
 @app.route('/api/settings/trading-mode', methods=['GET'])
 def api_get_trading_mode():
     """Get the current trading mode (dry-run or live)."""
@@ -3001,6 +3028,41 @@ def api_set_trading_mode():
             return jsonify({
                 'error': 'Cannot enable live trading without E*TRADE credentials configured.'
             }), 400
+
+    # Auto-switch account size based on mode
+    settings = _load_settings()
+    portfolio = settings.get('portfolio', {})
+    current_size = float(portfolio.get('account_size', 50000.0))
+
+    if mode == 'live':
+        # Save current balance as dry-run balance, fetch live balance from broker
+        try:
+            from src.brokers.broker_factory import get_broker
+            broker = get_broker(settings)
+            broker.connect()
+            balance_data = broker.get_account_balance()
+            live_balance = float(balance_data.get('net_account_value', 0))
+            if live_balance <= 0:
+                return jsonify({
+                    'error': 'Could not fetch account balance from broker. Cannot switch to live.'
+                }), 400
+            _update_portfolio_yaml({
+                'dry_run_account_size': current_size,
+                'account_size': live_balance,
+                'live_account_size': live_balance,
+            })
+        except Exception as e:
+            logger.warning(f"Failed to fetch live account balance: {e}")
+            return jsonify({
+                'error': f'Failed to fetch account balance from broker: {e}'
+            }), 400
+    else:
+        # Switching to dry-run: save current as live, restore dry-run balance
+        dry_run_size = float(portfolio.get('dry_run_account_size', current_size))
+        _update_portfolio_yaml({
+            'live_account_size': current_size,
+            'account_size': dry_run_size,
+        })
 
     if save_trading_mode(mode):
         return jsonify({
@@ -3166,28 +3228,14 @@ def api_validate_live():
                   + ('' if contracts_ok else ' (consider lowering for initial live trading)'),
     })
 
-    # --- Check 6: Account Size ---
-    config_size = portfolio_cfg.get('account_size', 50000)
-    if balance_data and balance_data.get('net_account_value'):
-        actual_size = balance_data['net_account_value']
-        diff_pct = abs(config_size - actual_size) / max(actual_size, 1) * 100
-        size_ok = diff_pct <= 10
-        checks.append({
-            'id': 'account_size',
-            'label': 'Account Size Matches Actual',
-            'severity': 'warning',
-            'passed': size_ok,
-            'detail': f'Config ${config_size:,.0f} vs actual ${actual_size:,.2f} ({diff_pct:.1f}% diff)'
-                      + ('' if size_ok else ' - risk sizing may be inaccurate'),
-        })
-    else:
-        checks.append({
-            'id': 'account_size',
-            'label': 'Account Size Matches Actual',
-            'severity': 'warning',
-            'passed': False,
-            'detail': 'Skipped - could not fetch actual account value',
-        })
+    # --- Check 6: Account Size Auto-Sync ---
+    checks.append({
+        'id': 'account_size',
+        'label': 'Account Size Auto-Sync',
+        'severity': 'warning',
+        'passed': True,
+        'detail': 'Account size will be set from broker balance on switch to live',
+    })
 
     can_proceed = all(c['passed'] for c in checks if c['severity'] == 'critical')
     all_passed = all(c['passed'] for c in checks)
@@ -3197,6 +3245,23 @@ def api_validate_live():
         'can_proceed': can_proceed,
         'all_passed': all_passed,
     })
+
+
+@app.route('/api/account-size/save', methods=['POST'])
+def api_save_account_size():
+    """Update the paper account balance (dry-run mode only)."""
+    data = request.get_json()
+    try:
+        new_size = float(data.get('account_size', 0))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'Invalid amount'}), 400
+    if new_size <= 0:
+        return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
+    mode = get_trading_mode()
+    if mode == 'live':
+        return jsonify({'success': False, 'error': 'Cannot edit account size in live mode'}), 400
+    _update_portfolio_yaml({'account_size': new_size, 'dry_run_account_size': new_size})
+    return jsonify({'success': True})
 
 
 # ---------------------------------------------------------------------------

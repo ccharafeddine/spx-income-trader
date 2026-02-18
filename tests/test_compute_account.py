@@ -18,8 +18,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 ET = pytz.timezone('US/Eastern')
 
 from dashboard.app import (
-    compute_account, _annotate_trade, STARTING_CAPITAL, MIN_CREDIT_THRESHOLD
+    compute_account, _annotate_trade, MIN_CREDIT_THRESHOLD
 )
+
+STARTING_CAPITAL = 50000.0  # Default for tests; compute_account reads from YAML
 
 
 def _make_trade(trade_id, credit, pnl, status='closed', entry_time='2026-02-03T10:00:00',
@@ -48,7 +50,7 @@ def _run_compute(trades, spx_price=6050.0):
     with patch('dashboard.app.classify_trades') as mock_classify:
         mock_classify.return_value = ([], trades)
         conn = MagicMock()
-        return compute_account(conn, spx_price)
+        return compute_account(conn, spx_price, starting_capital=STARTING_CAPITAL)
 
 
 class TestFlaggedTradeExclusion:

@@ -377,14 +377,11 @@ class PDTTracker:
 
     def get_next_slot_frees_on(self, from_date: Optional[date] = None) -> Optional[date]:
         """
-        Get the date when the next day trade slot will free up.
+        Get the date when the oldest day trade exits the rolling window.
 
         Returns:
-            Date when oldest day trade exits the rolling window, or None if slots available
+            Date when oldest day trade drops off, or None if no trades in window
         """
-        if self.get_remaining_day_trades(from_date) > 0:
-            return None
-
         trades = self.get_day_trades_in_window(from_date)
         if not trades:
             return None

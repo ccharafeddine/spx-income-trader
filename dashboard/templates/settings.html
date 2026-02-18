@@ -717,6 +717,48 @@ header {
     <div id="trading-mode-result"></div>
   </div>
 
+  <!-- Position Sizing -->
+  <div class="panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">Position Sizing</div>
+        <div class="panel-subtitle">Contract limits and account balance settings</div>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="max-contracts">Max Contracts (Global)</label>
+      <input type="number" class="form-input" id="max-contracts"
+             min="1" max="20" step="1" style="max-width: 120px;">
+    </div>
+    <div style="font-size: 12px; color: var(--text-dim); margin-bottom: 16px;">
+      Recommended: 1-2 for accounts under $25k, 3-5 for $25k-$100k, 5-10 for $100k+
+    </div>
+    <button type="button" class="btn btn-primary" onclick="saveMaxContracts()">Save Max Contracts</button>
+    <div id="max-contracts-result" style="margin-top: 8px; font-size: 13px; display: none;"></div>
+
+    <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.06);">
+      <div style="font-weight: 600; color: var(--text); margin-bottom: 8px;">Account Balances</div>
+      <div style="font-size: 13px; color: var(--text-dim); margin-bottom: 12px;">
+        Dry-Run: <strong id="sz-dry-balance">-</strong> &nbsp;|&nbsp;
+        Live: <strong id="sz-live-balance">-</strong>
+      </div>
+
+      <div id="acct-size-edit" style="display: none;">
+        <div class="form-group">
+          <label class="form-label" for="acct-size-input">Paper Account Balance</label>
+          <input type="number" class="form-input" id="acct-size-input"
+                 min="100" step="100" style="max-width: 200px;">
+        </div>
+        <button type="button" class="btn" onclick="saveDryRunBalance()">Update Balance</button>
+        <div id="acct-size-result" style="margin-top: 8px; font-size: 13px; display: none;"></div>
+      </div>
+      <div id="acct-size-readonly" style="display: none; font-size: 12px; color: var(--text-dim);">
+        Live account balance is fetched from your broker automatically.
+      </div>
+    </div>
+  </div>
+
   <!-- Active Broker -->
   <div class="panel">
     <div class="panel-header">
@@ -1350,6 +1392,7 @@ async function saveTradingMode() {
       resultDiv.style.display = 'block';
       updateTradingModeBadge(selectedMode);
       hideValidationPanel();
+      loadPositionSizing();
     } else {
       resultDiv.className = 'error';
       resultDiv.textContent = data.error || 'Failed to save trading mode.';
@@ -1378,7 +1421,7 @@ const VALIDATION_CHECKS = [
   {id: 'connection', label: 'E*TRADE API Connection'},
   {id: 'options', label: 'SPX Options Permissions'},
   {id: 'contracts', label: 'Max Contracts Setting'},
-  {id: 'account_size', label: 'Account Size Matches Actual'},
+  {id: 'account_size', label: 'Account Size Auto-Sync'},
 ];
 
 function renderPendingChecks() {
@@ -1486,6 +1529,103 @@ document.getElementById('cancel-validation-btn').addEventListener('click', () =>
 });
 
 loadTradingMode();
+
+// ---------------------------------------------------------------------------
+// Position Sizing
+// ---------------------------------------------------------------------------
+
+async function loadPositionSizing() {
+  try {
+    const resp = await fetch('/api/settings');
+    const settings = await resp.json();
+    const portfolio = settings.portfolio || {};
+    const sizing = portfolio.position_sizing || {};
+
+    document.getElementById('max-contracts').value = sizing.max_contracts || 20;
+
+    const dryBal = portfolio.dry_run_account_size || portfolio.account_size || 50000;
+    const liveBal = portfolio.live_account_size || 0;
+    document.getElementById('sz-dry-balance').textContent = '$' + Number(dryBal).toLocaleString();
+    document.getElementById('sz-live-balance').textContent = liveBal > 0
+      ? '$' + Number(liveBal).toLocaleString() : 'Not fetched';
+
+    const modeResp = await fetch('/api/settings/trading-mode');
+    const modeData = await modeResp.json();
+    if (modeData.mode === 'live') {
+      document.getElementById('acct-size-readonly').style.display = '';
+      document.getElementById('acct-size-edit').style.display = 'none';
+    } else {
+      document.getElementById('acct-size-edit').style.display = '';
+      document.getElementById('acct-size-readonly').style.display = 'none';
+      document.getElementById('acct-size-input').value = Math.round(dryBal);
+    }
+  } catch (error) {
+    console.error('Failed to load position sizing:', error);
+  }
+}
+
+async function saveMaxContracts() {
+  const val = parseInt(document.getElementById('max-contracts').value, 10);
+  const resultDiv = document.getElementById('max-contracts-result');
+  if (!val || val < 1 || val > 20) {
+    resultDiv.className = 'error';
+    resultDiv.textContent = 'Must be between 1 and 20';
+    resultDiv.style.display = 'block';
+    return;
+  }
+  try {
+    const response = await fetch('/api/settings', {
+      method: 'POST',
+      headers: API_HEADERS,
+      body: JSON.stringify({'portfolio.position_sizing.max_contracts': val}),
+    });
+    const data = await response.json();
+    if (data.success) {
+      resultDiv.className = 'success';
+      resultDiv.textContent = 'Max contracts saved.';
+    } else {
+      resultDiv.className = 'error';
+      resultDiv.textContent = data.error || 'Failed to save.';
+    }
+  } catch (error) {
+    resultDiv.className = 'error';
+    resultDiv.textContent = 'Error: ' + error.message;
+  }
+  resultDiv.style.display = 'block';
+}
+
+async function saveDryRunBalance() {
+  const val = parseFloat(document.getElementById('acct-size-input').value);
+  const resultDiv = document.getElementById('acct-size-result');
+  if (!val || val <= 0) {
+    resultDiv.className = 'error';
+    resultDiv.textContent = 'Enter a valid amount.';
+    resultDiv.style.display = 'block';
+    return;
+  }
+  try {
+    const response = await fetch('/api/account-size/save', {
+      method: 'POST',
+      headers: API_HEADERS,
+      body: JSON.stringify({account_size: val}),
+    });
+    const data = await response.json();
+    if (data.success) {
+      resultDiv.className = 'success';
+      resultDiv.textContent = 'Paper balance updated.';
+      loadPositionSizing();
+    } else {
+      resultDiv.className = 'error';
+      resultDiv.textContent = data.error || 'Failed to save.';
+    }
+  } catch (error) {
+    resultDiv.className = 'error';
+    resultDiv.textContent = 'Error: ' + error.message;
+  }
+  resultDiv.style.display = 'block';
+}
+
+loadPositionSizing();
 
 // Test connection
 document.getElementById('test-connection-btn').addEventListener('click', async () => {

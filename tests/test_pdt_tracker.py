@@ -172,14 +172,19 @@ class TestRollingWindowCounting:
         assert tracker.get_day_trades_count() == 1  # Only new_trade counts
 
     def test_window_boundary_trade_counted(self, tracker):
-        """Trade exactly at window start should be counted."""
-        today = date.today()
-        window_start = get_rolling_window_start(5, today)
+        """Trade exactly at window start should be counted.
+
+        Uses a fixed reference date and passes it explicitly to avoid
+        date.today() vs datetime.now(ET).date() timezone divergence
+        when tests run late at night.
+        """
+        ref_date = date(2026, 2, 4)  # A known Wednesday, no holidays nearby
+        window_start = get_rolling_window_start(5, ref_date)
 
         tracker.record_day_trade('boundary_trade', window_start, 'profit_target')
-        tracker.record_day_trade('today_trade', today, 'profit_target')
+        tracker.record_day_trade('today_trade', ref_date, 'profit_target')
 
-        assert tracker.get_day_trades_count() == 2
+        assert tracker.get_day_trades_count(from_date=ref_date) == 2
 
 
 # ============================================================================
@@ -589,27 +594,37 @@ class TestPDTStatus:
 class TestNextSlotFreesOn:
     """Test calculation of when next slot becomes available."""
 
-    def test_slots_available_returns_none(self, tracker):
-        """If slots available, next_slot_frees_on should be None."""
+    def test_no_trades_returns_none(self, tracker):
+        """If no trades in window, next_slot_frees_on should be None."""
         assert tracker.get_next_slot_frees_on() is None
 
     def test_at_limit_returns_date(self, tracker):
         """At limit, should return date when oldest trade drops off."""
-        today = date.today()
-        yesterday = today - timedelta(days=1)
-        if not is_business_day(yesterday):
-            yesterday = get_business_days_ago(1, today)
+        ref_date = date(2026, 2, 4)  # Wednesday
+        yesterday = get_business_days_ago(1, ref_date)  # Tuesday Feb 3
 
         # Fill all slots with oldest on yesterday
         tracker.record_day_trade('t1', yesterday, 'profit_target')
-        tracker.record_day_trade('t2', today, 'profit_target')
-        tracker.record_day_trade('t3', today, 'profit_target')
+        tracker.record_day_trade('t2', ref_date, 'profit_target')
+        tracker.record_day_trade('t3', ref_date, 'profit_target')
 
-        next_free = tracker.get_next_slot_frees_on()
+        next_free = tracker.get_next_slot_frees_on(from_date=ref_date)
 
-        # Should be 5 business days after the oldest trade
+        # Should be 5 business days after the oldest trade (Feb 3)
+        # Feb 4(1), Feb 5(2), Feb 6(3), Feb 9(4), Feb 10(5) -> frees Feb 10
         assert next_free is not None
-        # The oldest trade (yesterday) should exit window after 5 business days
+        assert next_free == date(2026, 2, 10)
+
+    def test_with_slots_available_returns_date(self, tracker):
+        """With trades in window but slots remaining, should still return aging date."""
+        ref_date = date(2026, 2, 4)  # Wednesday
+        tracker.record_day_trade('t1', ref_date, 'profit_target')
+
+        # 1/3 used, 2 remaining, but should still show when t1 ages off
+        next_free = tracker.get_next_slot_frees_on(from_date=ref_date)
+        assert next_free is not None
+        # Feb 5(1), Feb 6(2), Feb 9(3), Feb 10(4), Feb 11(5) -> frees Feb 11
+        assert next_free == date(2026, 2, 11)
 
 
 # ============================================================================

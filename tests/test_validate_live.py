@@ -215,7 +215,7 @@ def test_warnings_only_allows_proceed(mock_settings, mock_creds, client):
     # Verify specific warnings
     assert _find_check(data, 'environment')['passed'] is False
     assert _find_check(data, 'contracts')['passed'] is False
-    assert _find_check(data, 'account_size')['passed'] is False
+    assert _find_check(data, 'account_size')['passed'] is True
 
 
 # --------------------------------------------------------------------------

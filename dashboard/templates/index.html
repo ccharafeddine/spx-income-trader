@@ -2454,7 +2454,7 @@ header::after {
   <div class="account-bar" id="account-bar">
     <div class="acct-item">
       <div class="val big" id="acct-equity">$50,000.00</div>
-      <div class="lbl">Total Equity</div>
+      <div class="lbl" id="acct-equity-label">Total Equity</div>
     </div>
     <div class="acct-divider"></div>
     <div class="acct-item">
@@ -3411,6 +3411,13 @@ async function updateStatus() {
     const eqEl = document.getElementById('acct-equity');
     eqEl.textContent = fmt$(a.total_equity);
     eqEl.className = 'val big ' + colorClass(a.total_equity - a.starting_capital);
+
+    const eqLabel = document.getElementById('acct-equity-label');
+    if (d.mode === 'LIVE') {
+      eqLabel.textContent = 'Total Equity (Live)';
+    } else {
+      eqLabel.textContent = 'Total Equity (Paper)';
+    }
 
     document.getElementById('acct-balance').textContent = fmt$(a.current_balance);
 

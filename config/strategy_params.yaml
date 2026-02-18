@@ -15,7 +15,9 @@ broker:
 # Coordinates all parallel strategies
 # ============================================
 portfolio:
-  account_size: 50000.0        # Starting account size for risk calculations
+  account_size: 50000.0        # Active balance (auto-switched by mode)
+  dry_run_account_size: 50000.0  # Preserved dry-run simulated balance
+  live_account_size: 0.0         # Last known live balance (0 = not yet fetched)
   max_total_positions: 2       # Max concurrent positions (1 daily 0DTE + 1 swing)
   max_0dte_positions: 1        # Max same-day expiration positions (DI/ORB/B&B share slot)
   max_daily_risk_pct: 5.0      # Max % of account at risk at any time
