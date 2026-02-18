@@ -4243,6 +4243,14 @@ function switchTab(tabId) {
   if (tabId === 'journal') updateJournal();
   if (tabId === 'logs') updateLogs();
   if (tabId === 'backtest') loadBacktestHistory();
+
+  // Purge Plotly charts when leaving Backtest tab to free memory
+  if (tabId !== 'backtest') {
+    ['bt-equity-chart', 'bt-drawdown-chart', 'bt-dow-chart'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && el.data) Plotly.purge(el);
+    });
+  }
 }
 
 // ---------------------------------------------------------------

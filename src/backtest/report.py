@@ -11,6 +11,15 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 
 
+def _downsample(data: list, max_points: int) -> list:
+    """Evenly downsample a list, always keeping first and last elements."""
+    if len(data) <= max_points:
+        return data
+    step = (len(data) - 1) / (max_points - 1)
+    indices = [round(i * step) for i in range(max_points)]
+    return [data[i] for i in indices]
+
+
 def generate_report(
     results: Dict,
     risk_free_rate: float = 0.045,
@@ -48,12 +57,16 @@ def generate_report(
     report['by_vix_regime'] = _compute_by_vix_regime(trades)
     report['by_strategy'] = _compute_by_strategy(trades)
 
-    # Chart data
-    report['equity_curve'] = equity_curve
-    report['drawdown_series'] = _compute_drawdown_series(equity_curve, initial_capital)
+    # Chart data (downsample for large backtests to keep UI responsive)
+    ec_sampled = _downsample(equity_curve, 300)
+    dd_series = _compute_drawdown_series(equity_curve, initial_capital)
+    dd_sampled = _downsample(dd_series, 300)
+
+    report['equity_curve'] = ec_sampled
+    report['drawdown_series'] = dd_sampled
     report['daily_pnl_series'] = [
         {'date': d['date'], 'pnl': d['daily_pnl']}
-        for d in equity_curve
+        for d in ec_sampled
     ]
 
     # Summary
