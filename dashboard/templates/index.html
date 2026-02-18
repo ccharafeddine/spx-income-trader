@@ -2531,6 +2531,7 @@ header::after {
   <div class="tab-bar" role="tablist">
     <button class="tab-btn active" role="tab" aria-selected="true" onclick="switchTab('overview')">Overview</button>
     <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('journal')">Trade Journal</button>
+    <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('analytics')">Analytics</button>
     <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('logs')">Logs</button>
     <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('backtest')">Backtest</button>
   </div>
@@ -2859,6 +2860,90 @@ header::after {
       <div class="empty">Loading logs...</div>
     </div>
   </div><!-- /tab-logs -->
+
+  <!-- TAB: ANALYTICS -->
+  <div id="tab-analytics" class="tab-content" role="tabpanel">
+
+    <!-- Source toggle -->
+    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+      <label style="font-size: 12px; color: var(--text-dim);">Data Source:</label>
+      <select id="an-source" onchange="loadAnalytics()" style="background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; font-size: 12px; min-width: 200px;">
+        <option value="live">Live Trades</option>
+      </select>
+      <span id="an-date-range" style="font-size: 11px; color: var(--text-dim); margin-left: auto;"></span>
+    </div>
+
+    <!-- Loading / empty states -->
+    <div id="an-loading" style="display: none; text-align: center; padding: 40px; color: var(--text-dim);">Loading analytics...</div>
+    <div id="an-empty" style="display: none; text-align: center; padding: 60px 20px; color: var(--text-dim);">
+      <div style="font-size: 18px; margin-bottom: 8px;">No Trade Data</div>
+      <div style="font-size: 13px;">Complete some trades to see performance analytics.</div>
+    </div>
+
+    <div id="an-content" style="display: none;">
+      <!-- Metrics cards -->
+      <div id="an-metrics-cards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px;"></div>
+
+      <!-- Equity curve -->
+      <div class="panel" style="padding: 12px; margin-bottom: 16px;">
+        <div class="panel-title" style="margin-bottom: 8px;">Equity Curve</div>
+        <div id="an-equity-chart" style="height: 300px;"></div>
+      </div>
+
+      <!-- Drawdown -->
+      <div class="panel" style="padding: 12px; margin-bottom: 16px;">
+        <div class="panel-title" style="margin-bottom: 8px;">Drawdown</div>
+        <div id="an-drawdown-chart" style="height: 180px;"></div>
+      </div>
+
+      <!-- Monthly + Distribution -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+        <div class="panel" style="padding: 12px;">
+          <div class="panel-title" style="margin-bottom: 8px;">Monthly Returns</div>
+          <div id="an-monthly-table" style="font-size: 12px; overflow-x: auto;"></div>
+        </div>
+        <div class="panel" style="padding: 12px;">
+          <div class="panel-title" style="margin-bottom: 8px;">P&L Distribution</div>
+          <div id="an-dist-chart" style="height: 250px;"></div>
+        </div>
+      </div>
+
+      <!-- DOW + Time + VIX -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+        <div class="panel" style="padding: 12px;">
+          <div class="panel-title" style="margin-bottom: 8px;">Win Rate by Day</div>
+          <div id="an-dow-chart" style="height: 250px;"></div>
+        </div>
+        <div class="panel" style="padding: 12px;">
+          <div class="panel-title" style="margin-bottom: 8px;">Win Rate by Time</div>
+          <div id="an-time-chart" style="height: 250px;"></div>
+        </div>
+        <div class="panel" style="padding: 12px;">
+          <div class="panel-title" style="margin-bottom: 8px;">Win Rate by VIX</div>
+          <div id="an-vix-chart" style="height: 250px;"></div>
+        </div>
+      </div>
+
+      <!-- Strategy + Direction tables -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+        <div class="panel" style="padding: 12px;">
+          <div class="panel-title" style="margin-bottom: 8px;">By Strategy</div>
+          <div id="an-strategy-table" style="font-size: 12px;"></div>
+        </div>
+        <div class="panel" style="padding: 12px;">
+          <div class="panel-title" style="margin-bottom: 8px;">By Direction</div>
+          <div id="an-direction-table" style="font-size: 12px;"></div>
+        </div>
+      </div>
+
+      <!-- Rolling metrics -->
+      <div class="panel" style="padding: 12px; margin-bottom: 16px;">
+        <div class="panel-title" style="margin-bottom: 8px;">Rolling Win Rate</div>
+        <div id="an-rolling-chart" style="height: 250px;"></div>
+      </div>
+    </div>
+
+  </div><!-- /tab-analytics -->
 
   <!-- TAB: BACKTEST -->
   <div id="tab-backtest" class="tab-content" role="tabpanel">
@@ -4232,6 +4317,7 @@ function switchTab(tabId) {
     const isActive = btn.textContent.toLowerCase().replace(/\s/g, '') === tabId ||
       (tabId === 'overview' && btn.textContent === 'Overview') ||
       (tabId === 'journal' && btn.textContent === 'Trade Journal') ||
+      (tabId === 'analytics' && btn.textContent === 'Analytics') ||
       (tabId === 'logs' && btn.textContent === 'Logs') ||
       (tabId === 'backtest' && btn.textContent === 'Backtest');
     btn.classList.toggle('active', isActive);
@@ -4241,12 +4327,21 @@ function switchTab(tabId) {
     el.classList.toggle('active', el.id === 'tab-' + tabId);
   });
   if (tabId === 'journal') updateJournal();
+  if (tabId === 'analytics') loadAnalytics();
   if (tabId === 'logs') updateLogs();
   if (tabId === 'backtest') loadBacktestHistory();
 
-  // Purge Plotly charts when leaving Backtest tab to free memory
+  // Purge Plotly charts when leaving tabs to free memory
   if (tabId !== 'backtest') {
     ['bt-equity-chart', 'bt-drawdown-chart', 'bt-dow-chart'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && el.data) Plotly.purge(el);
+    });
+  }
+  if (tabId !== 'analytics') {
+    ['an-equity-chart', 'an-drawdown-chart', 'an-dow-chart', 'an-vix-chart',
+     'an-strategy-chart', 'an-time-chart', 'an-direction-chart', 'an-dist-chart',
+     'an-rolling-chart'].forEach(id => {
       const el = document.getElementById(id);
       if (el && el.data) Plotly.purge(el);
     });
@@ -5685,6 +5780,260 @@ document.addEventListener('keydown', function(e) {
     }
   }
 });
+
+// ---------------------------------------------------------------
+// Analytics Tab
+// ---------------------------------------------------------------
+let analyticsSourcesLoaded = false;
+
+async function loadAnalyticsSourceOptions() {
+  if (analyticsSourcesLoaded) return;
+  analyticsSourcesLoaded = true;
+  try {
+    const resp = await fetchJSON('/api/backtest/history');
+    if (resp && resp.runs && resp.runs.length) {
+      const sel = document.getElementById('an-source');
+      resp.runs.forEach(run => {
+        const opt = document.createElement('option');
+        opt.value = 'backtest:' + run.id;
+        const label = (run.params && run.params.start_date ? run.params.start_date.slice(0,10) : run.started_at.slice(0,10));
+        opt.textContent = 'Backtest: ' + label + ' (' + run.total_trades + ' trades)';
+        sel.appendChild(opt);
+      });
+    }
+  } catch(e) { /* ignore */ }
+}
+
+async function loadAnalytics() {
+  loadAnalyticsSourceOptions();
+
+  const sourceVal = document.getElementById('an-source').value;
+  let url = '/api/analytics?source=live';
+  if (sourceVal.startsWith('backtest:')) {
+    const runId = sourceVal.split(':')[1];
+    url = '/api/analytics?source=backtest&run_id=' + runId;
+  }
+
+  document.getElementById('an-loading').style.display = 'block';
+  document.getElementById('an-empty').style.display = 'none';
+  document.getElementById('an-content').style.display = 'none';
+
+  const data = await fetchJSON(url);
+
+  document.getElementById('an-loading').style.display = 'none';
+
+  if (!data || !data.success || !data.trade_count) {
+    document.getElementById('an-empty').style.display = 'block';
+    return;
+  }
+
+  document.getElementById('an-content').style.display = 'block';
+
+  // Date range
+  const dr = data.date_range || {};
+  if (dr.start && dr.end) {
+    document.getElementById('an-date-range').textContent = dr.start + ' to ' + dr.end + '  |  ' + data.trade_count + ' trades';
+  }
+
+  renderAnMetrics(data);
+  renderAnEquityCurve(data.equity_curve || []);
+  renderAnDrawdown(data.drawdown_series || []);
+  renderAnMonthly(data.monthly_returns || []);
+  renderAnDistribution(data.pnl_distribution || []);
+  renderAnDow(data.by_day_of_week || []);
+  renderAnTime(data.by_time_bucket || []);
+  renderAnVix(data.by_vix_regime || []);
+  renderAnBreakdownTable('an-strategy-table', data.by_strategy || [], 'strategy');
+  renderAnBreakdownTable('an-direction-table', data.by_direction || [], 'direction');
+  renderAnRolling(data.rolling || {});
+}
+
+function renderAnMetrics(data) {
+  const core = data.core || {};
+  const tm = data.trade_metrics || {};
+  const cards = [
+    {label: 'Total P&L', value: '$' + (core.total_return_dollar||0).toLocaleString(undefined,{minimumFractionDigits:2}), color: core.total_return_dollar >= 0 ? 'var(--green)' : 'var(--red)'},
+    {label: 'Win Rate', value: (tm.win_rate||0).toFixed(1) + '%', color: tm.win_rate >= 50 ? 'var(--green)' : 'var(--amber)'},
+    {label: 'Profit Factor', value: (tm.profit_factor||0).toFixed(2), color: tm.profit_factor >= 1 ? 'var(--green)' : 'var(--red)'},
+    {label: 'Sharpe Ratio', value: (core.sharpe_ratio||0).toFixed(3), color: core.sharpe_ratio >= 1 ? 'var(--green)' : 'var(--text)'},
+    {label: 'Sortino Ratio', value: (core.sortino_ratio||0).toFixed(3), color: core.sortino_ratio >= 1 ? 'var(--green)' : 'var(--text)'},
+    {label: 'Max Drawdown', value: (core.max_drawdown_pct||0).toFixed(2) + '%', color: 'var(--red)'},
+    {label: 'Avg Win / Loss', value: '$' + Math.abs(tm.avg_win||0).toFixed(0) + ' / $' + Math.abs(tm.avg_loss||0).toFixed(0), color: 'var(--text)'},
+    {label: 'Total Trades', value: tm.total_trades||0, color: 'var(--text)'},
+  ];
+  const container = document.getElementById('an-metrics-cards');
+  container.innerHTML = cards.map(c => `
+    <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; text-align: center;">
+      <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 4px;">${c.label}</div>
+      <div style="font-size: 18px; font-weight: 700; font-family: var(--font-mono); color: ${c.color};">${c.value}</div>
+    </div>
+  `).join('');
+}
+
+const AN_LAYOUT = {
+  margin: {t: 10, b: 30, l: 60, r: 20},
+  paper_bgcolor: 'transparent',
+  plot_bgcolor: 'transparent',
+  xaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}},
+  yaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}},
+  font: {family: 'DM Sans'},
+};
+const AN_CFG = {responsive: true, displayModeBar: false};
+
+function renderAnEquityCurve(ec) {
+  if (!ec.length) return;
+  Plotly.newPlot('an-equity-chart', [{
+    x: ec.map(e => e.date),
+    y: ec.map(e => e.equity),
+    type: 'scatter', mode: 'lines',
+    line: {color: '#10b981', width: 2},
+    fill: 'tozeroy',
+    fillcolor: 'rgba(16,185,129,0.08)',
+  }], {...AN_LAYOUT, yaxis: {...AN_LAYOUT.yaxis, tickprefix: '$'}}, AN_CFG);
+}
+
+function renderAnDrawdown(dd) {
+  if (!dd.length) return;
+  Plotly.newPlot('an-drawdown-chart', [{
+    x: dd.map(d => d.date),
+    y: dd.map(d => -d.drawdown_pct),
+    type: 'scatter', mode: 'lines',
+    line: {color: '#ef4444', width: 1.5},
+    fill: 'tozeroy',
+    fillcolor: 'rgba(239,68,68,0.1)',
+  }], {...AN_LAYOUT, yaxis: {...AN_LAYOUT.yaxis, ticksuffix: '%'}}, AN_CFG);
+}
+
+function renderAnMonthly(monthly) {
+  const container = document.getElementById('an-monthly-table');
+  if (!monthly.length) {
+    container.innerHTML = '<span style="color:var(--text-dim)">No data</span>';
+    return;
+  }
+
+  // Build year x month grid
+  const monthNames = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const byYear = {};
+  let yearTotals = {};
+  for (const m of monthly) {
+    if (!byYear[m.year]) { byYear[m.year] = {}; yearTotals[m.year] = 0; }
+    byYear[m.year][m.month] = m;
+    yearTotals[m.year] += m.return_pct;
+  }
+
+  const years = Object.keys(byYear).sort();
+  let html = '<table style="width:100%;border-collapse:collapse;">';
+  html += '<tr style="border-bottom:1px solid var(--border);">';
+  html += '<th style="text-align:left;padding:4px;font-size:11px;">Year</th>';
+  for (let i = 1; i <= 12; i++) html += '<th style="text-align:center;padding:4px;font-size:10px;">' + monthNames[i] + '</th>';
+  html += '<th style="text-align:center;padding:4px;font-size:10px;font-weight:700;">YTD</th>';
+  html += '</tr>';
+
+  for (const yr of years) {
+    html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
+    html += '<td style="padding:3px 4px;font-weight:600;">' + yr + '</td>';
+    for (let i = 1; i <= 12; i++) {
+      const m = byYear[yr][i];
+      if (m) {
+        const pct = m.return_pct;
+        const intensity = Math.min(Math.abs(pct) / 5, 1);
+        const bg = pct >= 0
+          ? 'rgba(16,185,129,' + (intensity * 0.4) + ')'
+          : 'rgba(239,68,68,' + (intensity * 0.4) + ')';
+        const color = pct >= 0 ? 'var(--green)' : 'var(--red)';
+        html += '<td style="text-align:center;padding:3px 2px;background:' + bg + ';border-radius:3px;color:' + color + ';font-family:var(--font-mono);font-size:10px;">' + pct.toFixed(1) + '%</td>';
+      } else {
+        html += '<td style="text-align:center;padding:3px 2px;color:var(--text-dim);font-size:10px;"></td>';
+      }
+    }
+    const ytd = yearTotals[yr];
+    const ytdColor = ytd >= 0 ? 'var(--green)' : 'var(--red)';
+    html += '<td style="text-align:center;padding:3px 4px;font-weight:700;color:' + ytdColor + ';font-family:var(--font-mono);font-size:10px;">' + ytd.toFixed(1) + '%</td>';
+    html += '</tr>';
+  }
+  html += '</table>';
+  container.innerHTML = html;
+}
+
+function renderAnDistribution(pnls) {
+  if (!pnls.length) return;
+  const wins = pnls.filter(p => p > 0);
+  const losses = pnls.filter(p => p <= 0);
+  const traces = [];
+  if (wins.length) traces.push({x: wins, type: 'histogram', marker: {color: 'rgba(16,185,129,0.7)'}, name: 'Wins', opacity: 0.8});
+  if (losses.length) traces.push({x: losses, type: 'histogram', marker: {color: 'rgba(239,68,68,0.7)'}, name: 'Losses', opacity: 0.8});
+  Plotly.newPlot('an-dist-chart', traces, {
+    ...AN_LAYOUT,
+    barmode: 'overlay',
+    xaxis: {...AN_LAYOUT.xaxis, tickprefix: '$', title: {text: 'P&L per Trade', font: {size: 10, color: '#6b7280'}}},
+    yaxis: {...AN_LAYOUT.yaxis, title: {text: 'Count', font: {size: 10, color: '#6b7280'}}},
+    showlegend: true,
+    legend: {font: {size: 10, color: '#6b7280'}, x: 1, xanchor: 'right', y: 1},
+  }, AN_CFG);
+}
+
+function _renderAnBarChart(elId, items, labelKey, options) {
+  const filtered = items.filter(d => d.total > 0);
+  if (!filtered.length) return;
+  Plotly.newPlot(elId, [{
+    x: filtered.map(d => d[labelKey]),
+    y: filtered.map(d => d.win_rate),
+    type: 'bar',
+    marker: {color: filtered.map(d => d.win_rate >= 50 ? '#10b981' : '#f59e0b')},
+    text: filtered.map(d => d.win_rate.toFixed(1) + '%'),
+    textposition: 'outside',
+    textfont: {size: 10, color: '#d1d5db'},
+  }], {
+    ...AN_LAYOUT,
+    margin: {t: 10, b: 40, l: 40, r: 20},
+    yaxis: {...AN_LAYOUT.yaxis, ticksuffix: '%', range: [0, 100]},
+  }, AN_CFG);
+}
+
+function renderAnDow(data) { _renderAnBarChart('an-dow-chart', data, 'day'); }
+function renderAnVix(data) { _renderAnBarChart('an-vix-chart', data, 'regime'); }
+function renderAnTime(data) { _renderAnBarChart('an-time-chart', data, 'bucket'); }
+
+function renderAnBreakdownTable(containerId, data, nameKey) {
+  const container = document.getElementById(containerId);
+  if (!data.length) {
+    container.innerHTML = '<span style="color:var(--text-dim)">No data</span>';
+    return;
+  }
+  let html = '<table style="width:100%;border-collapse:collapse;">';
+  html += '<tr style="border-bottom:1px solid var(--border);">';
+  html += '<th style="text-align:left;padding:4px;">Name</th><th style="text-align:center;">Trades</th><th style="text-align:center;">Wins</th><th style="text-align:center;">Win Rate</th><th style="text-align:right;padding-right:4px;">Total P&L</th>';
+  html += '</tr>';
+  for (const row of data) {
+    const name = row[nameKey] || 'Unknown';
+    const pnlColor = row.total_pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    const wrColor = row.win_rate >= 50 ? 'var(--green)' : 'var(--amber)';
+    html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
+    html += '<td style="padding:4px;">' + name + '</td>';
+    html += '<td style="text-align:center;">' + row.total + '</td>';
+    html += '<td style="text-align:center;">' + row.wins + '</td>';
+    html += '<td style="text-align:center;color:' + wrColor + ';font-family:var(--font-mono);">' + row.win_rate.toFixed(1) + '%</td>';
+    html += '<td style="text-align:right;padding-right:4px;color:' + pnlColor + ';font-family:var(--font-mono);">$' + row.total_pnl.toLocaleString(undefined,{minimumFractionDigits:2}) + '</td>';
+    html += '</tr>';
+  }
+  html += '</table>';
+  container.innerHTML = html;
+}
+
+function renderAnRolling(rolling) {
+  if (!rolling.dates || !rolling.dates.length) return;
+  const traces = [
+    {x: rolling.dates, y: rolling.win_rate_7d, type: 'scatter', mode: 'lines', name: '7-day', line: {color: '#3b82f6', width: 1}},
+    {x: rolling.dates, y: rolling.win_rate_30d, type: 'scatter', mode: 'lines', name: '30-day', line: {color: '#10b981', width: 1.5}},
+    {x: rolling.dates, y: rolling.win_rate_90d, type: 'scatter', mode: 'lines', name: '90-day', line: {color: '#f59e0b', width: 2}},
+  ];
+  Plotly.newPlot('an-rolling-chart', traces, {
+    ...AN_LAYOUT,
+    yaxis: {...AN_LAYOUT.yaxis, ticksuffix: '%', range: [0, 100]},
+    showlegend: true,
+    legend: {font: {size: 10, color: '#6b7280'}, orientation: 'h', x: 0.5, xanchor: 'center', y: 1.12},
+  }, AN_CFG);
+}
 
 // ---------------------------------------------------------------
 // Backtest

@@ -10,11 +10,13 @@ import os
 import re
 import json
 import logging
+import math
 import sqlite3
 import ctypes
 import time
 import threading
 import yaml
+from collections import defaultdict
 from pathlib import Path
 from datetime import datetime, date, timedelta
 from flask import Flask, render_template, jsonify, request, redirect, url_for
@@ -2962,6 +2964,525 @@ def api_risk_status():
         'monthly': monthly,
         'streaks': streaks,
     })
+
+
+# ---------------------------------------------------------------------------
+# Performance Analytics API
+# ---------------------------------------------------------------------------
+
+def _analytics_downsample(data, max_points):
+    """Evenly downsample a list, keeping first and last elements."""
+    if len(data) <= max_points:
+        return data
+    step = (len(data) - 1) / (max_points - 1)
+    indices = [round(i * step) for i in range(max_points)]
+    return [data[i] for i in indices]
+
+
+def _analytics_empty():
+    """Return zero-filled analytics response for no-trade case."""
+    return {
+        'trade_count': 0,
+        'date_range': {'start': None, 'end': None},
+        'core': {
+            'total_return_dollar': 0, 'total_return_pct': 0,
+            'annualized_return': 0, 'sharpe_ratio': 0,
+            'sortino_ratio': 0, 'calmar_ratio': 0,
+            'max_drawdown_dollar': 0, 'max_drawdown_pct': 0,
+            'max_drawdown_duration_days': 0,
+        },
+        'trade_metrics': {
+            'total_trades': 0, 'win_rate': 0, 'profit_factor': 0,
+            'expectancy': 0, 'avg_win': 0, 'avg_loss': 0,
+            'win_loss_ratio': 0, 'max_consecutive_wins': 0,
+            'max_consecutive_losses': 0, 'avg_duration_minutes': 0,
+            'total_pnl': 0, 'gross_profit': 0, 'gross_loss': 0,
+        },
+        'equity_curve': [],
+        'drawdown_series': [],
+        'monthly_returns': [],
+        'by_day_of_week': [],
+        'by_vix_regime': [],
+        'by_strategy': [],
+        'by_time_bucket': [],
+        'by_direction': [],
+        'pnl_distribution': [],
+        'rolling': {'dates': [], 'win_rate_7d': [], 'win_rate_30d': [], 'win_rate_90d': []},
+    }
+
+
+def _analytics_sharpe(daily_returns, risk_free_rate=0.045, ann_factor=252):
+    """Annualized Sharpe ratio."""
+    if len(daily_returns) < 2:
+        return 0
+    daily_rf = risk_free_rate / ann_factor
+    excess = [r - daily_rf for r in daily_returns]
+    mean_excess = sum(excess) / len(excess)
+    variance = sum((r - mean_excess) ** 2 for r in excess) / (len(excess) - 1)
+    std_dev = math.sqrt(variance) if variance > 0 else 0
+    if std_dev == 0:
+        return 0
+    return (mean_excess / std_dev) * math.sqrt(ann_factor)
+
+
+def _analytics_sortino(daily_returns, risk_free_rate=0.045, ann_factor=252):
+    """Annualized Sortino ratio (downside deviation only)."""
+    if len(daily_returns) < 2:
+        return 0
+    daily_rf = risk_free_rate / ann_factor
+    excess = [r - daily_rf for r in daily_returns]
+    mean_excess = sum(excess) / len(excess)
+    downside = [min(r, 0) ** 2 for r in excess]
+    downside_var = sum(downside) / (len(downside) - 1) if len(downside) > 1 else 0
+    downside_dev = math.sqrt(downside_var)
+    if downside_dev == 0:
+        return 0
+    return (mean_excess / downside_dev) * math.sqrt(ann_factor)
+
+
+def _analytics_max_drawdown(equity_curve, initial_capital):
+    """Compute max drawdown in dollars, percent, and duration."""
+    if not equity_curve:
+        return 0, 0, 0
+    peak = initial_capital
+    max_dd_dollar = 0
+    max_dd_pct = 0
+    peak_idx = 0
+    max_dd_duration = 0
+    for i, ec in enumerate(equity_curve):
+        equity = ec.get('equity', initial_capital)
+        if equity >= peak:
+            peak = equity
+            peak_idx = i
+        dd_dollar = peak - equity
+        dd_pct = (dd_dollar / peak * 100) if peak > 0 else 0
+        if dd_dollar > max_dd_dollar:
+            max_dd_dollar = dd_dollar
+            max_dd_pct = dd_pct
+            max_dd_duration = i - peak_idx
+    return max_dd_dollar, max_dd_pct, max_dd_duration
+
+
+def _analytics_drawdown_series(equity_curve, initial_capital):
+    """Compute drawdown percentage series for charting."""
+    if not equity_curve:
+        return []
+    peak = initial_capital
+    series = []
+    for ec in equity_curve:
+        equity = ec.get('equity', initial_capital)
+        if equity > peak:
+            peak = equity
+        dd_pct = ((peak - equity) / peak * 100) if peak > 0 else 0
+        series.append({'date': ec['date'], 'drawdown_pct': round(dd_pct, 2)})
+    return series
+
+
+def _analytics_core_metrics(pnls, daily_returns, equity_curve, starting_capital, final_equity):
+    """Core performance metrics: returns, Sharpe, Sortino, Calmar, max DD."""
+    total_return_dollar = final_equity - starting_capital
+    total_return_pct = (total_return_dollar / starting_capital) * 100 if starting_capital > 0 else 0
+
+    total_days = len(equity_curve)
+    years = total_days / 252 if total_days > 0 else 1
+    annualized_return = ((final_equity / starting_capital) ** (1 / years) - 1) * 100 if years > 0 and starting_capital > 0 else 0
+
+    sharpe = _analytics_sharpe(daily_returns)
+    sortino = _analytics_sortino(daily_returns)
+    dd_dollar, dd_pct, dd_duration = _analytics_max_drawdown(equity_curve, starting_capital)
+    calmar = (annualized_return / abs(dd_pct)) if dd_pct != 0 else 0
+
+    return {
+        'total_return_dollar': round(total_return_dollar, 2),
+        'total_return_pct': round(total_return_pct, 2),
+        'annualized_return': round(annualized_return, 2),
+        'sharpe_ratio': round(sharpe, 3),
+        'sortino_ratio': round(sortino, 3),
+        'calmar_ratio': round(calmar, 3),
+        'max_drawdown_dollar': round(dd_dollar, 2),
+        'max_drawdown_pct': round(dd_pct, 2),
+        'max_drawdown_duration_days': dd_duration,
+    }
+
+
+def _analytics_trade_metrics(trades):
+    """Trade-level statistics: win rate, profit factor, expectancy, streaks, duration."""
+    if not trades:
+        return _analytics_empty()['trade_metrics']
+
+    total = len(trades)
+    pnls = [t.get('pnl', 0) for t in trades]
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p <= 0]
+
+    win_rate = (len(wins) / total * 100) if total > 0 else 0
+    avg_win = sum(wins) / len(wins) if wins else 0
+    avg_loss = sum(losses) / len(losses) if losses else 0
+    win_loss_ratio = abs(avg_win / avg_loss) if avg_loss != 0 else 999.99
+
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(losses))
+    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 999.99
+
+    expectancy = sum(pnls) / total if total > 0 else 0
+
+    # Streaks
+    max_wins = max_losses = current_wins = current_losses = 0
+    for pnl in pnls:
+        if pnl > 0:
+            current_wins += 1
+            current_losses = 0
+            max_wins = max(max_wins, current_wins)
+        else:
+            current_losses += 1
+            current_wins = 0
+            max_losses = max(max_losses, current_losses)
+
+    # Average duration (live trades use time_in_trade_minutes)
+    durations = []
+    for t in trades:
+        d = t.get('time_in_trade_minutes') or t.get('duration_minutes') or 0
+        if d > 0:
+            durations.append(d)
+    avg_duration = sum(durations) / len(durations) if durations else 0
+
+    return {
+        'total_trades': total,
+        'win_rate': round(win_rate, 1),
+        'profit_factor': round(min(profit_factor, 999.99), 2),
+        'expectancy': round(expectancy, 2),
+        'avg_win': round(avg_win, 2),
+        'avg_loss': round(avg_loss, 2),
+        'win_loss_ratio': round(min(win_loss_ratio, 999.99), 2),
+        'max_consecutive_wins': max_wins,
+        'max_consecutive_losses': max_losses,
+        'avg_duration_minutes': round(avg_duration, 0),
+        'total_pnl': round(sum(pnls), 2),
+        'gross_profit': round(gross_profit, 2),
+        'gross_loss': round(gross_loss, 2),
+    }
+
+
+def _analytics_by_dow(trades):
+    """Win rate + P&L by day of week."""
+    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+    day_stats = {i: {'wins': 0, 'total': 0, 'pnl': 0} for i in range(5)}
+
+    for t in trades:
+        # Prefer stored day_of_week column, fall back to parsing entry_time
+        dow = t.get('day_of_week')
+        if dow is None:
+            entry_time = t.get('entry_time', '')
+            if not entry_time:
+                continue
+            try:
+                dow = datetime.fromisoformat(entry_time).weekday()
+            except (ValueError, TypeError):
+                continue
+        if dow is not None and 0 <= dow < 5:
+            day_stats[dow]['total'] += 1
+            day_stats[dow]['pnl'] += t.get('pnl', 0)
+            if t.get('pnl', 0) > 0:
+                day_stats[dow]['wins'] += 1
+
+    return [
+        {
+            'day': day_names[i],
+            'total': day_stats[i]['total'],
+            'wins': day_stats[i]['wins'],
+            'win_rate': round((day_stats[i]['wins'] / day_stats[i]['total'] * 100), 1) if day_stats[i]['total'] > 0 else 0,
+            'total_pnl': round(day_stats[i]['pnl'], 2),
+        }
+        for i in range(5)
+    ]
+
+
+def _analytics_by_vix(trades):
+    """Win rate + P&L by VIX regime."""
+    regimes = {
+        'low': {'label': 'Low (<15)', 'wins': 0, 'total': 0, 'pnl': 0},
+        'normal': {'label': 'Normal (15-20)', 'wins': 0, 'total': 0, 'pnl': 0},
+        'elevated': {'label': 'Elevated (20-30)', 'wins': 0, 'total': 0, 'pnl': 0},
+        'high': {'label': 'High (>30)', 'wins': 0, 'total': 0, 'pnl': 0},
+    }
+    for t in trades:
+        vix = t.get('vix_at_entry') or 0
+        if vix <= 0:
+            continue
+        if vix < 15:
+            regime = 'low'
+        elif vix < 20:
+            regime = 'normal'
+        elif vix < 30:
+            regime = 'elevated'
+        else:
+            regime = 'high'
+        regimes[regime]['total'] += 1
+        regimes[regime]['pnl'] += t.get('pnl', 0)
+        if t.get('pnl', 0) > 0:
+            regimes[regime]['wins'] += 1
+
+    return [
+        {
+            'regime': v['label'],
+            'total': v['total'],
+            'wins': v['wins'],
+            'win_rate': round((v['wins'] / v['total'] * 100), 1) if v['total'] > 0 else 0,
+            'total_pnl': round(v['pnl'], 2),
+        }
+        for v in regimes.values()
+    ]
+
+
+def _analytics_by_strategy(trades):
+    """Win rate + P&L by strategy type."""
+    strategies = defaultdict(lambda: {'wins': 0, 'total': 0, 'pnl': 0})
+    for t in trades:
+        st = t.get('strategy_type') or 'daily_income'
+        strategies[st]['total'] += 1
+        strategies[st]['pnl'] += t.get('pnl', 0)
+        if t.get('pnl', 0) > 0:
+            strategies[st]['wins'] += 1
+
+    return [
+        {
+            'strategy': k,
+            'total': v['total'],
+            'wins': v['wins'],
+            'win_rate': round((v['wins'] / v['total'] * 100), 1) if v['total'] > 0 else 0,
+            'total_pnl': round(v['pnl'], 2),
+        }
+        for k, v in strategies.items()
+    ]
+
+
+def _analytics_by_time_bucket(trades):
+    """Win rate + P&L by entry time bucket."""
+    buckets = defaultdict(lambda: {'wins': 0, 'total': 0, 'pnl': 0})
+    for t in trades:
+        bucket = t.get('entry_time_bucket')
+        if not bucket:
+            entry = t.get('entry_time', '')
+            if entry and len(entry) >= 16:
+                try:
+                    h = int(entry[11:13])
+                    if h < 10:
+                        bucket = 'Open (9:30-10)'
+                    elif h < 11:
+                        bucket = 'Mid-Morning (10-11)'
+                    elif h < 13:
+                        bucket = 'Midday (11-1)'
+                    elif h < 15:
+                        bucket = 'Afternoon (1-3)'
+                    else:
+                        bucket = 'Close (3-4)'
+                except (ValueError, IndexError):
+                    continue
+            else:
+                continue
+        buckets[bucket]['total'] += 1
+        buckets[bucket]['pnl'] += t.get('pnl', 0)
+        if t.get('pnl', 0) > 0:
+            buckets[bucket]['wins'] += 1
+
+    # Sort by time order
+    order = ['Open (9:30-10)', 'Mid-Morning (10-11)', 'Midday (11-1)', 'Afternoon (1-3)', 'Close (3-4)']
+    result = []
+    seen = set()
+    for b in order:
+        if b in buckets:
+            v = buckets[b]
+            result.append({
+                'bucket': b,
+                'total': v['total'],
+                'wins': v['wins'],
+                'win_rate': round((v['wins'] / v['total'] * 100), 1) if v['total'] > 0 else 0,
+                'total_pnl': round(v['pnl'], 2),
+            })
+            seen.add(b)
+    for b, v in buckets.items():
+        if b not in seen:
+            result.append({
+                'bucket': b,
+                'total': v['total'],
+                'wins': v['wins'],
+                'win_rate': round((v['wins'] / v['total'] * 100), 1) if v['total'] > 0 else 0,
+                'total_pnl': round(v['pnl'], 2),
+            })
+    return result
+
+
+def _analytics_by_direction(trades):
+    """Win rate + P&L by direction (bullish/bearish)."""
+    dirs = defaultdict(lambda: {'wins': 0, 'total': 0, 'pnl': 0})
+    for t in trades:
+        d = t.get('direction') or 'unknown'
+        dirs[d]['total'] += 1
+        dirs[d]['pnl'] += t.get('pnl', 0)
+        if t.get('pnl', 0) > 0:
+            dirs[d]['wins'] += 1
+
+    return [
+        {
+            'direction': k.title(),
+            'total': v['total'],
+            'wins': v['wins'],
+            'win_rate': round((v['wins'] / v['total'] * 100), 1) if v['total'] > 0 else 0,
+            'total_pnl': round(v['pnl'], 2),
+        }
+        for k, v in dirs.items()
+    ]
+
+
+def _analytics_monthly(daily_pnl, starting_capital):
+    """Monthly returns grid from daily P&L map."""
+    monthly = defaultdict(float)
+    for day_str, pnl in daily_pnl.items():
+        try:
+            d = date.fromisoformat(day_str)
+            monthly[(d.year, d.month)] += pnl
+        except (ValueError, TypeError):
+            continue
+
+    return [
+        {
+            'year': year,
+            'month': month,
+            'pnl': round(pnl, 2),
+            'return_pct': round((pnl / starting_capital) * 100, 2) if starting_capital > 0 else 0,
+        }
+        for (year, month), pnl in sorted(monthly.items())
+    ]
+
+
+def _analytics_rolling(equity_curve):
+    """Rolling 7d/30d/90d win rate from equity curve."""
+    if len(equity_curve) < 2:
+        return {'dates': [], 'win_rate_7d': [], 'win_rate_30d': [], 'win_rate_90d': []}
+
+    dates = []
+    wr7 = []
+    wr30 = []
+    wr90 = []
+
+    for i in range(len(equity_curve)):
+        dates.append(equity_curve[i]['date'])
+        for window, out in [(7, wr7), (30, wr30), (90, wr90)]:
+            start = max(0, i - window + 1)
+            window_data = equity_curve[start:i + 1]
+            wins = sum(1 for d in window_data if d.get('daily_pnl', 0) > 0)
+            total = len(window_data)
+            out.append(round((wins / total * 100), 1) if total > 0 else 0)
+
+    # Downsample if too many points
+    if len(dates) > 300:
+        indices = [round(i * (len(dates) - 1) / 299) for i in range(300)]
+        dates = [dates[i] for i in indices]
+        wr7 = [wr7[i] for i in indices]
+        wr30 = [wr30[i] for i in indices]
+        wr90 = [wr90[i] for i in indices]
+
+    return {'dates': dates, 'win_rate_7d': wr7, 'win_rate_30d': wr30, 'win_rate_90d': wr90}
+
+
+def _analytics_compute(closed_trades, starting_capital):
+    """Compute full analytics payload from a list of closed trade dicts."""
+    # Filter to trades with valid P&L
+    valid = [t for t in closed_trades if t.get('pnl') is not None]
+    if not valid:
+        return _analytics_empty()
+
+    trades = sorted(valid, key=lambda t: t.get('exit_time') or t.get('entry_time') or '')
+    pnls = [t.get('pnl', 0) for t in trades]
+
+    # Build daily P&L
+    daily_pnl = defaultdict(float)
+    for t in trades:
+        exit_t = t.get('exit_time') or t.get('entry_time') or ''
+        if exit_t:
+            day = exit_t[:10]
+            daily_pnl[day] += t.get('pnl', 0)
+
+    # Build equity curve
+    equity = starting_capital
+    equity_curve = []
+    for day in sorted(daily_pnl.keys()):
+        dpnl = daily_pnl[day]
+        equity += dpnl
+        equity_curve.append({'date': day, 'equity': round(equity, 2), 'daily_pnl': round(dpnl, 2)})
+
+    # Daily returns
+    daily_returns = []
+    for ec in equity_curve:
+        prev = ec['equity'] - ec['daily_pnl']
+        daily_returns.append(ec['daily_pnl'] / prev if prev > 0 else 0)
+
+    core = _analytics_core_metrics(pnls, daily_returns, equity_curve, starting_capital, equity)
+    trade_metrics = _analytics_trade_metrics(trades)
+
+    return {
+        'trade_count': len(trades),
+        'date_range': {
+            'start': equity_curve[0]['date'] if equity_curve else None,
+            'end': equity_curve[-1]['date'] if equity_curve else None,
+        },
+        'core': core,
+        'trade_metrics': trade_metrics,
+        'equity_curve': _analytics_downsample(equity_curve, 300),
+        'drawdown_series': _analytics_downsample(_analytics_drawdown_series(equity_curve, starting_capital), 300),
+        'monthly_returns': _analytics_monthly(daily_pnl, starting_capital),
+        'by_day_of_week': _analytics_by_dow(trades),
+        'by_vix_regime': _analytics_by_vix(trades),
+        'by_strategy': _analytics_by_strategy(trades),
+        'by_time_bucket': _analytics_by_time_bucket(trades),
+        'by_direction': _analytics_by_direction(trades),
+        'pnl_distribution': [round(p, 2) for p in pnls],
+        'rolling': _analytics_rolling(equity_curve),
+    }
+
+
+@app.route('/api/analytics')
+def api_analytics():
+    """Performance analytics from live trades or backtest results."""
+    source = request.args.get('source', 'live')
+
+    if source == 'backtest':
+        run_id = request.args.get('run_id')
+        if not run_id:
+            return jsonify({'success': False, 'error': 'run_id required'}), 400
+        try:
+            db_path = str(DATA_DIR / 'database' / 'trades.db')
+            conn = sqlite3.connect(db_path, timeout=10)
+            row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
+            conn.close()
+            if not row:
+                return jsonify({'success': False, 'error': 'Run not found'}), 404
+            report = json.loads(row[0])
+            report['source'] = 'backtest'
+            return jsonify({'success': True, **report})
+        except Exception as e:
+            logger.error(f"Analytics backtest error: {e}", exc_info=True)
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    # Live trades
+    try:
+        db_path = str(DATA_DIR / 'database' / 'trades.db')
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        spx_data = yahoo.get_spx_price()
+        spx_price = spx_data.get('price') if spx_data else None
+        _, closed_trades = classify_trades(conn, spx_price)
+        conn.close()
+
+        starting_capital = _get_starting_capital()
+        result = _analytics_compute(closed_trades, starting_capital)
+        result['source'] = 'live'
+        result['starting_capital'] = starting_capital
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        logger.error(f"Analytics error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/economic-events')
