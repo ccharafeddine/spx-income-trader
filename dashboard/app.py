@@ -1462,6 +1462,8 @@ def api_status():
                 'level': round(vix_level, 2),
                 'regime': classify_vix(vix_level),
             }
+            from src.utils.metrics import vix_level as vix_metric
+            vix_metric.set(vix_level)
     except Exception:
         pass
 
@@ -4422,6 +4424,102 @@ def api_demo_control():
         return jsonify({'error': f'Unknown action: {action}'}), 400
 
     return jsonify({'ok': True, **engine.get_info()})
+
+
+# ---------------------------------------------------------------------------
+# Prometheus metrics & health
+# ---------------------------------------------------------------------------
+
+@app.route('/metrics')
+def prometheus_metrics():
+    """Expose Prometheus metrics. Returns 404 with install hint if prometheus_client not installed."""
+    from src.utils.metrics import PROMETHEUS_AVAILABLE, generate_latest, CONTENT_TYPE_LATEST
+    if not PROMETHEUS_AVAILABLE:
+        return jsonify({
+            'error': 'prometheus_client not installed',
+            'hint': 'pip install prometheus_client  (or: pip install -r requirements-monitoring.txt)',
+        }), 404
+    return app.response_class(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
+
+
+@app.route('/api/health')
+def api_health():
+    """Enhanced health check with bot and system status."""
+    bot = check_bot_status()
+    bot_running = bot.get('running', False)
+
+    # Parse heartbeat from today's log
+    last_heartbeat = None
+    try:
+        log_data = parse_todays_log()
+        if log_data.get('last_heartbeat'):
+            last_heartbeat = log_data['last_heartbeat'].get('time')
+    except Exception:
+        pass
+
+    # Count errors in last hour from error.log
+    errors_last_hour = 0
+    try:
+        from src.utils.app_paths import LOG_DIR
+        error_log = LOG_DIR / 'error.log'
+        if error_log.exists():
+            one_hour_ago = datetime.now() - timedelta(hours=1)
+            with open(error_log, 'r') as f:
+                for line in f:
+                    try:
+                        ts_str = line[:19]
+                        ts = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
+                        if ts >= one_hour_ago:
+                            errors_last_hour += 1
+                    except (ValueError, IndexError):
+                        pass
+    except Exception:
+        pass
+
+    # Open positions and daily P&L from DB
+    open_positions = 0
+    daily_pnl = 0.0
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'open'")
+        open_positions = cursor.fetchone()[0]
+        today_str = datetime.now(ET).date().isoformat()
+        cursor.execute(
+            "SELECT COALESCE(SUM(pnl), 0) FROM trades "
+            "WHERE status = 'closed' AND date(entry_time) = ?",
+            (today_str,)
+        )
+        daily_pnl = round(cursor.fetchone()[0], 2)
+        conn.close()
+    except Exception:
+        pass
+
+    # Broker connection
+    broker_connected = False
+    active_broker = None
+    try:
+        if is_etrade_configured():
+            broker_connected = True
+            active_broker = 'etrade'
+        elif is_schwab_configured():
+            broker_connected = True
+            active_broker = 'schwab'
+    except Exception:
+        pass
+
+    return jsonify({
+        'status': 'healthy' if bot_running else 'degraded',
+        'bot_running': bot_running,
+        'uptime_seconds': bot.get('uptime_seconds'),
+        'last_heartbeat': last_heartbeat,
+        'broker_connected': broker_connected,
+        'active_broker': active_broker,
+        'open_positions': open_positions,
+        'daily_pnl': daily_pnl,
+        'errors_last_hour': errors_last_hour,
+        'version': APP_VERSION,
+    })
 
 
 # ---------------------------------------------------------------------------

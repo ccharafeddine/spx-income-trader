@@ -1,0 +1,3 @@
+# Optional monitoring extras for The Daily Melt
+# Install with: pip install -r requirements-monitoring.txt
+prometheus_client>=0.20.0

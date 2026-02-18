@@ -45,7 +45,8 @@ from src.core.pdt_tracker import PDTTracker
 from src.data.market_data import MarketDataFeed
 from database.db_manager import DatabaseManager
 from src.utils.notifications import NotificationManager
-from src.utils.logging import setup_logging
+from src.utils.logging import setup_logging, log_trade_event
+from src.utils import metrics
 
 
 # Configure logging
@@ -439,6 +440,7 @@ class TradingBot:
         """Start the trading bot"""
         self._acquire_instance_lock()
         self.running = True
+        self._start_time = time_module.monotonic()
         
         logger.info("=" * 60)
         logger.info("SPX Income Trading Bot Starting")
@@ -567,6 +569,8 @@ class TradingBot:
                     # Reset parallel strategies for new day
                     self._bnb_day_end_called = False
                     self.portfolio.reset_daily()
+                    metrics.circuit_breaker_active.set(0)
+                    metrics.daily_pnl_dollars.set(0)
                     if self.orb_enabled and self.orb_strategy:
                         self.orb_strategy.reset_daily()
                     if self.bnb_enabled and self.bnb_strategy:
@@ -597,6 +601,8 @@ class TradingBot:
                         bb_str = f" | BB bias={bias.upper()}"
                     logger.info(f"[Heartbeat] Loop #{loop_count} at {current_time.strftime('%H:%M:%S')} ET{setup_str}{bb_str}")
                     last_heartbeat = current_time
+                    metrics.bot_uptime_seconds.set(
+                        time_module.monotonic() - self._start_time)
                     if self.recorder:
                         self.recorder.record('status_update',
                             loop_count=loop_count, spx_price=self._current_spx_price,
@@ -914,6 +920,7 @@ class TradingBot:
             )
         if daily_pnl <= -max_loss:
             self.portfolio.circuit_breaker_triggered = True
+            metrics.circuit_breaker_active.set(1)
             logger.warning(f"Max daily loss reached: ${daily_pnl:.2f} (limit: -${max_loss:.0f})")
             if self.recorder:
                 self.recorder.record('circuit_breaker',
@@ -949,6 +956,8 @@ class TradingBot:
             'reason': reason,
             'detail': detail,
         })
+        metrics.rejections_total.labels(reason=reason).inc()
+        log_trade_event('trade_rejected', strategy=strategy, reason=reason, detail=detail)
 
     def _finalize_daily_journal(self):
         """Write the daily journal entry to DB at end of day."""
@@ -1101,6 +1110,23 @@ class TradingBot:
         """Process recently_closed trades into portfolio manager."""
         for closed in self.position_manager.recently_closed:
             self.portfolio.close_position(closed['id'], closed['pnl'])
+            pnl = closed['pnl']
+            result = 'win' if pnl >= 0 else 'loss'
+            metrics.trades_total.labels(
+                strategy=closed.get('strategy', 'unknown'),
+                direction=closed.get('direction', 'unknown'),
+                result=result,
+            ).inc()
+            metrics.trade_pnl_dollars.observe(pnl)
+            metrics.daily_pnl_dollars.set(self.portfolio.daily_realized_pnl)
+            metrics.open_positions_count.set(
+                len(self.position_manager.get_open_positions()))
+            log_trade_event('trade_exited',
+                trade_id=closed['id'], pnl=pnl,
+                pnl_pct=closed.get('pnl_pct', 0),
+                exit_reason=closed.get('exit_reason', ''),
+                strategy=closed.get('strategy', 'unknown'),
+                direction=closed.get('direction', 'unknown'))
 
             if self.recorder:
                 self.recorder.record('trade_exited',
@@ -1158,6 +1184,7 @@ class TradingBot:
             self._last_spx_price = current_price
 
             logger.debug(f"SPX price: ${current_price:,.2f}")
+            metrics.spx_price.set(current_price)
 
             # Record price tick (throttled inside recorder)
             if self.recorder:
@@ -1698,6 +1725,16 @@ class TradingBot:
             else:
                 self.tnt_trades_today += 1
 
+            metrics.open_positions_count.set(
+                len(self.position_manager.get_open_positions()))
+            log_trade_event('trade_entered',
+                trade_id=trade.id, strategy=strategy_name,
+                direction=spread.direction.value,
+                short_strike=spread.short_leg.strike,
+                long_strike=spread.long_leg.strike,
+                credit=spread.credit_received, quantity=quantity,
+                underlying_price=current_price)
+
             if self.recorder:
                 self.recorder.record('trade_entered',
                     trade_id=trade.id, strategy=strategy_name,
@@ -1862,6 +1899,10 @@ class TradingBot:
 
             if direction:
                 self._journal_pulse_bars += 1
+                metrics.signals_total.labels(strategy='daily_income', direction=direction.value).inc()
+                log_trade_event('signal_detected', strategy='daily_income',
+                    direction=direction.value, bar_time=bar.timestamp.isoformat(),
+                    trigger_price=bar.high if direction.value == 'bullish' else bar.low)
                 # Pulse bar detected -- store as pending setup, DON'T enter yet
                 trigger_price = bar.high if direction.value == 'bullish' else bar.low
                 above_below = 'above' if direction.value == 'bullish' else 'below'
@@ -2009,6 +2050,15 @@ class TradingBot:
             if trade:
                 logger.info(f"Trade executed: {trade.id}")
                 self._journal_trades_entered += 1
+                metrics.open_positions_count.set(
+                    len(self.position_manager.get_open_positions()))
+                log_trade_event('trade_entered',
+                    trade_id=trade.id, strategy='daily_income',
+                    direction=spread.direction.value,
+                    short_strike=spread.short_leg.strike,
+                    long_strike=spread.long_leg.strike,
+                    credit=spread.credit_received, quantity=quantity,
+                    underlying_price=current_price)
 
                 self.dte0_trades_today += 1
 
