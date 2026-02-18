@@ -2217,6 +2217,40 @@ header::after {
   opacity: 1;
   visibility: visible;
 }
+
+/* Demo Mode */
+.demo-banner {
+  display: flex; align-items: center; justify-content: center; gap: 16px;
+  padding: 10px 24px; font-size: 13px;
+  background: linear-gradient(90deg, rgba(6,182,212,0.15), rgba(59,130,246,0.15));
+  border-bottom: 1px solid rgba(6,182,212,0.3);
+  color: #06b6d4;
+}
+.demo-badge {
+  background: #06b6d4; color: #0a0e17; font-weight: 700; font-size: 11px;
+  padding: 2px 8px; border-radius: 4px; letter-spacing: 0.5px;
+}
+.demo-controls {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 24px;
+  background: rgba(6,182,212,0.06);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  font-size: 12px;
+}
+.demo-controls button {
+  background: rgba(6,182,212,0.2); color: #06b6d4; border: 1px solid rgba(6,182,212,0.3);
+  padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;
+}
+.demo-controls button:hover { background: rgba(6,182,212,0.35); }
+.demo-controls select {
+  background: rgba(6,182,212,0.1); color: #06b6d4; border: 1px solid rgba(6,182,212,0.3);
+  padding: 3px 8px; border-radius: 4px; font-size: 12px;
+}
+.demo-controls .demo-time { color: rgba(255,255,255,0.7); }
+.demo-controls .demo-progress {
+  flex: 1; max-width: 300px; height: 4px;
+  accent-color: #06b6d4;
+}
 </style>
 </head>
 <body>
@@ -2270,6 +2304,29 @@ header::after {
   <span id="update-banner-text"></span>
   <button class="banner-dismiss" onclick="dismissUpdateBanner()">Dismiss</button>
 </div>
+
+{% if demo_mode %}
+<!-- Demo Mode Banner -->
+<div class="demo-banner" id="demo-banner">
+  <span class="demo-badge">DEMO MODE</span>
+  <span class="demo-time" id="demo-replay-time">--:--:-- ET</span>
+  <span>Speed: <span id="demo-speed-label">1x</span></span>
+</div>
+<!-- Demo Controls -->
+<div class="demo-controls" id="demo-controls">
+  <button id="demo-play-btn" onclick="demoPlayPause()">Play</button>
+  <select id="demo-speed-select" onchange="demoSetSpeed(this.value)">
+    <option value="1">1x</option>
+    <option value="5">5x</option>
+    <option value="10">10x</option>
+    <option value="30" selected>30x</option>
+    <option value="60">60x</option>
+  </select>
+  <span class="demo-time" id="demo-time-display">--:--:-- ET</span>
+  <input type="range" class="demo-progress" id="demo-progress" min="0" max="1" step="0.001" value="0" onchange="demoSeek(this.value)">
+  <button onclick="demoJumpNext()">Step</button>
+</div>
+{% endif %}
 
 <!-- Settings Overlay -->
 <div class="settings-overlay" id="settings-overlay" onclick="toggleSettings()"></div>
@@ -3197,6 +3254,57 @@ async function fetchJSON(url) {
   }
 }
 
+// ---------------------------------------------------------------
+// Demo Mode Controls
+// ---------------------------------------------------------------
+const DEMO_MODE = {{ 'true' if demo_mode else 'false' }};
+let demoPlaying = false;
+
+async function demoPlayPause() {
+  const action = demoPlaying ? 'pause' : 'play';
+  await fetch('/api/demo/control', {method: 'POST', headers: API_HEADERS, body: JSON.stringify({action})});
+  demoPlaying = !demoPlaying;
+  const btn = document.getElementById('demo-play-btn');
+  if (btn) btn.textContent = demoPlaying ? 'Pause' : 'Play';
+}
+
+async function demoSetSpeed(val) {
+  await fetch('/api/demo/control', {method: 'POST', headers: API_HEADERS, body: JSON.stringify({action: 'speed', value: Number(val)})});
+}
+
+async function demoSeek(val) {
+  await fetch('/api/demo/control', {method: 'POST', headers: API_HEADERS, body: JSON.stringify({action: 'seek', value: Number(val)})});
+}
+
+async function demoJumpNext() {
+  await fetch('/api/demo/control', {method: 'POST', headers: API_HEADERS, body: JSON.stringify({action: 'jump'})});
+  await updateDemoInfo();
+}
+
+async function updateDemoInfo() {
+  const d = await fetchJSON('/api/demo/info');
+  if (!d) return;
+  demoPlaying = d.playing;
+  const btn = document.getElementById('demo-play-btn');
+  if (btn) btn.textContent = demoPlaying ? 'Pause' : 'Play';
+  const timeEl = document.getElementById('demo-time-display');
+  if (timeEl) timeEl.textContent = d.replay_time || '--:--:--';
+  const replayTimeEl = document.getElementById('demo-replay-time');
+  if (replayTimeEl) replayTimeEl.textContent = d.replay_time || '--:--:--';
+  const speedEl = document.getElementById('demo-speed-label');
+  if (speedEl) speedEl.textContent = d.speed + 'x';
+  const progress = document.getElementById('demo-progress');
+  if (progress) progress.value = d.progress || 0;
+  if (d.finished) {
+    if (btn) btn.textContent = 'Done';
+    demoPlaying = false;
+  }
+}
+
+if (DEMO_MODE) {
+  setInterval(updateDemoInfo, 500);
+}
+
 function fmt$(v) {
   if (v == null) return '--';
   const n = Number(v);
@@ -3474,6 +3582,15 @@ async function updateStatus() {
   const badge = document.getElementById('mode-badge');
   badge.textContent = d.mode || 'UNKNOWN';
   badge.className = 'mode-badge' + (d.mode === 'DRY RUN' ? ' dry' : d.mode === 'LIVE' ? ' live' : '');
+  if (d.mode === 'DEMO') {
+    badge.style.background = 'rgba(6,182,212,0.2)';
+    badge.style.color = '#06b6d4';
+    badge.style.border = '1px solid rgba(6,182,212,0.4)';
+  } else {
+    badge.style.background = '';
+    badge.style.color = '';
+    badge.style.border = '';
+  }
 
   // Broker badge + track current broker for chart annotations
   const brokerBadge = document.getElementById('broker-badge');
@@ -5197,7 +5314,7 @@ async function checkDesktopMode() {
 }
 
 function updateBotControls(botRunning) {
-  if (!desktopMode) return;
+  if (!desktopMode || DEMO_MODE) return;
   const startBtn = document.getElementById('bot-start-btn');
   const stopBtn = document.getElementById('bot-stop-btn');
   const modeSelect = document.getElementById('bot-mode-select');

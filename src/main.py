@@ -71,7 +71,8 @@ class TradingBot:
         db_manager: DatabaseManager,
         notification_manager: Optional[NotificationManager] = None,
         dry_run: bool = False,
-        skip_confirm: bool = False
+        skip_confirm: bool = False,
+        recorder=None,
     ):
         self.broker = broker
         self.strategy = strategy
@@ -79,6 +80,7 @@ class TradingBot:
         self.notifier = notification_manager
         self.dry_run = dry_run
         self.skip_confirm = skip_confirm
+        self.recorder = recorder
 
         # Initialize PDT Tracker
         pdt_cfg = STRATEGY_PARAMS.get('pdt', {})
@@ -124,6 +126,7 @@ class TradingBot:
         self.dte0_trades_today = 0   # Shared 0DTE slot (DI/ORB/B&B)
         self.tnt_trades_today = 0    # TNT swing slot
         self.current_trading_date = None
+        self._market_was_open = False  # Edge detection for recorder
 
         # Token auto-renewal for live broker (E*TRADE tokens expire after 2 hours)
         self._token_renewal_thread = None
@@ -594,9 +597,26 @@ class TradingBot:
                         bb_str = f" | BB bias={bias.upper()}"
                     logger.info(f"[Heartbeat] Loop #{loop_count} at {current_time.strftime('%H:%M:%S')} ET{setup_str}{bb_str}")
                     last_heartbeat = current_time
+                    if self.recorder:
+                        self.recorder.record('status_update',
+                            loop_count=loop_count, spx_price=self._current_spx_price,
+                            daily_pnl=self.portfolio.daily_realized_pnl,
+                            bars_built=self._journal_bars_built,
+                            pulse_bars=self._journal_pulse_bars,
+                            positions_count=len(self.position_manager.get_open_positions()))
 
-                # Check if market is open
-                if not self._is_market_open(current_time):
+                # Check if market is open -- record market_open/market_close transitions
+                market_open_now = self._is_market_open(current_time)
+                if self.recorder:
+                    if market_open_now and not self._market_was_open:
+                        self.recorder.record('market_open', spx_price=self._current_spx_price)
+                    elif not market_open_now and self._market_was_open:
+                        self.recorder.record('market_close',
+                            spx_price=self._current_spx_price,
+                            daily_pnl=self.portfolio.daily_realized_pnl)
+                self._market_was_open = market_open_now
+
+                if not market_open_now:
                     # B&B: Finalize overnight signal once at market close
                     if (self.bnb_enabled and self.bnb_strategy
                             and not self._bnb_day_end_called
@@ -626,6 +646,19 @@ class TradingBot:
                 closed_pnl = self.position_manager.monitor_positions()
                 if closed_pnl != 0:
                     logger.info(f"Trade closed: ${closed_pnl:+.2f}")
+
+                # Record position updates for demo replay
+                if self.recorder:
+                    open_positions = self.position_manager.get_open_positions()
+                    if open_positions:
+                        pos_data = []
+                        for p in open_positions:
+                            pos_data.append({
+                                'trade_id': getattr(p, 'id', str(p)),
+                                'unrealized_pnl': getattr(p, 'unrealized_pnl', 0),
+                                'spx_price': self._current_spx_price,
+                            })
+                        self.recorder.record('position_update', positions=pos_data)
 
                 # Update portfolio risk tracking for closed trades (single P&L source of truth)
                 self._drain_recently_closed()
@@ -701,6 +734,11 @@ class TradingBot:
                         self._record_rejection('daily_income', 'setup_expired',
                             f"{ps['direction'].value} setup from {ps['bar'].timestamp.strftime('%H:%M')} bar, "
                             f"trigger {above_below} ${ps['trigger_price']:,.2f} never hit before {window_end.strftime('%H:%M')}")
+                        if self.recorder:
+                            self.recorder.record('setup_expired',
+                                direction=ps['direction'].value,
+                                trigger_price=ps['trigger_price'],
+                                reason=f'{ps_window} window closed')
                         self.pending_setup = None
 
                 # Log outside-window status periodically
@@ -877,6 +915,9 @@ class TradingBot:
         if daily_pnl <= -max_loss:
             self.portfolio.circuit_breaker_triggered = True
             logger.warning(f"Max daily loss reached: ${daily_pnl:.2f} (limit: -${max_loss:.0f})")
+            if self.recorder:
+                self.recorder.record('circuit_breaker',
+                    daily_pnl=daily_pnl, limit=max_loss, triggered=True)
             if self.notifier:
                 self.notifier.send(
                     "Daily Loss Limit Reached",
@@ -1061,6 +1102,14 @@ class TradingBot:
         for closed in self.position_manager.recently_closed:
             self.portfolio.close_position(closed['id'], closed['pnl'])
 
+            if self.recorder:
+                self.recorder.record('trade_exited',
+                    trade_id=closed['id'],
+                    pnl=closed['pnl'],
+                    pnl_pct=closed.get('pnl_pct', 0),
+                    exit_reason=closed.get('exit_reason', ''),
+                    duration_minutes=closed.get('duration_minutes', 0))
+
             # Check consecutive loss streak for notification
             if closed['pnl'] < 0 and self.notifier:
                 dm = self.portfolio.drawdown_manager
@@ -1110,6 +1159,11 @@ class TradingBot:
 
             logger.debug(f"SPX price: ${current_price:,.2f}")
 
+            # Record price tick (throttled inside recorder)
+            if self.recorder:
+                vix = getattr(self, '_last_vix_level', None)
+                self.recorder.record('price_tick', spx_price=current_price, vix_level=vix)
+
             # Set day open price for extreme move override (first price of the day)
             if self.bollinger.day_open is None and current_price > 0:
                 self.bollinger.set_day_open(current_price)
@@ -1155,6 +1209,12 @@ class TradingBot:
             if bar:
                 self._journal_bars_built += 1
                 logger.info(f"New 30-min bar completed: {bar}")
+                if self.recorder:
+                    self.recorder.record('bar_complete',
+                        time=bar.timestamp.isoformat(),
+                        open=bar.open, high=bar.high,
+                        low=bar.low, close=bar.close,
+                        tick_count=getattr(bar, 'tick_count', 0))
 
                 # Feed bar to Bollinger filter
                 self.bollinger.add_bar(bar)
@@ -1638,6 +1698,14 @@ class TradingBot:
             else:
                 self.tnt_trades_today += 1
 
+            if self.recorder:
+                self.recorder.record('trade_entered',
+                    trade_id=trade.id, strategy=strategy_name,
+                    direction=spread.direction.value,
+                    strikes={'short': spread.short_leg.strike,
+                             'long': spread.long_leg.strike},
+                    credit=spread.credit_received, quantity=quantity)
+
             # 7. Register with portfolio
             self.portfolio.register_position(
                 position_id=trade.id,
@@ -1725,6 +1793,11 @@ class TradingBot:
             triggered = True
 
         if triggered:
+            if self.recorder:
+                self.recorder.record('breakout_trigger',
+                    direction=ps['direction'].value,
+                    current_price=current_price,
+                    trigger_price=ps['trigger_price'])
             setup_bar = ps['bar']
             direction = ps['direction']
             self.pending_setup = None
@@ -1782,11 +1855,24 @@ class TradingBot:
             self._journal_signals_evaluated += 1
             direction = self.strategy.evaluate_setup(bar, current_price)
 
+            if self.recorder:
+                self.recorder.record('signal_evaluated',
+                    bar_time=bar.timestamp.isoformat(),
+                    result=direction.value if direction else None)
+
             if direction:
                 self._journal_pulse_bars += 1
                 # Pulse bar detected -- store as pending setup, DON'T enter yet
                 trigger_price = bar.high if direction.value == 'bullish' else bar.low
                 above_below = 'above' if direction.value == 'bullish' else 'below'
+
+                if self.recorder:
+                    self.recorder.record('pulse_detected',
+                        direction=direction.value,
+                        bar={'time': bar.timestamp.strftime('%H:%M'),
+                             'open': bar.open, 'high': bar.high,
+                             'low': bar.low, 'close': bar.close},
+                        trigger_price=trigger_price)
 
                 if self.pending_setup:
                     logger.info(
@@ -1802,6 +1888,12 @@ class TradingBot:
                     'timestamp': current_time,
                     'window': active_window,
                 }
+
+                if self.recorder:
+                    self.recorder.record('setup_created',
+                        direction=direction.value,
+                        trigger_price=trigger_price,
+                        window=active_window)
 
                 window_label = f" [{active_window} window]" if active_window != 'morning' else ""
                 logger.info(
@@ -1919,6 +2011,14 @@ class TradingBot:
                 self._journal_trades_entered += 1
 
                 self.dte0_trades_today += 1
+
+                if self.recorder:
+                    self.recorder.record('trade_entered',
+                        trade_id=trade.id, strategy='daily_income',
+                        direction=spread.direction.value,
+                        strikes={'short': spread.short_leg.strike,
+                                 'long': spread.long_leg.strike},
+                        credit=spread.credit_received, quantity=quantity)
 
                 # Register with portfolio manager for risk tracking
                 self.portfolio.register_position(
@@ -2067,6 +2167,10 @@ class TradingBot:
         logger.info("Shutting down trading bot...")
         self.running = False
 
+        # Close event recorder if active
+        if self.recorder:
+            self.recorder.close()
+
         # Release the instance lock
         self._release_instance_lock()
 
@@ -2135,6 +2239,11 @@ def main():
         '--auto-trade',
         action='store_true',
         help='Skip per-trade confirmation prompts in live mode (use with caution)'
+    )
+    parser.add_argument(
+        '--record',
+        action='store_true',
+        help='Record trading session as JSONL for demo replay'
     )
 
     args = parser.parse_args()
@@ -2246,11 +2355,19 @@ def main():
         db_manager = DatabaseManager(DATABASE_PATH)
         notifier = NotificationManager()
 
+        # Create recorder if --record flag is set
+        recorder = None
+        if args.record:
+            from src.demo.recorder import EventRecorder
+            recorder = EventRecorder()
+            logger.info(f"Demo recording enabled: {recorder._output_dir}")
+
         # Create bot
         bot = TradingBot(
             broker, strategy, db_manager, notifier,
             dry_run=(args.dry_run or args.mode == 'dry-run'),
-            skip_confirm=skip_confirm
+            skip_confirm=skip_confirm,
+            recorder=recorder,
         )
 
         # Set up signal handlers

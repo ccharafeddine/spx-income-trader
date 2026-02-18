@@ -98,6 +98,42 @@ def _wait_for_server(url, timeout=10):
     return False
 
 
+def _resolve_demo_recording(arg):
+    """Resolve a demo recording path from a CLI argument.
+
+    If arg is '__latest__', scan recordings/ and demo_recordings/ for the
+    newest .jsonl file.  Otherwise treat arg as a direct file path.
+    """
+    from src.utils.app_paths import DATA_DIR
+
+    if arg != '__latest__':
+        p = Path(arg)
+        if p.exists():
+            return p
+        # Also check relative to project root
+        p = PROJECT_ROOT / arg
+        if p.exists():
+            return p
+        raise FileNotFoundError(f"Recording not found: {arg}")
+
+    # Scan for latest .jsonl in known directories
+    candidates = []
+    for d in [DATA_DIR / 'database' / 'recordings',
+              DATA_DIR / 'database' / 'demo_recordings',
+              PROJECT_ROOT / 'database' / 'recordings',
+              PROJECT_ROOT / 'database' / 'demo_recordings']:
+        if d.is_dir():
+            candidates.extend(d.glob('*.jsonl'))
+
+    if not candidates:
+        raise FileNotFoundError(
+            "No demo recordings found. Run: python scripts/generate_demo_recording.py --all"
+        )
+
+    # Return the most recently modified
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
 class DesktopApp:
     """Manages the lifecycle of the Flask dashboard and trading bot."""
 
@@ -932,11 +968,30 @@ def main():
         action='store_true',
         help='Force-enable the system tray icon',
     )
+    parser.add_argument(
+        '--demo',
+        nargs='?',
+        const='__latest__',
+        default=None,
+        metavar='RECORDING',
+        help='Demo mode: replay a recorded session (optional path to .jsonl)',
+    )
     args = parser.parse_args()
 
     # --tray overrides the macOS default
     if args.tray:
         args.no_tray = False
+
+    # Demo mode: set up replay engine before creating DesktopApp
+    if args.demo:
+        recording_path = _resolve_demo_recording(args.demo)
+        logger.info(f"Demo mode: loading {recording_path}")
+        from src.demo.replay import ReplayEngine
+        engine = ReplayEngine(recording_path)
+        engine.load()
+        from dashboard.app import app as flask_app
+        flask_app._demo_mode = True
+        flask_app._replay_engine = engine
 
     desktop_app = DesktopApp(port=args.port)
 

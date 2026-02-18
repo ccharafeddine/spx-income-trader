@@ -90,6 +90,10 @@ def check_setup_required():
     if any(request.path.startswith(p) for p in allowed_paths):
         return None
 
+    # Skip broker check in demo mode
+    if getattr(app, '_demo_mode', False):
+        return None
+
     # Check if any broker is configured
     if not is_any_broker_configured():
         return redirect(url_for('setup'))
@@ -98,6 +102,17 @@ def check_setup_required():
 def inject_api_token():
     """Make API token available in all templates for CSRF protection."""
     return {'api_token': API_TOKEN}
+
+
+# Demo mode defaults (set by app_desktop.py --demo)
+app._demo_mode = False
+app._replay_engine = None
+
+
+@app.context_processor
+def inject_demo_mode():
+    """Make demo_mode flag available in all templates."""
+    return {'demo_mode': getattr(app, '_demo_mode', False)}
 
 
 # Shared Yahoo Finance provider (has its own 60s cache)
@@ -1276,6 +1291,8 @@ def index():
 @app.route('/api/status')
 def api_status():
     """Status panel data: bot state, market, SPX quote, heartbeat, account."""
+    if getattr(app, '_demo_mode', False) and app._replay_engine:
+        return jsonify(app._replay_engine.get_status())
     bot = check_bot_status()
     market = is_market_open()
     log_data = parse_todays_log()
@@ -1512,6 +1529,8 @@ def api_schwab_auth_status():
 @app.route('/api/today')
 def api_today():
     """Today's activity: bars, pulses, signals, trades, intraday chart data."""
+    if getattr(app, '_demo_mode', False) and app._replay_engine:
+        return jsonify(app._replay_engine.get_today())
     log_data = parse_todays_log()
     today_str = datetime.now(ET).date().strftime('%Y-%m-%d')
 
@@ -1608,6 +1627,8 @@ def api_today():
 @app.route('/api/signals')
 def api_signals():
     """Signal log with optional days filter. Excludes signals outside market hours."""
+    if getattr(app, '_demo_mode', False) and app._replay_engine:
+        return jsonify(app._replay_engine.get_signals())
     days = request.args.get('days', 30, type=int)
     cutoff = (datetime.now(ET).date() - timedelta(days=days)).isoformat()
 
@@ -1625,6 +1646,8 @@ def api_signals():
 @app.route('/api/history')
 def api_history():
     """Historical: daily_stats, aggregate metrics, trade history with running total."""
+    if getattr(app, '_demo_mode', False) and app._replay_engine:
+        return jsonify(app._replay_engine.get_history())
     days = request.args.get('days', 30, type=int)
     cutoff = (datetime.now(ET).date() - timedelta(days=days)).isoformat()
 
@@ -2826,6 +2849,8 @@ def api_events():
 @app.route('/api/risk-status')
 def api_risk_status():
     """Risk management status: daily circuit breaker + layered drawdown."""
+    if getattr(app, '_demo_mode', False) and app._replay_engine:
+        return jsonify(app._replay_engine.get_risk_status())
     portfolio_cfg = _load_settings().get('portfolio', {})
     account_size = portfolio_cfg.get('account_size', 50000)
     max_daily_loss_pct = portfolio_cfg.get('max_daily_loss_pct', 2.0)
@@ -4358,6 +4383,45 @@ def api_backtest_history():
         return jsonify({'success': True, 'runs': runs})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Demo Mode API
+# ---------------------------------------------------------------------------
+
+@app.route('/api/demo/info')
+def api_demo_info():
+    """Replay metadata: playing, speed, progress, time."""
+    engine = getattr(app, '_replay_engine', None)
+    if not engine:
+        return jsonify({'error': 'Demo mode not active'}), 404
+    return jsonify(engine.get_info())
+
+
+@app.route('/api/demo/control', methods=['POST'])
+def api_demo_control():
+    """Control replay: play, pause, speed, seek, jump."""
+    engine = getattr(app, '_replay_engine', None)
+    if not engine:
+        return jsonify({'error': 'Demo mode not active'}), 404
+
+    data = request.get_json() or {}
+    action = data.get('action', '')
+
+    if action == 'play':
+        engine.play()
+    elif action == 'pause':
+        engine.pause()
+    elif action == 'speed':
+        engine.set_speed(float(data.get('value', 1)))
+    elif action == 'seek':
+        engine.seek(float(data.get('value', 0)))
+    elif action == 'jump':
+        engine.jump_to_next_event()
+    else:
+        return jsonify({'error': f'Unknown action: {action}'}), 400
+
+    return jsonify({'ok': True, **engine.get_info()})
 
 
 # ---------------------------------------------------------------------------

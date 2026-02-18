@@ -38,6 +38,11 @@ tokens/
 database/*.json
 signals_*.json
 
+# Recordings (live sessions gitignored, demo samples tracked)
+database/recordings/
+!database/demo_recordings/
+!database/demo_recordings/*.jsonl
+
 # Build artifacts
 dist/
 build/_pyinstaller/

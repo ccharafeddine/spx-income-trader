@@ -1,0 +1,340 @@
+{"t": 1771255800.0, "type": "market_open", "spx_price": 5890.0}
+{"t": 1771255800.0, "type": "price_tick", "spx_price": 5890.0, "vix_level": 16.78}
+{"t": 1771255800.0, "type": "status_update", "loop_count": 0, "spx_price": 5890.0, "daily_pnl": 0.0, "bars_built": 0, "pulse_bars": 0, "positions_count": 0}
+{"t": 1771255920.0, "type": "price_tick", "spx_price": 5890.9, "vix_level": 17.2}
+{"t": 1771256040.0, "type": "price_tick", "spx_price": 5890.45, "vix_level": 16.51}
+{"t": 1771256100.0, "type": "status_update", "loop_count": 1, "spx_price": 5890.48, "daily_pnl": 0.0, "bars_built": 0, "pulse_bars": 0, "positions_count": 0}
+{"t": 1771256160.0, "type": "price_tick", "spx_price": 5890.07, "vix_level": 16.65}
+{"t": 1771256280.0, "type": "price_tick", "spx_price": 5889.87, "vix_level": 16.61}
+{"t": 1771256400.0, "type": "price_tick", "spx_price": 5890.75, "vix_level": 16.21}
+{"t": 1771256400.0, "type": "status_update", "loop_count": 2, "spx_price": 5890.75, "daily_pnl": 0.0, "bars_built": 0, "pulse_bars": 0, "positions_count": 0}
+{"t": 1771256520.0, "type": "price_tick", "spx_price": 5892.3, "vix_level": 16.07}
+{"t": 1771256640.0, "type": "price_tick", "spx_price": 5892.74, "vix_level": 16.87}
+{"t": 1771256700.0, "type": "status_update", "loop_count": 3, "spx_price": 5892.54, "daily_pnl": 0.0, "bars_built": 0, "pulse_bars": 0, "positions_count": 0}
+{"t": 1771256760.0, "type": "price_tick", "spx_price": 5893.38, "vix_level": 16.28}
+{"t": 1771256880.0, "type": "price_tick", "spx_price": 5893.92, "vix_level": 16.68}
+{"t": 1771257000.0, "type": "price_tick", "spx_price": 5894.66, "vix_level": 16.88}
+{"t": 1771257000.0, "type": "status_update", "loop_count": 4, "spx_price": 5894.66, "daily_pnl": 0.0, "bars_built": 0, "pulse_bars": 0, "positions_count": 0}
+{"t": 1771257120.0, "type": "price_tick", "spx_price": 5893.13, "vix_level": 16.66}
+{"t": 1771257240.0, "type": "price_tick", "spx_price": 5894.73, "vix_level": 16.37}
+{"t": 1771257300.0, "type": "status_update", "loop_count": 5, "spx_price": 5893.87, "daily_pnl": 0.0, "bars_built": 0, "pulse_bars": 0, "positions_count": 0}
+{"t": 1771257360.0, "type": "price_tick", "spx_price": 5893.61, "vix_level": 16.5}
+{"t": 1771257480.0, "type": "price_tick", "spx_price": 5893.65, "vix_level": 16.62}
+{"t": 1771257600.0, "type": "price_tick", "spx_price": 5893.49, "vix_level": 16.26}
+{"t": 1771257600.0, "type": "bar_complete", "time": "2026-02-16T09:30:00", "open": 5890.0, "high": 5894.73, "low": 5889.87, "close": 5893.59, "tick_count": 30}
+{"t": 1771257600.0, "type": "pulse_detected", "direction": "bullish", "bar": {"time": "2026-02-16T09:30:00", "open": 5890.0, "high": 5894.73, "low": 5889.87, "close": 5893.59, "tick_count": 30}, "trigger_price": 5894.73}
+{"t": 1771257600.0, "type": "status_update", "loop_count": 6, "spx_price": 5893.49, "daily_pnl": 0.0, "bars_built": 1, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771257601.0, "type": "setup_created", "direction": "bullish", "trigger_price": 5894.73, "window": "morning"}
+{"t": 1771257602.0, "type": "signal_evaluated", "bar_time": "2026-02-16T09:30:00", "result": "bullish"}
+{"t": 1771257720.0, "type": "price_tick", "spx_price": 5894.15, "vix_level": 16.68}
+{"t": 1771257840.0, "type": "price_tick", "spx_price": 5893.82, "vix_level": 16.11}
+{"t": 1771257900.0, "type": "status_update", "loop_count": 7, "spx_price": 5894.22, "daily_pnl": 0.0, "bars_built": 1, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771257960.0, "type": "price_tick", "spx_price": 5895.16, "vix_level": 16.09}
+{"t": 1771258080.0, "type": "price_tick", "spx_price": 5895.46, "vix_level": 16.3}
+{"t": 1771258080.0, "type": "breakout_trigger", "direction": "bullish", "current_price": 5896.23, "trigger_price": 5894.73}
+{"t": 1771258085.0, "type": "trade_entered", "trade_id": "demo_win_20260216_001", "strategy": "daily_income", "direction": "bullish", "strikes": {"short": 5880.0, "long": 5875.0}, "credit": 0.85, "quantity": 5}
+{"t": 1771258200.0, "type": "price_tick", "spx_price": 5895.21, "vix_level": 15.91}
+{"t": 1771258200.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 0.0, "spx_price": 5895.21}]}
+{"t": 1771258200.0, "type": "status_update", "loop_count": 8, "spx_price": 5895.21, "daily_pnl": 0.0, "bars_built": 1, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771258320.0, "type": "price_tick", "spx_price": 5895.45, "vix_level": 16.46}
+{"t": 1771258440.0, "type": "price_tick", "spx_price": 5894.04, "vix_level": 16.19}
+{"t": 1771258500.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 7.39, "spx_price": 5893.55}]}
+{"t": 1771258500.0, "type": "status_update", "loop_count": 9, "spx_price": 5893.55, "daily_pnl": 0.0, "bars_built": 1, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771258560.0, "type": "price_tick", "spx_price": 5893.16, "vix_level": 16.73}
+{"t": 1771258680.0, "type": "price_tick", "spx_price": 5892.87, "vix_level": 16.35}
+{"t": 1771258800.0, "type": "price_tick", "spx_price": 5893.5, "vix_level": 16.26}
+{"t": 1771258800.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 14.78, "spx_price": 5893.5}]}
+{"t": 1771258800.0, "type": "status_update", "loop_count": 10, "spx_price": 5893.5, "daily_pnl": 0.0, "bars_built": 1, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771258920.0, "type": "price_tick", "spx_price": 5893.18, "vix_level": 16.6}
+{"t": 1771259040.0, "type": "price_tick", "spx_price": 5893.27, "vix_level": 16.64}
+{"t": 1771259100.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 22.17, "spx_price": 5892.57}]}
+{"t": 1771259100.0, "type": "status_update", "loop_count": 11, "spx_price": 5892.57, "daily_pnl": 0.0, "bars_built": 1, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771259160.0, "type": "price_tick", "spx_price": 5892.74, "vix_level": 16.88}
+{"t": 1771259280.0, "type": "price_tick", "spx_price": 5892.39, "vix_level": 16.32}
+{"t": 1771259400.0, "type": "price_tick", "spx_price": 5892.07, "vix_level": 16.36}
+{"t": 1771259400.0, "type": "bar_complete", "time": "2026-02-16T10:00:00", "open": 5893.49, "high": 5895.55, "low": 5892.27, "close": 5892.27, "tick_count": 30}
+{"t": 1771259400.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 29.57, "spx_price": 5892.07}]}
+{"t": 1771259400.0, "type": "status_update", "loop_count": 12, "spx_price": 5892.07, "daily_pnl": 0.0, "bars_built": 2, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771259520.0, "type": "price_tick", "spx_price": 5891.99, "vix_level": 16.67}
+{"t": 1771259640.0, "type": "price_tick", "spx_price": 5891.2, "vix_level": 16.08}
+{"t": 1771259700.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 36.96, "spx_price": 5890.75}]}
+{"t": 1771259700.0, "type": "status_update", "loop_count": 13, "spx_price": 5890.75, "daily_pnl": 0.0, "bars_built": 2, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771259760.0, "type": "price_tick", "spx_price": 5890.79, "vix_level": 16.79}
+{"t": 1771259880.0, "type": "price_tick", "spx_price": 5890.6, "vix_level": 16.46}
+{"t": 1771260000.0, "type": "price_tick", "spx_price": 5889.52, "vix_level": 16.71}
+{"t": 1771260000.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 44.35, "spx_price": 5889.52}]}
+{"t": 1771260000.0, "type": "status_update", "loop_count": 14, "spx_price": 5889.52, "daily_pnl": 0.0, "bars_built": 2, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771260120.0, "type": "price_tick", "spx_price": 5890.78, "vix_level": 16.86}
+{"t": 1771260240.0, "type": "price_tick", "spx_price": 5890.66, "vix_level": 16.73}
+{"t": 1771260300.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 51.74, "spx_price": 5891.35}]}
+{"t": 1771260300.0, "type": "status_update", "loop_count": 15, "spx_price": 5891.35, "daily_pnl": 0.0, "bars_built": 2, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771260360.0, "type": "price_tick", "spx_price": 5891.64, "vix_level": 16.0}
+{"t": 1771260480.0, "type": "price_tick", "spx_price": 5892.29, "vix_level": 16.55}
+{"t": 1771260600.0, "type": "price_tick", "spx_price": 5891.5, "vix_level": 16.45}
+{"t": 1771260600.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 59.13, "spx_price": 5891.5}]}
+{"t": 1771260600.0, "type": "status_update", "loop_count": 16, "spx_price": 5891.5, "daily_pnl": 0.0, "bars_built": 2, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771260720.0, "type": "price_tick", "spx_price": 5891.06, "vix_level": 16.71}
+{"t": 1771260840.0, "type": "price_tick", "spx_price": 5891.27, "vix_level": 16.42}
+{"t": 1771260900.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 66.52, "spx_price": 5891.59}]}
+{"t": 1771260900.0, "type": "status_update", "loop_count": 17, "spx_price": 5891.59, "daily_pnl": 0.0, "bars_built": 2, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771260960.0, "type": "price_tick", "spx_price": 5891.88, "vix_level": 16.52}
+{"t": 1771261080.0, "type": "price_tick", "spx_price": 5891.19, "vix_level": 16.34}
+{"t": 1771261200.0, "type": "price_tick", "spx_price": 5891.94, "vix_level": 16.54}
+{"t": 1771261200.0, "type": "bar_complete", "time": "2026-02-16T10:30:00", "open": 5892.07, "high": 5892.75, "low": 5889.52, "close": 5891.4, "tick_count": 30}
+{"t": 1771261200.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 73.91, "spx_price": 5891.94}]}
+{"t": 1771261200.0, "type": "status_update", "loop_count": 18, "spx_price": 5891.94, "daily_pnl": 0.0, "bars_built": 3, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771261320.0, "type": "price_tick", "spx_price": 5892.37, "vix_level": 16.16}
+{"t": 1771261440.0, "type": "price_tick", "spx_price": 5891.76, "vix_level": 16.35}
+{"t": 1771261500.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 81.3, "spx_price": 5891.56}]}
+{"t": 1771261500.0, "type": "status_update", "loop_count": 19, "spx_price": 5891.56, "daily_pnl": 0.0, "bars_built": 3, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771261560.0, "type": "price_tick", "spx_price": 5891.2, "vix_level": 16.05}
+{"t": 1771261680.0, "type": "price_tick", "spx_price": 5890.47, "vix_level": 16.15}
+{"t": 1771261800.0, "type": "price_tick", "spx_price": 5891.81, "vix_level": 16.7}
+{"t": 1771261800.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 88.7, "spx_price": 5891.81}]}
+{"t": 1771261800.0, "type": "status_update", "loop_count": 20, "spx_price": 5891.81, "daily_pnl": 0.0, "bars_built": 3, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771261920.0, "type": "price_tick", "spx_price": 5891.98, "vix_level": 16.75}
+{"t": 1771262040.0, "type": "price_tick", "spx_price": 5892.61, "vix_level": 17.09}
+{"t": 1771262100.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 96.09, "spx_price": 5892.91}]}
+{"t": 1771262100.0, "type": "status_update", "loop_count": 21, "spx_price": 5892.91, "daily_pnl": 0.0, "bars_built": 3, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771262160.0, "type": "price_tick", "spx_price": 5893.15, "vix_level": 16.34}
+{"t": 1771262280.0, "type": "price_tick", "spx_price": 5892.98, "vix_level": 16.88}
+{"t": 1771262400.0, "type": "price_tick", "spx_price": 5894.66, "vix_level": 16.77}
+{"t": 1771262400.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 103.48, "spx_price": 5894.66}]}
+{"t": 1771262400.0, "type": "status_update", "loop_count": 22, "spx_price": 5894.66, "daily_pnl": 0.0, "bars_built": 3, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771262520.0, "type": "price_tick", "spx_price": 5894.7, "vix_level": 16.06}
+{"t": 1771262640.0, "type": "price_tick", "spx_price": 5894.52, "vix_level": 16.51}
+{"t": 1771262700.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 110.87, "spx_price": 5894.31}]}
+{"t": 1771262700.0, "type": "status_update", "loop_count": 23, "spx_price": 5894.31, "daily_pnl": 0.0, "bars_built": 3, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771262760.0, "type": "price_tick", "spx_price": 5894.49, "vix_level": 16.68}
+{"t": 1771262880.0, "type": "price_tick", "spx_price": 5894.18, "vix_level": 16.45}
+{"t": 1771263000.0, "type": "price_tick", "spx_price": 5894.81, "vix_level": 16.31}
+{"t": 1771263000.0, "type": "bar_complete", "time": "2026-02-16T11:00:00", "open": 5891.94, "high": 5894.7, "low": 5890.47, "close": 5894.46, "tick_count": 30}
+{"t": 1771263000.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 118.26, "spx_price": 5894.81}]}
+{"t": 1771263000.0, "type": "status_update", "loop_count": 24, "spx_price": 5894.81, "daily_pnl": 0.0, "bars_built": 4, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771263120.0, "type": "price_tick", "spx_price": 5894.62, "vix_level": 16.1}
+{"t": 1771263240.0, "type": "price_tick", "spx_price": 5892.95, "vix_level": 16.87}
+{"t": 1771263300.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 125.65, "spx_price": 5892.74}]}
+{"t": 1771263300.0, "type": "status_update", "loop_count": 25, "spx_price": 5892.74, "daily_pnl": 0.0, "bars_built": 4, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771263360.0, "type": "price_tick", "spx_price": 5893.04, "vix_level": 16.15}
+{"t": 1771263480.0, "type": "price_tick", "spx_price": 5892.85, "vix_level": 16.71}
+{"t": 1771263600.0, "type": "price_tick", "spx_price": 5893.49, "vix_level": 16.26}
+{"t": 1771263600.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 133.04, "spx_price": 5893.49}]}
+{"t": 1771263600.0, "type": "status_update", "loop_count": 26, "spx_price": 5893.49, "daily_pnl": 0.0, "bars_built": 4, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771263720.0, "type": "price_tick", "spx_price": 5893.99, "vix_level": 16.24}
+{"t": 1771263840.0, "type": "price_tick", "spx_price": 5894.84, "vix_level": 16.3}
+{"t": 1771263900.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 140.43, "spx_price": 5895.53}]}
+{"t": 1771263900.0, "type": "status_update", "loop_count": 27, "spx_price": 5895.53, "daily_pnl": 0.0, "bars_built": 4, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771263960.0, "type": "price_tick", "spx_price": 5895.59, "vix_level": 16.17}
+{"t": 1771264080.0, "type": "price_tick", "spx_price": 5895.84, "vix_level": 16.61}
+{"t": 1771264200.0, "type": "price_tick", "spx_price": 5896.55, "vix_level": 16.52}
+{"t": 1771264200.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 147.83, "spx_price": 5896.55}]}
+{"t": 1771264200.0, "type": "status_update", "loop_count": 28, "spx_price": 5896.55, "daily_pnl": 0.0, "bars_built": 4, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771264320.0, "type": "price_tick", "spx_price": 5895.8, "vix_level": 16.11}
+{"t": 1771264440.0, "type": "price_tick", "spx_price": 5895.81, "vix_level": 16.19}
+{"t": 1771264500.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 155.22, "spx_price": 5895.47}]}
+{"t": 1771264500.0, "type": "status_update", "loop_count": 29, "spx_price": 5895.47, "daily_pnl": 0.0, "bars_built": 4, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771264560.0, "type": "price_tick", "spx_price": 5896.12, "vix_level": 16.78}
+{"t": 1771264680.0, "type": "price_tick", "spx_price": 5895.85, "vix_level": 16.15}
+{"t": 1771264800.0, "type": "price_tick", "spx_price": 5897.73, "vix_level": 16.79}
+{"t": 1771264800.0, "type": "bar_complete", "time": "2026-02-16T11:30:00", "open": 5894.81, "high": 5896.55, "low": 5892.74, "close": 5896.45, "tick_count": 30}
+{"t": 1771264800.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 162.61, "spx_price": 5897.73}]}
+{"t": 1771264800.0, "type": "status_update", "loop_count": 30, "spx_price": 5897.73, "daily_pnl": 0.0, "bars_built": 5, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771264920.0, "type": "price_tick", "spx_price": 5898.64, "vix_level": 16.8}
+{"t": 1771265040.0, "type": "price_tick", "spx_price": 5898.99, "vix_level": 16.7}
+{"t": 1771265100.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 170.0, "spx_price": 5899.69}]}
+{"t": 1771265100.0, "type": "status_update", "loop_count": 31, "spx_price": 5899.69, "daily_pnl": 0.0, "bars_built": 5, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771265160.0, "type": "price_tick", "spx_price": 5900.56, "vix_level": 15.87}
+{"t": 1771265280.0, "type": "price_tick", "spx_price": 5901.52, "vix_level": 16.1}
+{"t": 1771265400.0, "type": "price_tick", "spx_price": 5901.0, "vix_level": 16.7}
+{"t": 1771265400.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 177.39, "spx_price": 5901.0}]}
+{"t": 1771265400.0, "type": "status_update", "loop_count": 32, "spx_price": 5901.0, "daily_pnl": 0.0, "bars_built": 5, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771265520.0, "type": "price_tick", "spx_price": 5901.8, "vix_level": 17.11}
+{"t": 1771265640.0, "type": "price_tick", "spx_price": 5901.78, "vix_level": 16.71}
+{"t": 1771265700.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 184.78, "spx_price": 5902.35}]}
+{"t": 1771265700.0, "type": "status_update", "loop_count": 33, "spx_price": 5902.35, "daily_pnl": 0.0, "bars_built": 5, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771265760.0, "type": "price_tick", "spx_price": 5903.21, "vix_level": 16.68}
+{"t": 1771265880.0, "type": "price_tick", "spx_price": 5902.91, "vix_level": 16.49}
+{"t": 1771266000.0, "type": "price_tick", "spx_price": 5902.14, "vix_level": 16.65}
+{"t": 1771266000.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 192.17, "spx_price": 5902.14}]}
+{"t": 1771266000.0, "type": "status_update", "loop_count": 34, "spx_price": 5902.14, "daily_pnl": 0.0, "bars_built": 5, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771266120.0, "type": "price_tick", "spx_price": 5903.2, "vix_level": 16.37}
+{"t": 1771266240.0, "type": "price_tick", "spx_price": 5903.07, "vix_level": 16.61}
+{"t": 1771266300.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 199.57, "spx_price": 5902.86}]}
+{"t": 1771266300.0, "type": "status_update", "loop_count": 35, "spx_price": 5902.86, "daily_pnl": 0.0, "bars_built": 5, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771266360.0, "type": "price_tick", "spx_price": 5903.84, "vix_level": 17.0}
+{"t": 1771266480.0, "type": "price_tick", "spx_price": 5903.56, "vix_level": 17.21}
+{"t": 1771266600.0, "type": "price_tick", "spx_price": 5903.66, "vix_level": 16.78}
+{"t": 1771266600.0, "type": "bar_complete", "time": "2026-02-16T12:00:00", "open": 5897.73, "high": 5903.84, "low": 5897.73, "close": 5903.24, "tick_count": 30}
+{"t": 1771266600.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 206.96, "spx_price": 5903.66}]}
+{"t": 1771266600.0, "type": "status_update", "loop_count": 36, "spx_price": 5903.66, "daily_pnl": 0.0, "bars_built": 6, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771266720.0, "type": "price_tick", "spx_price": 5902.68, "vix_level": 16.29}
+{"t": 1771266840.0, "type": "price_tick", "spx_price": 5903.06, "vix_level": 16.46}
+{"t": 1771266900.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 214.35, "spx_price": 5903.06}]}
+{"t": 1771266900.0, "type": "status_update", "loop_count": 37, "spx_price": 5903.06, "daily_pnl": 0.0, "bars_built": 6, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771266960.0, "type": "price_tick", "spx_price": 5903.18, "vix_level": 16.33}
+{"t": 1771267080.0, "type": "price_tick", "spx_price": 5903.67, "vix_level": 16.64}
+{"t": 1771267200.0, "type": "price_tick", "spx_price": 5904.76, "vix_level": 16.95}
+{"t": 1771267200.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 221.74, "spx_price": 5904.76}]}
+{"t": 1771267200.0, "type": "status_update", "loop_count": 38, "spx_price": 5904.76, "daily_pnl": 0.0, "bars_built": 6, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771267320.0, "type": "price_tick", "spx_price": 5905.79, "vix_level": 16.32}
+{"t": 1771267440.0, "type": "price_tick", "spx_price": 5906.16, "vix_level": 16.54}
+{"t": 1771267500.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 229.13, "spx_price": 5906.29}]}
+{"t": 1771267500.0, "type": "status_update", "loop_count": 39, "spx_price": 5906.29, "daily_pnl": 0.0, "bars_built": 6, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771267560.0, "type": "price_tick", "spx_price": 5905.75, "vix_level": 16.22}
+{"t": 1771267680.0, "type": "price_tick", "spx_price": 5907.5, "vix_level": 16.95}
+{"t": 1771267800.0, "type": "price_tick", "spx_price": 5907.18, "vix_level": 16.69}
+{"t": 1771267800.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 236.52, "spx_price": 5907.18}]}
+{"t": 1771267800.0, "type": "status_update", "loop_count": 40, "spx_price": 5907.18, "daily_pnl": 0.0, "bars_built": 6, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771267920.0, "type": "price_tick", "spx_price": 5907.38, "vix_level": 16.54}
+{"t": 1771268040.0, "type": "price_tick", "spx_price": 5907.23, "vix_level": 16.4}
+{"t": 1771268100.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 243.91, "spx_price": 5908.1}]}
+{"t": 1771268100.0, "type": "status_update", "loop_count": 41, "spx_price": 5908.1, "daily_pnl": 0.0, "bars_built": 6, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771268160.0, "type": "price_tick", "spx_price": 5908.89, "vix_level": 16.76}
+{"t": 1771268280.0, "type": "price_tick", "spx_price": 5908.26, "vix_level": 16.41}
+{"t": 1771268400.0, "type": "price_tick", "spx_price": 5909.05, "vix_level": 16.16}
+{"t": 1771268400.0, "type": "bar_complete", "time": "2026-02-16T12:30:00", "open": 5903.66, "high": 5909.2, "low": 5902.68, "close": 5908.2, "tick_count": 30}
+{"t": 1771268400.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 251.3, "spx_price": 5909.05}]}
+{"t": 1771268400.0, "type": "status_update", "loop_count": 42, "spx_price": 5909.05, "daily_pnl": 0.0, "bars_built": 7, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771268520.0, "type": "price_tick", "spx_price": 5908.88, "vix_level": 15.82}
+{"t": 1771268640.0, "type": "price_tick", "spx_price": 5909.15, "vix_level": 16.22}
+{"t": 1771268700.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 258.7, "spx_price": 5908.64}]}
+{"t": 1771268700.0, "type": "status_update", "loop_count": 43, "spx_price": 5908.64, "daily_pnl": 0.0, "bars_built": 7, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771268760.0, "type": "price_tick", "spx_price": 5908.71, "vix_level": 16.77}
+{"t": 1771268880.0, "type": "price_tick", "spx_price": 5909.83, "vix_level": 16.46}
+{"t": 1771269000.0, "type": "price_tick", "spx_price": 5910.69, "vix_level": 16.5}
+{"t": 1771269000.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 266.09, "spx_price": 5910.69}]}
+{"t": 1771269000.0, "type": "status_update", "loop_count": 44, "spx_price": 5910.69, "daily_pnl": 0.0, "bars_built": 7, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771269120.0, "type": "price_tick", "spx_price": 5910.53, "vix_level": 16.54}
+{"t": 1771269240.0, "type": "price_tick", "spx_price": 5911.98, "vix_level": 16.68}
+{"t": 1771269300.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 273.48, "spx_price": 5912.45}]}
+{"t": 1771269300.0, "type": "status_update", "loop_count": 45, "spx_price": 5912.45, "daily_pnl": 0.0, "bars_built": 7, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771269360.0, "type": "price_tick", "spx_price": 5912.03, "vix_level": 15.91}
+{"t": 1771269480.0, "type": "price_tick", "spx_price": 5912.88, "vix_level": 16.9}
+{"t": 1771269600.0, "type": "price_tick", "spx_price": 5913.66, "vix_level": 16.43}
+{"t": 1771269600.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 280.87, "spx_price": 5913.66}]}
+{"t": 1771269600.0, "type": "status_update", "loop_count": 46, "spx_price": 5913.66, "daily_pnl": 0.0, "bars_built": 7, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771269720.0, "type": "price_tick", "spx_price": 5913.66, "vix_level": 16.46}
+{"t": 1771269840.0, "type": "price_tick", "spx_price": 5913.37, "vix_level": 16.17}
+{"t": 1771269900.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 288.26, "spx_price": 5913.53}]}
+{"t": 1771269900.0, "type": "status_update", "loop_count": 47, "spx_price": 5913.53, "daily_pnl": 0.0, "bars_built": 7, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771269960.0, "type": "price_tick", "spx_price": 5913.61, "vix_level": 16.34}
+{"t": 1771270080.0, "type": "price_tick", "spx_price": 5914.92, "vix_level": 16.54}
+{"t": 1771270200.0, "type": "price_tick", "spx_price": 5915.66, "vix_level": 16.57}
+{"t": 1771270200.0, "type": "bar_complete", "time": "2026-02-16T13:00:00", "open": 5909.05, "high": 5915.3, "low": 5908.64, "close": 5915.3, "tick_count": 30}
+{"t": 1771270200.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 295.65, "spx_price": 5915.66}]}
+{"t": 1771270200.0, "type": "status_update", "loop_count": 48, "spx_price": 5915.66, "daily_pnl": 0.0, "bars_built": 8, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771270320.0, "type": "price_tick", "spx_price": 5916.42, "vix_level": 16.32}
+{"t": 1771270440.0, "type": "price_tick", "spx_price": 5915.19, "vix_level": 17.0}
+{"t": 1771270500.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 303.04, "spx_price": 5915.35}]}
+{"t": 1771270500.0, "type": "status_update", "loop_count": 49, "spx_price": 5915.35, "daily_pnl": 0.0, "bars_built": 8, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771270560.0, "type": "price_tick", "spx_price": 5915.63, "vix_level": 16.82}
+{"t": 1771270680.0, "type": "price_tick", "spx_price": 5916.03, "vix_level": 16.75}
+{"t": 1771270800.0, "type": "price_tick", "spx_price": 5914.64, "vix_level": 15.97}
+{"t": 1771270800.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 310.43, "spx_price": 5914.64}]}
+{"t": 1771270800.0, "type": "status_update", "loop_count": 50, "spx_price": 5914.64, "daily_pnl": 0.0, "bars_built": 8, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771270920.0, "type": "price_tick", "spx_price": 5914.59, "vix_level": 16.51}
+{"t": 1771271040.0, "type": "price_tick", "spx_price": 5914.93, "vix_level": 16.34}
+{"t": 1771271100.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 317.83, "spx_price": 5914.94}]}
+{"t": 1771271100.0, "type": "status_update", "loop_count": 51, "spx_price": 5914.94, "daily_pnl": 0.0, "bars_built": 8, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771271160.0, "type": "price_tick", "spx_price": 5915.73, "vix_level": 16.18}
+{"t": 1771271280.0, "type": "price_tick", "spx_price": 5915.43, "vix_level": 16.43}
+{"t": 1771271400.0, "type": "price_tick", "spx_price": 5916.74, "vix_level": 16.67}
+{"t": 1771271400.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 325.22, "spx_price": 5916.74}]}
+{"t": 1771271400.0, "type": "status_update", "loop_count": 52, "spx_price": 5916.74, "daily_pnl": 0.0, "bars_built": 8, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771271520.0, "type": "price_tick", "spx_price": 5917.99, "vix_level": 16.36}
+{"t": 1771271640.0, "type": "price_tick", "spx_price": 5918.13, "vix_level": 16.18}
+{"t": 1771271700.0, "type": "position_update", "positions": [{"trade_id": "demo_win_20260216_001", "unrealized_pnl": 332.61, "spx_price": 5916.98}]}
+{"t": 1771271700.0, "type": "status_update", "loop_count": 53, "spx_price": 5916.98, "daily_pnl": 0.0, "bars_built": 8, "pulse_bars": 1, "positions_count": 1}
+{"t": 1771271760.0, "type": "price_tick", "spx_price": 5916.73, "vix_level": 16.87}
+{"t": 1771271880.0, "type": "price_tick", "spx_price": 5917.49, "vix_level": 16.51}
+{"t": 1771272000.0, "type": "price_tick", "spx_price": 5917.46, "vix_level": 16.66}
+{"t": 1771272000.0, "type": "bar_complete", "time": "2026-02-16T13:30:00", "open": 5915.66, "high": 5918.16, "low": 5914.55, "close": 5917.17, "tick_count": 30}
+{"t": 1771272000.0, "type": "trade_exited", "trade_id": "demo_win_20260216_001", "pnl": 340.0, "pnl_pct": 80.0, "exit_reason": "profit_target", "duration_minutes": 232}
+{"t": 1771272000.0, "type": "status_update", "loop_count": 54, "spx_price": 5917.46, "daily_pnl": 340.0, "bars_built": 9, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771272120.0, "type": "price_tick", "spx_price": 5918.02, "vix_level": 16.78}
+{"t": 1771272240.0, "type": "price_tick", "spx_price": 5918.5, "vix_level": 16.68}
+{"t": 1771272300.0, "type": "status_update", "loop_count": 55, "spx_price": 5918.31, "daily_pnl": 340.0, "bars_built": 9, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771272360.0, "type": "price_tick", "spx_price": 5919.38, "vix_level": 16.36}
+{"t": 1771272480.0, "type": "price_tick", "spx_price": 5919.79, "vix_level": 16.79}
+{"t": 1771272600.0, "type": "price_tick", "spx_price": 5920.4, "vix_level": 16.34}
+{"t": 1771272600.0, "type": "status_update", "loop_count": 56, "spx_price": 5920.4, "daily_pnl": 340.0, "bars_built": 9, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771272720.0, "type": "price_tick", "spx_price": 5920.53, "vix_level": 16.16}
+{"t": 1771272840.0, "type": "price_tick", "spx_price": 5920.42, "vix_level": 16.74}
+{"t": 1771272900.0, "type": "status_update", "loop_count": 57, "spx_price": 5920.33, "daily_pnl": 340.0, "bars_built": 9, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771272960.0, "type": "price_tick", "spx_price": 5920.65, "vix_level": 16.24}
+{"t": 1771273080.0, "type": "price_tick", "spx_price": 5920.19, "vix_level": 16.72}
+{"t": 1771273200.0, "type": "price_tick", "spx_price": 5919.89, "vix_level": 16.24}
+{"t": 1771273200.0, "type": "status_update", "loop_count": 58, "spx_price": 5919.89, "daily_pnl": 340.0, "bars_built": 9, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771273320.0, "type": "price_tick", "spx_price": 5920.04, "vix_level": 16.56}
+{"t": 1771273440.0, "type": "price_tick", "spx_price": 5920.17, "vix_level": 16.65}
+{"t": 1771273500.0, "type": "status_update", "loop_count": 59, "spx_price": 5918.86, "daily_pnl": 340.0, "bars_built": 9, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771273560.0, "type": "price_tick", "spx_price": 5918.95, "vix_level": 17.12}
+{"t": 1771273680.0, "type": "price_tick", "spx_price": 5918.81, "vix_level": 16.62}
+{"t": 1771273800.0, "type": "price_tick", "spx_price": 5919.17, "vix_level": 16.27}
+{"t": 1771273800.0, "type": "bar_complete", "time": "2026-02-16T14:00:00", "open": 5917.46, "high": 5920.67, "low": 5917.46, "close": 5919.23, "tick_count": 30}
+{"t": 1771273800.0, "type": "status_update", "loop_count": 60, "spx_price": 5919.17, "daily_pnl": 340.0, "bars_built": 10, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771273920.0, "type": "price_tick", "spx_price": 5918.5, "vix_level": 16.86}
+{"t": 1771274040.0, "type": "price_tick", "spx_price": 5918.22, "vix_level": 16.71}
+{"t": 1771274100.0, "type": "status_update", "loop_count": 61, "spx_price": 5917.98, "daily_pnl": 340.0, "bars_built": 10, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771274160.0, "type": "price_tick", "spx_price": 5918.32, "vix_level": 16.17}
+{"t": 1771274280.0, "type": "price_tick", "spx_price": 5918.79, "vix_level": 16.8}
+{"t": 1771274400.0, "type": "price_tick", "spx_price": 5919.22, "vix_level": 16.32}
+{"t": 1771274400.0, "type": "status_update", "loop_count": 62, "spx_price": 5919.22, "daily_pnl": 340.0, "bars_built": 10, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771274520.0, "type": "price_tick", "spx_price": 5918.89, "vix_level": 16.24}
+{"t": 1771274640.0, "type": "price_tick", "spx_price": 5918.86, "vix_level": 16.55}
+{"t": 1771274700.0, "type": "status_update", "loop_count": 63, "spx_price": 5918.99, "daily_pnl": 340.0, "bars_built": 10, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771274760.0, "type": "price_tick", "spx_price": 5919.27, "vix_level": 17.22}
+{"t": 1771274880.0, "type": "price_tick", "spx_price": 5920.33, "vix_level": 16.47}
+{"t": 1771275000.0, "type": "price_tick", "spx_price": 5920.16, "vix_level": 16.1}
+{"t": 1771275000.0, "type": "status_update", "loop_count": 64, "spx_price": 5920.16, "daily_pnl": 340.0, "bars_built": 10, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771275120.0, "type": "price_tick", "spx_price": 5921.68, "vix_level": 16.89}
+{"t": 1771275240.0, "type": "price_tick", "spx_price": 5922.12, "vix_level": 16.1}
+{"t": 1771275300.0, "type": "status_update", "loop_count": 65, "spx_price": 5921.76, "daily_pnl": 340.0, "bars_built": 10, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771275360.0, "type": "price_tick", "spx_price": 5921.55, "vix_level": 16.7}
+{"t": 1771275480.0, "type": "price_tick", "spx_price": 5920.43, "vix_level": 16.19}
+{"t": 1771275600.0, "type": "price_tick", "spx_price": 5919.88, "vix_level": 16.9}
+{"t": 1771275600.0, "type": "bar_complete", "time": "2026-02-16T14:30:00", "open": 5919.17, "high": 5922.12, "low": 5917.98, "close": 5920.33, "tick_count": 30}
+{"t": 1771275600.0, "type": "status_update", "loop_count": 66, "spx_price": 5919.88, "daily_pnl": 340.0, "bars_built": 11, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771275720.0, "type": "price_tick", "spx_price": 5919.97, "vix_level": 16.5}
+{"t": 1771275840.0, "type": "price_tick", "spx_price": 5920.15, "vix_level": 16.84}
+{"t": 1771275900.0, "type": "status_update", "loop_count": 67, "spx_price": 5920.13, "daily_pnl": 340.0, "bars_built": 11, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771275960.0, "type": "price_tick", "spx_price": 5920.3, "vix_level": 17.0}
+{"t": 1771276080.0, "type": "price_tick", "spx_price": 5921.32, "vix_level": 16.69}
+{"t": 1771276200.0, "type": "price_tick", "spx_price": 5920.55, "vix_level": 16.39}
+{"t": 1771276200.0, "type": "status_update", "loop_count": 68, "spx_price": 5920.55, "daily_pnl": 340.0, "bars_built": 11, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771276320.0, "type": "price_tick", "spx_price": 5920.46, "vix_level": 16.79}
+{"t": 1771276440.0, "type": "price_tick", "spx_price": 5920.18, "vix_level": 16.4}
+{"t": 1771276500.0, "type": "status_update", "loop_count": 69, "spx_price": 5920.8, "daily_pnl": 340.0, "bars_built": 11, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771276560.0, "type": "price_tick", "spx_price": 5920.77, "vix_level": 16.12}
+{"t": 1771276680.0, "type": "price_tick", "spx_price": 5921.61, "vix_level": 16.86}
+{"t": 1771276800.0, "type": "price_tick", "spx_price": 5920.56, "vix_level": 16.92}
+{"t": 1771276800.0, "type": "status_update", "loop_count": 70, "spx_price": 5920.56, "daily_pnl": 340.0, "bars_built": 11, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771276920.0, "type": "price_tick", "spx_price": 5921.63, "vix_level": 16.63}
+{"t": 1771277040.0, "type": "price_tick", "spx_price": 5921.9, "vix_level": 16.53}
+{"t": 1771277100.0, "type": "status_update", "loop_count": 71, "spx_price": 5922.45, "daily_pnl": 340.0, "bars_built": 11, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771277160.0, "type": "price_tick", "spx_price": 5922.83, "vix_level": 16.3}
+{"t": 1771277280.0, "type": "price_tick", "spx_price": 5922.08, "vix_level": 16.52}
+{"t": 1771277400.0, "type": "price_tick", "spx_price": 5921.75, "vix_level": 16.72}
+{"t": 1771277400.0, "type": "bar_complete", "time": "2026-02-16T15:00:00", "open": 5919.88, "high": 5922.83, "low": 5919.13, "close": 5921.74, "tick_count": 30}
+{"t": 1771277400.0, "type": "status_update", "loop_count": 72, "spx_price": 5921.75, "daily_pnl": 340.0, "bars_built": 12, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771277520.0, "type": "price_tick", "spx_price": 5920.22, "vix_level": 16.54}
+{"t": 1771277640.0, "type": "price_tick", "spx_price": 5919.9, "vix_level": 16.53}
+{"t": 1771277700.0, "type": "status_update", "loop_count": 73, "spx_price": 5920.28, "daily_pnl": 340.0, "bars_built": 12, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771277760.0, "type": "price_tick", "spx_price": 5920.31, "vix_level": 16.94}
+{"t": 1771277880.0, "type": "price_tick", "spx_price": 5919.31, "vix_level": 16.78}
+{"t": 1771278000.0, "type": "price_tick", "spx_price": 5918.92, "vix_level": 16.9}
+{"t": 1771278000.0, "type": "status_update", "loop_count": 74, "spx_price": 5918.92, "daily_pnl": 340.0, "bars_built": 12, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771278120.0, "type": "price_tick", "spx_price": 5918.41, "vix_level": 17.13}
+{"t": 1771278240.0, "type": "price_tick", "spx_price": 5918.61, "vix_level": 16.27}
+{"t": 1771278300.0, "type": "status_update", "loop_count": 75, "spx_price": 5918.24, "daily_pnl": 340.0, "bars_built": 12, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771278360.0, "type": "price_tick", "spx_price": 5918.57, "vix_level": 16.28}
+{"t": 1771278480.0, "type": "price_tick", "spx_price": 5918.28, "vix_level": 16.97}
+{"t": 1771278600.0, "type": "price_tick", "spx_price": 5919.12, "vix_level": 16.74}
+{"t": 1771278600.0, "type": "status_update", "loop_count": 76, "spx_price": 5919.12, "daily_pnl": 340.0, "bars_built": 12, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771278720.0, "type": "price_tick", "spx_price": 5918.47, "vix_level": 16.65}
+{"t": 1771278840.0, "type": "price_tick", "spx_price": 5918.65, "vix_level": 16.32}
+{"t": 1771278900.0, "type": "status_update", "loop_count": 77, "spx_price": 5918.93, "daily_pnl": 340.0, "bars_built": 12, "pulse_bars": 1, "positions_count": 0}
+{"t": 1771278960.0, "type": "price_tick", "spx_price": 5919.67, "vix_level": 16.17}
+{"t": 1771279080.0, "type": "price_tick", "spx_price": 5919.83, "vix_level": 16.59}
+{"t": 1771279200.0, "type": "bar_complete", "time": "2026-02-16T15:30:00", "open": 5921.75, "high": 5921.75, "low": 5918.24, "close": 5919.74, "tick_count": 30}
+{"t": 1771279200.0, "type": "market_close", "spx_price": 5919.96, "daily_pnl": 340.0}
