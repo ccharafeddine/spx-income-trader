@@ -173,7 +173,16 @@ class PositionManager:
             if order_status['status'] != 'filled':
                 logger.error(f"Order not filled: {order_status['status']}")
                 return None
-            
+
+            # Use actual filled quantity (handles partial fills)
+            filled_quantity = order_status.get('filled_quantity', quantity)
+            if filled_quantity and filled_quantity != quantity:
+                logger.warning(
+                    f"PARTIAL FILL: requested {quantity} contracts, "
+                    f"got {filled_quantity}. Using filled quantity."
+                )
+            actual_quantity = filled_quantity if filled_quantity else quantity
+
             # Create trade record
             trade = Trade(
                 id=str(uuid.uuid4()),
@@ -183,7 +192,7 @@ class PositionManager:
                 entry_price=order_status['fill_price'],
                 entry_time=datetime.now(self.tz),
                 entry_order_id=order_id,
-                quantity=quantity
+                quantity=actual_quantity
             )
             
             # Add to open trades
@@ -404,9 +413,25 @@ class PositionManager:
                 logger.info(f"Trade expired: SPX=${underlying_price:,.2f}, Final P&L ${final_pnl:.2f}")
                 
             else:
+                # Track close retries for escalation
+                close_retries = getattr(trade, '_close_retries', 0)
+
                 # Close position - cap at spread width (max possible value)
+                # Widen limit price after repeated failures to improve fill odds
                 max_debit = trade.spread.spread_width
-                limit_price = min(current_value + 0.10, max_debit)
+                price_cushion = 0.10 + (0.05 * min(close_retries, 10))
+                limit_price = min(current_value + price_cushion, max_debit)
+
+                if close_retries > 0:
+                    logger.warning(
+                        f"Close retry #{close_retries} for trade {trade.id[:8]}, "
+                        f"limit ${limit_price:.2f} (cushion ${price_cushion:.2f})"
+                    )
+                if close_retries >= 10:
+                    logger.critical(
+                        f"ALERT: Trade {trade.id[:8]} has failed to close after "
+                        f"{close_retries} attempts. Manual review required."
+                    )
 
                 # Mark close pending so monitor_positions() won't re-trigger
                 trade._close_pending = True
@@ -418,7 +443,11 @@ class PositionManager:
                 )
 
                 if not order_id:
-                    logger.error(f"Close order failed for trade {trade.id}, will retry next cycle")
+                    trade._close_retries = close_retries + 1
+                    logger.error(
+                        f"Close order failed for trade {trade.id[:8]} "
+                        f"(attempt {trade._close_retries}), will retry next cycle"
+                    )
                     trade._close_pending = False
                     return
 
@@ -428,9 +457,10 @@ class PositionManager:
 
                 order_status = self.broker.get_order_status(order_id)
                 if order_status['status'] != 'filled':
+                    trade._close_retries = close_retries + 1
                     logger.warning(
                         f"Close order {order_id} not filled (status: {order_status['status']}), "
-                        f"will retry next cycle"
+                        f"attempt {trade._close_retries}, will retry next cycle"
                     )
                     trade._close_pending = False
                     return

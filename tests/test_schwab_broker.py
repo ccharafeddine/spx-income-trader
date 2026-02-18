@@ -288,7 +288,7 @@ class TestSchwabOrderBuilding:
 
         long_sym = broker._build_option_symbol(spread.long_leg.strike, 'put', spread.expiration)
         short_sym = broker._build_option_symbol(spread.short_leg.strike, 'put', spread.expiration)
-        order = opts.bull_put_vertical_open(long_sym, short_sym, 3, 1.20)
+        order = opts.bull_put_vertical_open(long_sym, short_sym, 3, '1.20')
         order_dict = order.build()
 
         assert order_dict['orderType'] == 'NET_CREDIT'
@@ -302,7 +302,7 @@ class TestSchwabOrderBuilding:
         spread = _make_spread()
         short_sym = broker._build_option_symbol(spread.short_leg.strike, 'call', spread.expiration)
         long_sym = broker._build_option_symbol(spread.long_leg.strike, 'call', spread.expiration)
-        order = opts.bear_call_vertical_close(short_sym, long_sym, 2, 0.20)
+        order = opts.bear_call_vertical_close(short_sym, long_sym, 2, '0.20')
         order_dict = order.build()
 
         assert order_dict['orderType'] == 'NET_DEBIT'
@@ -314,7 +314,7 @@ class TestSchwabOrderBuilding:
         spread = _make_put_spread()
         long_sym = broker._build_option_symbol(spread.long_leg.strike, 'put', spread.expiration)
         short_sym = broker._build_option_symbol(spread.short_leg.strike, 'put', spread.expiration)
-        order = opts.bull_put_vertical_close(long_sym, short_sym, 1, 0.10)
+        order = opts.bull_put_vertical_close(long_sym, short_sym, 1, '0.10')
         order_dict = order.build()
 
         assert order_dict['orderType'] == 'NET_DEBIT'
@@ -328,7 +328,7 @@ class TestSchwabOrderBuilding:
         long_sym = broker._build_option_symbol(spread.long_leg.strike, 'call', spread.expiration)
 
         for qty in [1, 5, 10]:
-            order = opts.bear_call_vertical_open(short_sym, long_sym, qty, 1.50)
+            order = opts.bear_call_vertical_open(short_sym, long_sym, qty, '1.50')
             order_dict = order.build()
             assert order_dict['quantity'] == qty
 
@@ -340,7 +340,7 @@ class TestSchwabOrderBuilding:
         short_sym = broker._build_option_symbol(spread.short_leg.strike, 'call', spread.expiration)
         long_sym = broker._build_option_symbol(spread.long_leg.strike, 'call', spread.expiration)
 
-        order = opts.bear_call_vertical_open(short_sym, long_sym, 1, 2.35)
+        order = opts.bear_call_vertical_open(short_sym, long_sym, 1, '2.35')
         order_dict = order.build()
         assert order_dict['price'] == '2.35'
 
@@ -352,8 +352,8 @@ class TestSchwabOrderBuilding:
         short_sym = broker._build_option_symbol(spread.short_leg.strike, 'call', spread.expiration)
         long_sym = broker._build_option_symbol(spread.long_leg.strike, 'call', spread.expiration)
 
-        open_order = opts.bear_call_vertical_open(short_sym, long_sym, 1, 1.50)
-        close_order = opts.bear_call_vertical_close(short_sym, long_sym, 1, 0.20)
+        open_order = opts.bear_call_vertical_open(short_sym, long_sym, 1, '1.50')
+        close_order = opts.bear_call_vertical_close(short_sym, long_sym, 1, '0.20')
 
         assert open_order.build()['orderType'] in ('NET_CREDIT', 'LIMIT')
         assert close_order.build()['orderType'] in ('NET_DEBIT', 'LIMIT')
@@ -366,7 +366,7 @@ class TestSchwabOrderBuilding:
         short_sym = broker._build_option_symbol(spread.short_leg.strike, 'call', spread.expiration)
         long_sym = broker._build_option_symbol(spread.long_leg.strike, 'call', spread.expiration)
 
-        order = opts.bear_call_vertical_open(short_sym, long_sym, 1, 1.50)
+        order = opts.bear_call_vertical_open(short_sym, long_sym, 1, '1.50')
         order_dict = order.build()
         assert order_dict['session'] == 'NORMAL'
         assert order_dict['duration'] == 'DAY'

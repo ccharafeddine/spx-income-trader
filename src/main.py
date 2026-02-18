@@ -58,6 +58,9 @@ class BotAlreadyRunningError(Exception):
     pass
 
 
+from src.utils.market_calendar import get_market_close_time
+
+
 class TradingBot:
     """Main trading bot orchestrator"""
     
@@ -143,6 +146,8 @@ class TradingBot:
         # Market state (updated every cycle by _update_market_state)
         self._current_spx_price = 0.0
         self._last_completed_bar = None
+        self._stale_price_count = 0  # consecutive cycles with identical price
+        self._last_spx_price = 0.0   # previous cycle's price for staleness check
 
         # Daily journal tracking (lightweight accumulator, flushed at EOD)
         self._journal_rejections = []   # List of {timestamp, strategy, reason, detail}
@@ -733,13 +738,13 @@ class TradingBot:
             logger.warning(f"Position reconciliation failed (non-fatal): {e}")
 
     def _is_market_open(self, dt: datetime) -> bool:
-        """Check if market is currently open"""
+        """Check if market is currently open (respects early close days)."""
         market_open = time(9, 30)
-        market_close = time(16, 0)
-        
+        market_close = get_market_close_time(dt)
+
         current_time = dt.time()
         is_weekday = dt.weekday() < 5
-        
+
         return is_weekday and market_open <= current_time < market_close
     
     def _is_setup_window(self, dt: datetime) -> bool:
@@ -971,6 +976,20 @@ class TradingBot:
                 return
 
             current_price = self._current_spx_price
+
+            # Stale price detection: warn if price unchanged for 3+ cycles
+            if current_price == self._last_spx_price and current_price > 0:
+                self._stale_price_count += 1
+                if self._stale_price_count >= 3:
+                    logger.warning(
+                        f"STALE PRICE: SPX ${current_price:,.2f} unchanged for "
+                        f"{self._stale_price_count} consecutive cycles - "
+                        f"possible data feed issue or trading halt"
+                    )
+            else:
+                self._stale_price_count = 0
+            self._last_spx_price = current_price
+
             logger.debug(f"SPX price: ${current_price:,.2f}")
 
             # Set day open price for extreme move override (first price of the day)
@@ -1307,21 +1326,42 @@ class TradingBot:
                 return None
 
             if direction == TradeDirection.BULLISH:
-                short_price = options_chain[short_strike]['put_bid']
-                long_price = options_chain[long_strike]['put_ask']
+                short_bid = options_chain[short_strike]['put_bid']
+                short_ask = options_chain[short_strike]['put_ask']
+                long_bid = options_chain[long_strike]['put_bid']
+                long_ask = options_chain[long_strike]['put_ask']
             else:
-                short_price = options_chain[short_strike]['call_bid']
-                long_price = options_chain[long_strike]['call_ask']
+                short_bid = options_chain[short_strike]['call_bid']
+                short_ask = options_chain[short_strike]['call_ask']
+                long_bid = options_chain[long_strike]['call_bid']
+                long_ask = options_chain[long_strike]['call_ask']
+
+            short_price = short_bid
+            long_price = long_ask
+
+            # Bid-ask sanity: reject stale/zero chains or excessively wide spreads
+            if short_bid <= 0 or long_ask <= 0:
+                logger.warning(
+                    f"Zero/negative option price: short_bid=${short_bid}, "
+                    f"long_ask=${long_ask} - chain may be stale"
+                )
+                self._record_rejection('spread', 'stale_chain',
+                    f"Zero option prices (short_bid={short_bid}, long_ask={long_ask})")
+                return None
+            for label, bid, ask in [('short', short_bid, short_ask), ('long', long_bid, long_ask)]:
+                if ask > 0 and bid > 0:
+                    spread_pct = (ask - bid) / ((ask + bid) / 2)
+                    if spread_pct > 0.50:
+                        logger.warning(
+                            f"Wide bid-ask on {label} leg: bid=${bid:.2f} ask=${ask:.2f} "
+                            f"({spread_pct:.0%}) - chain may be stale"
+                        )
 
             credit = short_price - long_price
 
             # Mid-price for slippage tracking
-            if direction == TradeDirection.BULLISH:
-                short_mid = (options_chain[short_strike]['put_bid'] + options_chain[short_strike]['put_ask']) / 2
-                long_mid = (options_chain[long_strike]['put_bid'] + options_chain[long_strike]['put_ask']) / 2
-            else:
-                short_mid = (options_chain[short_strike]['call_bid'] + options_chain[short_strike]['call_ask']) / 2
-                long_mid = (options_chain[long_strike]['call_bid'] + options_chain[long_strike]['call_ask']) / 2
+            short_mid = (short_bid + short_ask) / 2
+            long_mid = (long_bid + long_ask) / 2
             theoretical_mid_credit = round(short_mid - long_mid, 4)
 
             if credit <= 0:
@@ -1347,11 +1387,15 @@ class TradingBot:
             now = datetime.now(self.tz)
             if expiration_str:
                 exp_date = datetime.strptime(expiration_str, "%Y-%m-%d")
+                close_t = get_market_close_time(exp_date)
                 expiration = self.tz.localize(
-                    exp_date.replace(hour=16, minute=0, second=0, microsecond=0)
+                    exp_date.replace(hour=close_t.hour, minute=close_t.minute,
+                                     second=0, microsecond=0)
                 )
             else:
-                expiration = now.replace(hour=16, minute=0, second=0, microsecond=0)
+                close_t = get_market_close_time(now)
+                expiration = now.replace(hour=close_t.hour, minute=close_t.minute,
+                                         second=0, microsecond=0)
 
             spread = CreditSpread(
                 direction=direction,
@@ -1850,6 +1894,7 @@ class TradingBot:
 
         Called from _execute_setup() on both entry and exit so the
         dashboard /api/signals endpoint works in all modes.
+        Uses atomic write (temp file + rename) to prevent corruption.
         """
         try:
             with open(self._signal_log_path, 'r') as f:
@@ -1871,8 +1916,23 @@ class TradingBot:
                 log_data["signals"] = log_data["signals"][-1000:]
                 logger.info(f"Signal log rotated, archived to {archive}")
 
-            with open(self._signal_log_path, 'w') as f:
-                json.dump(log_data, f, indent=2, default=str)
+            # Atomic write: write to temp file then rename
+            import tempfile
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                dir=self._signal_log_path.parent,
+                suffix='.tmp',
+            )
+            try:
+                with os.fdopen(tmp_fd, 'w') as f:
+                    json.dump(log_data, f, indent=2, default=str)
+                os.replace(tmp_path, self._signal_log_path)
+            except Exception:
+                # Clean up temp file on failure
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
 
         except Exception as e:
             logger.error(f"Failed to log signal: {e}")

@@ -53,6 +53,17 @@ NYSE_HOLIDAYS = {
     date(2026, 9, 7),   # Labor Day
     date(2026, 11, 26), # Thanksgiving
     date(2026, 12, 25), # Christmas
+    # 2027
+    date(2027, 1, 1),   # New Year's Day
+    date(2027, 1, 18),  # MLK Day
+    date(2027, 2, 15),  # Presidents Day
+    date(2027, 3, 26),  # Good Friday
+    date(2027, 5, 31),  # Memorial Day
+    date(2027, 6, 18),  # Juneteenth (observed, 19th is Sat)
+    date(2027, 7, 5),   # Independence Day (observed, 4th is Sun)
+    date(2027, 9, 6),   # Labor Day
+    date(2027, 11, 25), # Thanksgiving
+    date(2027, 12, 24), # Christmas (observed, 25th is Sat)
 }
 
 # Exit reasons that count as "active close" (day trade)

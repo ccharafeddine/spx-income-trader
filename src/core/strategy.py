@@ -13,6 +13,7 @@ from ..models.bar import Bar, BarType
 from ..models.spread import CreditSpread, OptionLeg, TradeDirection
 from ..models.trade import Trade
 from .pulse_detector import PulseBarDetector
+from ..utils.market_calendar import get_market_close_time
 
 logger = logging.getLogger(__name__)
 
@@ -140,26 +141,43 @@ class SPXIncomeStrategy:
             
             # Get option prices
             if direction == TradeDirection.BULLISH:
-                # Put credit spread
                 option_type = 'put'
-                short_price = options_chain[short_strike]['put_bid']
-                long_price = options_chain[long_strike]['put_ask']
+                short_bid = options_chain[short_strike]['put_bid']
+                short_ask = options_chain[short_strike]['put_ask']
+                long_bid = options_chain[long_strike]['put_bid']
+                long_ask = options_chain[long_strike]['put_ask']
             else:
-                # Call credit spread
                 option_type = 'call'
-                short_price = options_chain[short_strike]['call_bid']
-                long_price = options_chain[long_strike]['call_ask']
-            
+                short_bid = options_chain[short_strike]['call_bid']
+                short_ask = options_chain[short_strike]['call_ask']
+                long_bid = options_chain[long_strike]['call_bid']
+                long_ask = options_chain[long_strike]['call_ask']
+
+            short_price = short_bid
+            long_price = long_ask
+
+            # Bid-ask sanity: reject stale/zero chains or excessively wide spreads
+            if short_bid <= 0 or long_ask <= 0:
+                logger.warning(
+                    f"Zero/negative option price: short_bid=${short_bid}, "
+                    f"long_ask=${long_ask} - chain may be stale"
+                )
+                return None
+            for label, bid, ask in [('short', short_bid, short_ask), ('long', long_bid, long_ask)]:
+                if ask > 0 and bid > 0:
+                    ba_spread_pct = (ask - bid) / ((ask + bid) / 2)
+                    if ba_spread_pct > 0.50:
+                        logger.warning(
+                            f"Wide bid-ask on {label} leg: bid=${bid:.2f} ask=${ask:.2f} "
+                            f"({ba_spread_pct:.0%}) - chain may be stale"
+                        )
+
             # Calculate net credit
             credit = short_price - long_price
 
             # Mid-price for slippage tracking
-            if direction == TradeDirection.BULLISH:
-                short_mid = (options_chain[short_strike]['put_bid'] + options_chain[short_strike]['put_ask']) / 2
-                long_mid = (options_chain[long_strike]['put_bid'] + options_chain[long_strike]['put_ask']) / 2
-            else:
-                short_mid = (options_chain[short_strike]['call_bid'] + options_chain[short_strike]['call_ask']) / 2
-                long_mid = (options_chain[long_strike]['call_bid'] + options_chain[long_strike]['call_ask']) / 2
+            short_mid = (short_bid + short_ask) / 2
+            long_mid = (long_bid + long_ask) / 2
             theoretical_mid_credit = round(short_mid - long_mid, 4)
 
             logger.info(f"Credit: ${credit:.2f} (short=${short_price:.2f}, long=${long_price:.2f})")
@@ -198,7 +216,9 @@ class SPXIncomeStrategy:
             )
             
             now = datetime.now(self.tz)
-            expiration = now.replace(hour=16, minute=0, second=0, microsecond=0)
+            close_t = get_market_close_time(now)
+            expiration = now.replace(hour=close_t.hour, minute=close_t.minute,
+                                     second=0, microsecond=0)
             
             spread = CreditSpread(
                 direction=direction,

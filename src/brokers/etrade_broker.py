@@ -219,7 +219,7 @@ class ETradeBroker(BrokerInterface):
             else:
                 try:
                     return response.json()
-                except:
+                except (ValueError, KeyError, TypeError):
                     return {'raw': response.text}
 
         except ETradeAPIError:

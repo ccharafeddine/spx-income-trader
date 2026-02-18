@@ -540,7 +540,7 @@ class DryRunBroker(BrokerInterface):
         try:
             with open(self.log_file, 'r') as f:
                 return json.load(f).get('signals', [])
-        except:
+        except Exception:
             return []
 
     def print_summary(self):

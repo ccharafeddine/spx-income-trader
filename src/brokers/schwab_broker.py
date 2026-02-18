@@ -485,15 +485,18 @@ class SchwabBroker(BrokerInterface):
         logger.info(f"  Long symbol:  {long_symbol}")
 
         # Build order using schwab-py templates
+        # schwab-py requires price as string (float is deprecated)
+        price_str = str(limit_price)
+
         if spread.direction == TradeDirection.BEARISH:
             # Bear call vertical (sell call spread for credit)
             order = opts.bear_call_vertical_open(
-                short_symbol, long_symbol, quantity, limit_price,
+                short_symbol, long_symbol, quantity, price_str,
             )
         else:
             # Bull put vertical (sell put spread for credit)
             order = opts.bull_put_vertical_open(
-                long_symbol, short_symbol, quantity, limit_price,
+                long_symbol, short_symbol, quantity, price_str,
             )
 
         # Place order
@@ -560,14 +563,16 @@ class SchwabBroker(BrokerInterface):
             spread.expiration,
         )
 
-        # Build close order
+        # Build close order (schwab-py requires price as string)
+        price_str = str(limit_price)
+
         if spread.direction == TradeDirection.BEARISH:
             order = opts.bear_call_vertical_close(
-                short_symbol, long_symbol, quantity, limit_price,
+                short_symbol, long_symbol, quantity, price_str,
             )
         else:
             order = opts.bull_put_vertical_close(
-                long_symbol, short_symbol, quantity, limit_price,
+                long_symbol, short_symbol, quantity, price_str,
             )
 
         try:

@@ -366,20 +366,29 @@ SMS_CONFIG = {
 
 # Validate critical settings on import
 def validate_settings():
-    """Validate that critical settings are configured"""
+    """Validate that critical settings are configured for the active broker."""
     errors = []
-
-    if not ETRADE_CONFIG['consumer_key']:
-        errors.append("ETRADE_CONSUMER_KEY not set in .env")
-
-    if not ETRADE_CONFIG['consumer_secret']:
-        errors.append("ETRADE_CONSUMER_SECRET not set in .env")
-
-    if not ETRADE_CONFIG['account_id']:
-        errors.append("ETRADE_ACCOUNT_ID not set in .env")
 
     if TRADING_MODE not in ['dry-run', 'live']:
         errors.append(f"Invalid TRADING_MODE: {TRADING_MODE}")
+
+    active_broker = STRATEGY_PARAMS.get('broker', {}).get('active', 'dry_run')
+
+    if active_broker == 'etrade':
+        if not ETRADE_CONFIG['consumer_key']:
+            errors.append("E*TRADE consumer_key not configured (set via keyring or .env)")
+        if not ETRADE_CONFIG['consumer_secret']:
+            errors.append("E*TRADE consumer_secret not configured (set via keyring or .env)")
+        if not ETRADE_CONFIG['account_id']:
+            errors.append("E*TRADE account_id not configured (set via keyring or .env)")
+    elif active_broker == 'schwab':
+        schwab_creds = get_schwab_credentials()
+        if not schwab_creds.get('app_key'):
+            errors.append("Schwab app_key not configured (set via Settings page or keyring)")
+        if not schwab_creds.get('app_secret'):
+            errors.append("Schwab app_secret not configured (set via Settings page or keyring)")
+    elif active_broker != 'dry_run':
+        errors.append(f"Unknown broker.active value: '{active_broker}'")
 
     if errors:
         error_msg = "\n".join(errors)
