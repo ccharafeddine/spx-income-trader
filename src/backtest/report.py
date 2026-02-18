@@ -76,6 +76,9 @@ def generate_report(
     report['rolling'] = _compute_rolling_win_rate(equity_curve)
     report['trade_count'] = len(trades)
 
+    # Store raw trades so analytics tab can compute additional breakdowns
+    report['_trades'] = trades
+
     # Summary
     report['initial_capital'] = initial_capital
     report['final_capital'] = final_capital

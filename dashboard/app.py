@@ -3466,6 +3466,15 @@ def api_analytics():
                 'start': report['equity_curve'][0]['date'] if report.get('equity_curve') else None,
                 'end': report['equity_curve'][-1]['date'] if report.get('equity_curve') else None,
             })
+            # Compute missing breakdowns from stored trades if available
+            trades = report.pop('_trades', None)
+            if trades:
+                if 'pnl_distribution' not in report:
+                    report['pnl_distribution'] = [round(t.get('pnl', 0), 2) for t in trades]
+                if 'by_time_bucket' not in report:
+                    report['by_time_bucket'] = _analytics_by_time_bucket(trades)
+                if 'by_direction' not in report:
+                    report['by_direction'] = _analytics_by_direction(trades)
             report.setdefault('by_time_bucket', [])
             report.setdefault('by_direction', [])
             report.setdefault('pnl_distribution', [])
@@ -4233,7 +4242,7 @@ def api_backtest_run():
                     datetime.now(ET).isoformat(),
                     json.dumps(params),
                     json.dumps({k: v for k, v in report.items()
-                                if k not in ('equity_curve', 'drawdown_series', 'daily_pnl_series')}),
+                                if k not in ('equity_curve', 'drawdown_series', 'daily_pnl_series', '_trades')}),
                     tm.get('total_trades', 0),
                     core.get('total_return_pct', 0),
                     core.get('sharpe_ratio', 0),
