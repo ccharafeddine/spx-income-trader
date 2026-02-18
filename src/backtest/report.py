@@ -56,6 +56,8 @@ def generate_report(
     report['by_day_of_week'] = _compute_by_day_of_week(trades)
     report['by_vix_regime'] = _compute_by_vix_regime(trades)
     report['by_strategy'] = _compute_by_strategy(trades)
+    report['by_time_bucket'] = _compute_by_time_bucket(trades)
+    report['by_direction'] = _compute_by_direction(trades)
 
     # Chart data (downsample for large backtests to keep UI responsive)
     ec_sampled = _downsample(equity_curve, 300)
@@ -68,6 +70,11 @@ def generate_report(
         {'date': d['date'], 'pnl': d['daily_pnl']}
         for d in ec_sampled
     ]
+
+    # P&L distribution and rolling metrics for analytics tab
+    report['pnl_distribution'] = [round(t['pnl'], 2) for t in trades]
+    report['rolling'] = _compute_rolling_win_rate(equity_curve)
+    report['trade_count'] = len(trades)
 
     # Summary
     report['initial_capital'] = initial_capital
@@ -426,6 +433,108 @@ def _compute_by_strategy(trades: List[Dict]) -> List[Dict]:
         }
         for k, v in strategies.items()
     ]
+
+
+def _compute_by_time_bucket(trades: List[Dict]) -> List[Dict]:
+    """Win rate breakdown by entry time bucket."""
+    buckets = defaultdict(lambda: {'wins': 0, 'total': 0, 'pnl': 0})
+    for t in trades:
+        entry = t.get('entry_time', '')
+        if not entry:
+            continue
+        try:
+            if isinstance(entry, str):
+                dt = datetime.fromisoformat(entry)
+            else:
+                dt = entry
+            h = dt.hour
+            if h < 10:
+                bucket = 'Open (9:30-10)'
+            elif h < 11:
+                bucket = 'Mid-Morning (10-11)'
+            elif h < 13:
+                bucket = 'Midday (11-1)'
+            elif h < 15:
+                bucket = 'Afternoon (1-3)'
+            else:
+                bucket = 'Close (3-4)'
+        except (ValueError, TypeError):
+            continue
+        buckets[bucket]['total'] += 1
+        buckets[bucket]['pnl'] += t['pnl']
+        if t['pnl'] > 0:
+            buckets[bucket]['wins'] += 1
+
+    order = ['Open (9:30-10)', 'Mid-Morning (10-11)', 'Midday (11-1)', 'Afternoon (1-3)', 'Close (3-4)']
+    result = []
+    seen = set()
+    for b in order:
+        if b in buckets:
+            v = buckets[b]
+            result.append({
+                'bucket': b,
+                'total': v['total'],
+                'wins': v['wins'],
+                'win_rate': round((v['wins'] / v['total'] * 100), 1) if v['total'] > 0 else 0,
+                'total_pnl': round(v['pnl'], 2),
+            })
+            seen.add(b)
+    for b, v in buckets.items():
+        if b not in seen:
+            result.append({
+                'bucket': b, 'total': v['total'], 'wins': v['wins'],
+                'win_rate': round((v['wins'] / v['total'] * 100), 1) if v['total'] > 0 else 0,
+                'total_pnl': round(v['pnl'], 2),
+            })
+    return result
+
+
+def _compute_by_direction(trades: List[Dict]) -> List[Dict]:
+    """Win rate breakdown by trade direction (bullish/bearish)."""
+    dirs = defaultdict(lambda: {'wins': 0, 'total': 0, 'pnl': 0})
+    for t in trades:
+        d = t.get('direction') or 'unknown'
+        dirs[d]['total'] += 1
+        dirs[d]['pnl'] += t['pnl']
+        if t['pnl'] > 0:
+            dirs[d]['wins'] += 1
+
+    return [
+        {
+            'direction': k.title(),
+            'total': v['total'],
+            'wins': v['wins'],
+            'win_rate': round((v['wins'] / v['total'] * 100), 1) if v['total'] > 0 else 0,
+            'total_pnl': round(v['pnl'], 2),
+        }
+        for k, v in dirs.items()
+    ]
+
+
+def _compute_rolling_win_rate(equity_curve: List[Dict]) -> Dict:
+    """Rolling 7d/30d/90d win rate from equity curve."""
+    if len(equity_curve) < 2:
+        return {'dates': [], 'win_rate_7d': [], 'win_rate_30d': [], 'win_rate_90d': []}
+
+    dates, wr7, wr30, wr90 = [], [], [], []
+    for i in range(len(equity_curve)):
+        dates.append(equity_curve[i]['date'])
+        for window, out in [(7, wr7), (30, wr30), (90, wr90)]:
+            start = max(0, i - window + 1)
+            window_data = equity_curve[start:i + 1]
+            wins = sum(1 for d in window_data if d.get('daily_pnl', 0) > 0)
+            total = len(window_data)
+            out.append(round((wins / total * 100), 1) if total > 0 else 0)
+
+    # Downsample if too many points
+    if len(dates) > 300:
+        sampled = _downsample(list(range(len(dates))), 300)
+        dates = [dates[i] for i in sampled]
+        wr7 = [wr7[i] for i in sampled]
+        wr30 = [wr30[i] for i in sampled]
+        wr90 = [wr90[i] for i in sampled]
+
+    return {'dates': dates, 'win_rate_7d': wr7, 'win_rate_30d': wr30, 'win_rate_90d': wr90}
 
 
 def format_markdown_report(report: Dict) -> str:

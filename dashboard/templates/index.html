@@ -2532,8 +2532,8 @@ header::after {
     <button class="tab-btn active" role="tab" aria-selected="true" onclick="switchTab('overview')">Overview</button>
     <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('journal')">Trade Journal</button>
     <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('analytics')">Analytics</button>
-    <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('logs')">Logs</button>
     <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('backtest')">Backtest</button>
+    <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('logs')">Logs</button>
   </div>
 
   <!-- TAB: OVERVIEW -->
@@ -5870,18 +5870,23 @@ function renderAnMetrics(data) {
   `).join('');
 }
 
-const AN_LAYOUT = {
-  margin: {t: 10, b: 30, l: 60, r: 20},
-  paper_bgcolor: 'transparent',
-  plot_bgcolor: 'transparent',
-  xaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}},
-  yaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}},
-  font: {family: 'DM Sans'},
-};
+// Fresh layout factory - Plotly mutates layout objects, so never share them
+function anLayout(overrides) {
+  const base = {
+    margin: {t: 10, b: 30, l: 60, r: 20},
+    paper_bgcolor: 'transparent',
+    plot_bgcolor: 'transparent',
+    xaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}},
+    yaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}},
+    font: {family: 'DM Sans'},
+  };
+  if (overrides) Object.assign(base, overrides);
+  return base;
+}
 const AN_CFG = {responsive: true, displayModeBar: false};
 
 function renderAnEquityCurve(ec) {
-  if (!ec.length) return;
+  if (!ec.length) { document.getElementById('an-equity-chart').innerHTML = ''; return; }
   Plotly.newPlot('an-equity-chart', [{
     x: ec.map(e => e.date),
     y: ec.map(e => e.equity),
@@ -5889,11 +5894,11 @@ function renderAnEquityCurve(ec) {
     line: {color: '#10b981', width: 2},
     fill: 'tozeroy',
     fillcolor: 'rgba(16,185,129,0.08)',
-  }], {...AN_LAYOUT, yaxis: {...AN_LAYOUT.yaxis, tickprefix: '$'}}, AN_CFG);
+  }], anLayout({yaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}, tickprefix: '$'}}), AN_CFG);
 }
 
 function renderAnDrawdown(dd) {
-  if (!dd.length) return;
+  if (!dd.length) { document.getElementById('an-drawdown-chart').innerHTML = ''; return; }
   Plotly.newPlot('an-drawdown-chart', [{
     x: dd.map(d => d.date),
     y: dd.map(d => -d.drawdown_pct),
@@ -5901,7 +5906,7 @@ function renderAnDrawdown(dd) {
     line: {color: '#ef4444', width: 1.5},
     fill: 'tozeroy',
     fillcolor: 'rgba(239,68,68,0.1)',
-  }], {...AN_LAYOUT, yaxis: {...AN_LAYOUT.yaxis, ticksuffix: '%'}}, AN_CFG);
+  }], anLayout({yaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}, ticksuffix: '%'}}), AN_CFG);
 }
 
 function renderAnMonthly(monthly) {
@@ -5956,25 +5961,24 @@ function renderAnMonthly(monthly) {
 }
 
 function renderAnDistribution(pnls) {
-  if (!pnls.length) return;
+  if (!pnls.length) { document.getElementById('an-dist-chart').innerHTML = ''; return; }
   const wins = pnls.filter(p => p > 0);
   const losses = pnls.filter(p => p <= 0);
   const traces = [];
   if (wins.length) traces.push({x: wins, type: 'histogram', marker: {color: 'rgba(16,185,129,0.7)'}, name: 'Wins', opacity: 0.8});
   if (losses.length) traces.push({x: losses, type: 'histogram', marker: {color: 'rgba(239,68,68,0.7)'}, name: 'Losses', opacity: 0.8});
-  Plotly.newPlot('an-dist-chart', traces, {
-    ...AN_LAYOUT,
+  Plotly.newPlot('an-dist-chart', traces, anLayout({
     barmode: 'overlay',
-    xaxis: {...AN_LAYOUT.xaxis, tickprefix: '$', title: {text: 'P&L per Trade', font: {size: 10, color: '#6b7280'}}},
-    yaxis: {...AN_LAYOUT.yaxis, title: {text: 'Count', font: {size: 10, color: '#6b7280'}}},
+    xaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}, tickprefix: '$', title: {text: 'P&L per Trade', font: {size: 10, color: '#6b7280'}}},
+    yaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}, title: {text: 'Count', font: {size: 10, color: '#6b7280'}}},
     showlegend: true,
     legend: {font: {size: 10, color: '#6b7280'}, x: 1, xanchor: 'right', y: 1},
-  }, AN_CFG);
+  }), AN_CFG);
 }
 
-function _renderAnBarChart(elId, items, labelKey, options) {
+function _renderAnBarChart(elId, items, labelKey) {
   const filtered = items.filter(d => d.total > 0);
-  if (!filtered.length) return;
+  if (!filtered.length) { document.getElementById(elId).innerHTML = ''; return; }
   Plotly.newPlot(elId, [{
     x: filtered.map(d => d[labelKey]),
     y: filtered.map(d => d.win_rate),
@@ -5983,11 +5987,11 @@ function _renderAnBarChart(elId, items, labelKey, options) {
     text: filtered.map(d => d.win_rate.toFixed(1) + '%'),
     textposition: 'outside',
     textfont: {size: 10, color: '#d1d5db'},
-  }], {
-    ...AN_LAYOUT,
+  }], anLayout({
     margin: {t: 10, b: 40, l: 40, r: 20},
-    yaxis: {...AN_LAYOUT.yaxis, ticksuffix: '%', range: [0, 100]},
-  }, AN_CFG);
+    xaxis: {type: 'category', gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}},
+    yaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}, ticksuffix: '%', range: [0, 100]},
+  }), AN_CFG);
 }
 
 function renderAnDow(data) { _renderAnBarChart('an-dow-chart', data, 'day'); }
@@ -6021,18 +6025,17 @@ function renderAnBreakdownTable(containerId, data, nameKey) {
 }
 
 function renderAnRolling(rolling) {
-  if (!rolling.dates || !rolling.dates.length) return;
+  if (!rolling.dates || !rolling.dates.length) { document.getElementById('an-rolling-chart').innerHTML = ''; return; }
   const traces = [
     {x: rolling.dates, y: rolling.win_rate_7d, type: 'scatter', mode: 'lines', name: '7-day', line: {color: '#3b82f6', width: 1}},
     {x: rolling.dates, y: rolling.win_rate_30d, type: 'scatter', mode: 'lines', name: '30-day', line: {color: '#10b981', width: 1.5}},
     {x: rolling.dates, y: rolling.win_rate_90d, type: 'scatter', mode: 'lines', name: '90-day', line: {color: '#f59e0b', width: 2}},
   ];
-  Plotly.newPlot('an-rolling-chart', traces, {
-    ...AN_LAYOUT,
-    yaxis: {...AN_LAYOUT.yaxis, ticksuffix: '%', range: [0, 100]},
+  Plotly.newPlot('an-rolling-chart', traces, anLayout({
+    yaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}, ticksuffix: '%', range: [0, 100]},
     showlegend: true,
     legend: {font: {size: 10, color: '#6b7280'}, orientation: 'h', x: 0.5, xanchor: 'center', y: 1.12},
-  }, AN_CFG);
+  }), AN_CFG);
 }
 
 // ---------------------------------------------------------------

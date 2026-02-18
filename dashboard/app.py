@@ -3459,6 +3459,20 @@ def api_analytics():
                 return jsonify({'success': False, 'error': 'Run not found'}), 404
             report = json.loads(row[0])
             report['source'] = 'backtest'
+            # Add fields the frontend expects that older report.py runs don't have
+            tm = report.get('trade_metrics', {})
+            report.setdefault('trade_count', tm.get('total_trades', 0))
+            report.setdefault('date_range', {
+                'start': report['equity_curve'][0]['date'] if report.get('equity_curve') else None,
+                'end': report['equity_curve'][-1]['date'] if report.get('equity_curve') else None,
+            })
+            report.setdefault('by_time_bucket', [])
+            report.setdefault('by_direction', [])
+            report.setdefault('pnl_distribution', [])
+            # Compute rolling win rate from equity_curve if not stored
+            if 'rolling' not in report and report.get('equity_curve'):
+                report['rolling'] = _analytics_rolling(report['equity_curve'])
+            report.setdefault('rolling', {'dates': [], 'win_rate_7d': [], 'win_rate_30d': [], 'win_rate_90d': []})
             return jsonify({'success': True, **report})
         except Exception as e:
             logger.error(f"Analytics backtest error: {e}", exc_info=True)
@@ -3470,8 +3484,8 @@ def api_analytics():
         conn = sqlite3.connect(db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
-        spx_data = yahoo.get_spx_price()
-        spx_price = spx_data.get('price') if spx_data else None
+        spx_quote = yahoo.get_spx_quote() or {}
+        spx_price = spx_quote.get('price')
         _, closed_trades = classify_trades(conn, spx_price)
         conn.close()
 
