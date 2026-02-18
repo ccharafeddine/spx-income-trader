@@ -2510,6 +2510,7 @@ header::after {
     <button class="tab-btn active" role="tab" aria-selected="true" onclick="switchTab('overview')">Overview</button>
     <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('journal')">Trade Journal</button>
     <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('logs')">Logs</button>
+    <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('backtest')">Backtest</button>
   </div>
 
   <!-- TAB: OVERVIEW -->
@@ -2836,6 +2837,129 @@ header::after {
       <div class="empty">Loading logs...</div>
     </div>
   </div><!-- /tab-logs -->
+
+  <!-- TAB: BACKTEST -->
+  <div id="tab-backtest" class="tab-content" role="tabpanel">
+
+    <div style="display: grid; grid-template-columns: 320px 1fr; gap: 20px;">
+
+      <!-- LEFT: Parameters -->
+      <div class="panel" style="padding: 16px;">
+        <div class="panel-title" style="margin-bottom: 12px;">Backtest Parameters</div>
+
+        <div style="margin-bottom: 10px;">
+          <label style="display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 3px;">Date Range</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="date" id="bt-start" value="2024-01-01" class="form-input" style="flex:1; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+            <input type="date" id="bt-end" value="2025-12-31" class="form-input" style="flex:1; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+          </div>
+        </div>
+
+        <div style="margin-bottom: 10px;">
+          <label style="display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 3px;">Initial Capital ($)</label>
+          <input type="number" id="bt-capital" value="50000" class="form-input" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+          <div>
+            <label style="display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 3px;">Pulse %</label>
+            <input type="number" id="bt-pulse" value="10" step="1" class="form-input" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+          </div>
+          <div>
+            <label style="display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 3px;">Spread Width ($)</label>
+            <input type="number" id="bt-spread" value="5" step="1" class="form-input" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+          <div>
+            <label style="display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 3px;">Profit Target %</label>
+            <input type="number" id="bt-target" value="80" step="5" class="form-input" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+          </div>
+          <div>
+            <label style="display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 3px;">Min Credit ($)</label>
+            <input type="number" id="bt-min-credit" value="1.00" step="0.25" class="form-input" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+          <div>
+            <label style="display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 3px;">Max Contracts</label>
+            <input type="number" id="bt-contracts" value="5" step="1" class="form-input" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+          </div>
+          <div>
+            <label style="display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 3px;">Slippage ($)</label>
+            <input type="number" id="bt-slippage" value="0.02" step="0.01" class="form-input" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+          </div>
+        </div>
+
+        <div style="margin-bottom: 14px;">
+          <label style="display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 3px;">Max Daily Loss %</label>
+          <input type="number" id="bt-max-loss" value="2.0" step="0.5" class="form-input" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+        </div>
+
+        <button onclick="runBacktest()" id="bt-run-btn" style="width: 100%; padding: 10px; background: var(--blue); color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px;">Run Backtest</button>
+
+        <!-- Progress -->
+        <div id="bt-progress" style="display: none; margin-top: 12px;">
+          <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); margin-bottom: 4px;">
+            <span id="bt-progress-text">Running...</span>
+            <span id="bt-progress-pct">0%</span>
+          </div>
+          <div style="background: var(--bg); border-radius: 4px; height: 6px; overflow: hidden;">
+            <div id="bt-progress-bar" style="width: 0%; height: 100%; background: var(--blue); transition: width 0.3s;"></div>
+          </div>
+        </div>
+
+        <div id="bt-error" style="display: none; margin-top: 10px; padding: 8px; background: var(--red-dim); border-radius: 6px; color: var(--red); font-size: 12px;"></div>
+
+        <!-- History -->
+        <div style="margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px;">
+          <div style="font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 8px;">Previous Runs</div>
+          <div id="bt-history" style="font-size: 12px; color: var(--text-dim);">Loading...</div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Results -->
+      <div id="bt-results-area">
+        <div id="bt-no-results" style="text-align: center; padding: 60px 20px; color: var(--text-dim);">
+          <div style="font-size: 18px; margin-bottom: 8px;">No Results Yet</div>
+          <div style="font-size: 13px;">Configure parameters and click "Run Backtest" to start.</div>
+        </div>
+
+        <div id="bt-results" style="display: none;">
+          <!-- Metrics cards row -->
+          <div id="bt-metrics-cards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px;"></div>
+
+          <!-- Equity curve -->
+          <div class="panel" style="padding: 12px; margin-bottom: 16px;">
+            <div class="panel-title" style="margin-bottom: 8px;">Equity Curve</div>
+            <div id="bt-equity-chart" style="height: 300px;"></div>
+          </div>
+
+          <!-- Drawdown -->
+          <div class="panel" style="padding: 12px; margin-bottom: 16px;">
+            <div class="panel-title" style="margin-bottom: 8px;">Drawdown</div>
+            <div id="bt-drawdown-chart" style="height: 200px;"></div>
+          </div>
+
+          <!-- Monthly returns + breakdowns -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+            <div class="panel" style="padding: 12px;">
+              <div class="panel-title" style="margin-bottom: 8px;">Monthly Returns</div>
+              <div id="bt-monthly-table" style="font-size: 12px; overflow-x: auto;"></div>
+            </div>
+            <div class="panel" style="padding: 12px;">
+              <div class="panel-title" style="margin-bottom: 8px;">Win Rate by Day of Week</div>
+              <div id="bt-dow-chart" style="height: 250px;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div><!-- /tab-backtest -->
 
 </div>
 
@@ -4088,7 +4212,8 @@ function switchTab(tabId) {
     const isActive = btn.textContent.toLowerCase().replace(/\s/g, '') === tabId ||
       (tabId === 'overview' && btn.textContent === 'Overview') ||
       (tabId === 'journal' && btn.textContent === 'Trade Journal') ||
-      (tabId === 'logs' && btn.textContent === 'Logs');
+      (tabId === 'logs' && btn.textContent === 'Logs') ||
+      (tabId === 'backtest' && btn.textContent === 'Backtest');
     btn.classList.toggle('active', isActive);
     btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
   });
@@ -4097,6 +4222,7 @@ function switchTab(tabId) {
   });
   if (tabId === 'journal') updateJournal();
   if (tabId === 'logs') updateLogs();
+  if (tabId === 'backtest') loadBacktestHistory();
 }
 
 // ---------------------------------------------------------------
@@ -5484,6 +5610,250 @@ document.addEventListener('keydown', function(e) {
     }
   }
 });
+
+// ---------------------------------------------------------------
+// Backtest
+// ---------------------------------------------------------------
+let btPollTimer = null;
+
+async function runBacktest() {
+  const btn = document.getElementById('bt-run-btn');
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+  document.getElementById('bt-error').style.display = 'none';
+  document.getElementById('bt-progress').style.display = 'block';
+  document.getElementById('bt-progress-bar').style.width = '0%';
+  document.getElementById('bt-progress-pct').textContent = '0%';
+  document.getElementById('bt-progress-text').textContent = 'Downloading data...';
+
+  const params = {
+    start_date: document.getElementById('bt-start').value,
+    end_date: document.getElementById('bt-end').value,
+    capital: parseFloat(document.getElementById('bt-capital').value),
+    pulse_threshold: parseFloat(document.getElementById('bt-pulse').value),
+    spread_width: parseFloat(document.getElementById('bt-spread').value),
+    profit_target: parseFloat(document.getElementById('bt-target').value),
+    min_credit: parseFloat(document.getElementById('bt-min-credit').value),
+    max_contracts: parseInt(document.getElementById('bt-contracts').value),
+    slippage: parseFloat(document.getElementById('bt-slippage').value),
+    max_daily_loss: parseFloat(document.getElementById('bt-max-loss').value),
+  };
+
+  try {
+    const resp = await fetch('/api/backtest/run', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-API-Token': API_TOKEN},
+      body: JSON.stringify(params),
+    });
+    const data = await resp.json();
+    if (!data.success) {
+      showBtError(data.error || 'Failed to start backtest');
+      btn.disabled = false;
+      btn.textContent = 'Run Backtest';
+      return;
+    }
+
+    btPollTimer = setInterval(pollBacktestStatus, 2000);
+  } catch(e) {
+    showBtError('Network error: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = 'Run Backtest';
+  }
+}
+
+async function pollBacktestStatus() {
+  try {
+    const resp = await fetch('/api/backtest/status');
+    const data = await resp.json();
+
+    if (data.running) {
+      const pct = data.progress_pct || 0;
+      document.getElementById('bt-progress-bar').style.width = pct + '%';
+      document.getElementById('bt-progress-pct').textContent = pct.toFixed(0) + '%';
+      document.getElementById('bt-progress-text').textContent = 'Processing ' + (data.current_date || '...');
+    } else {
+      clearInterval(btPollTimer);
+      btPollTimer = null;
+      document.getElementById('bt-progress').style.display = 'none';
+      document.getElementById('bt-run-btn').disabled = false;
+      document.getElementById('bt-run-btn').textContent = 'Run Backtest';
+
+      if (data.error) {
+        showBtError(data.error);
+      } else if (data.has_results) {
+        loadBacktestResults();
+        loadBacktestHistory();
+      }
+    }
+  } catch(e) {
+    // ignore polling errors
+  }
+}
+
+function showBtError(msg) {
+  const el = document.getElementById('bt-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+async function loadBacktestResults(runId) {
+  try {
+    let url = '/api/backtest/results';
+    if (runId) url += '?run_id=' + runId;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (!data.success) return;
+
+    const report = data.report;
+    document.getElementById('bt-no-results').style.display = 'none';
+    document.getElementById('bt-results').style.display = 'block';
+
+    renderBtMetrics(report);
+    renderBtEquityCurve(report);
+    renderBtDrawdown(report);
+    renderBtMonthly(report);
+    renderBtDowChart(report);
+  } catch(e) {
+    console.error('Failed to load backtest results:', e);
+  }
+}
+
+function renderBtMetrics(report) {
+  const core = report.core || {};
+  const tm = report.trade_metrics || {};
+  const cards = [
+    {label: 'Total Return', value: '$' + (core.total_return_dollar||0).toLocaleString(undefined,{minimumFractionDigits:2}), color: core.total_return_dollar >= 0 ? 'var(--green)' : 'var(--red)'},
+    {label: 'Annualized', value: (core.annualized_return||0).toFixed(2) + '%', color: core.annualized_return >= 0 ? 'var(--green)' : 'var(--red)'},
+    {label: 'Sharpe', value: (core.sharpe_ratio||0).toFixed(3), color: 'var(--text)'},
+    {label: 'Sortino', value: (core.sortino_ratio||0).toFixed(3), color: 'var(--text)'},
+    {label: 'Max Drawdown', value: (core.max_drawdown_pct||0).toFixed(2) + '%', color: 'var(--red)'},
+    {label: 'Trades', value: tm.total_trades||0, color: 'var(--text)'},
+    {label: 'Win Rate', value: (tm.win_rate||0).toFixed(1) + '%', color: tm.win_rate >= 50 ? 'var(--green)' : 'var(--amber)'},
+    {label: 'Profit Factor', value: (tm.profit_factor||0).toFixed(2), color: tm.profit_factor >= 1 ? 'var(--green)' : 'var(--red)'},
+    {label: 'Expectancy', value: '$' + (tm.expectancy||0).toFixed(2), color: tm.expectancy >= 0 ? 'var(--green)' : 'var(--red)'},
+  ];
+
+  const container = document.getElementById('bt-metrics-cards');
+  container.innerHTML = cards.map(c => `
+    <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; text-align: center;">
+      <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 4px;">${c.label}</div>
+      <div style="font-size: 18px; font-weight: 700; font-family: var(--font-mono); color: ${c.color};">${c.value}</div>
+    </div>
+  `).join('');
+}
+
+function renderBtEquityCurve(report) {
+  const ec = report.equity_curve || [];
+  if (!ec.length) return;
+  Plotly.newPlot('bt-equity-chart', [{
+    x: ec.map(e => e.date),
+    y: ec.map(e => e.equity),
+    type: 'scatter',
+    mode: 'lines',
+    line: {color: '#3b82f6', width: 2},
+    fill: 'tozeroy',
+    fillcolor: 'rgba(59,130,246,0.08)',
+  }], {
+    margin: {t: 10, b: 30, l: 60, r: 20},
+    paper_bgcolor: 'transparent',
+    plot_bgcolor: 'transparent',
+    xaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}},
+    yaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}, tickprefix: '$'},
+    font: {family: 'DM Sans'},
+  }, {responsive: true, displayModeBar: false});
+}
+
+function renderBtDrawdown(report) {
+  const dd = report.drawdown_series || [];
+  if (!dd.length) return;
+  Plotly.newPlot('bt-drawdown-chart', [{
+    x: dd.map(d => d.date),
+    y: dd.map(d => -d.drawdown_pct),
+    type: 'scatter',
+    mode: 'lines',
+    line: {color: '#ef4444', width: 1.5},
+    fill: 'tozeroy',
+    fillcolor: 'rgba(239,68,68,0.1)',
+  }], {
+    margin: {t: 10, b: 30, l: 60, r: 20},
+    paper_bgcolor: 'transparent',
+    plot_bgcolor: 'transparent',
+    xaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}},
+    yaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}, ticksuffix: '%'},
+    font: {family: 'DM Sans'},
+  }, {responsive: true, displayModeBar: false});
+}
+
+function renderBtMonthly(report) {
+  const monthly = report.monthly_returns || [];
+  if (!monthly.length) {
+    document.getElementById('bt-monthly-table').innerHTML = '<span style="color:var(--text-dim)">No data</span>';
+    return;
+  }
+  const months = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  let html = '<table style="width:100%;border-collapse:collapse;">';
+  html += '<tr style="border-bottom:1px solid var(--border);"><th style="text-align:left;padding:4px;">Year</th><th>Month</th><th style="text-align:right;">P&L</th><th style="text-align:right;">Return</th></tr>';
+  for (const m of monthly) {
+    const color = m.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">
+      <td style="padding:3px 4px;">${m.year}</td>
+      <td style="text-align:center;">${months[m.month]||m.month}</td>
+      <td style="text-align:right;color:${color};font-family:var(--font-mono);">$${m.pnl.toLocaleString(undefined,{minimumFractionDigits:2})}</td>
+      <td style="text-align:right;color:${color};font-family:var(--font-mono);">${m.return_pct.toFixed(2)}%</td>
+    </tr>`;
+  }
+  html += '</table>';
+  document.getElementById('bt-monthly-table').innerHTML = html;
+}
+
+function renderBtDowChart(report) {
+  const dow = report.by_day_of_week || [];
+  if (!dow.length) return;
+  const days = dow.filter(d => d.total > 0);
+  Plotly.newPlot('bt-dow-chart', [{
+    x: days.map(d => d.day),
+    y: days.map(d => d.win_rate),
+    type: 'bar',
+    marker: {color: days.map(d => d.win_rate >= 50 ? '#10b981' : '#f59e0b')},
+    text: days.map(d => d.win_rate.toFixed(1) + '%'),
+    textposition: 'outside',
+    textfont: {size: 11, color: '#d1d5db'},
+  }], {
+    margin: {t: 10, b: 30, l: 40, r: 20},
+    paper_bgcolor: 'transparent',
+    plot_bgcolor: 'transparent',
+    xaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}},
+    yaxis: {gridcolor: '#1e2a3a', color: '#6b7280', tickfont: {size: 10}, ticksuffix: '%', range: [0, 100]},
+    font: {family: 'DM Sans'},
+  }, {responsive: true, displayModeBar: false});
+}
+
+async function loadBacktestHistory() {
+  try {
+    const resp = await fetch('/api/backtest/history');
+    const data = await resp.json();
+    if (!data.success || !data.runs.length) {
+      document.getElementById('bt-history').innerHTML = '<span style="color:var(--text-dim)">No previous runs</span>';
+      return;
+    }
+
+    let html = '';
+    for (const run of data.runs) {
+      const p = run.params || {};
+      const retColor = run.total_return_pct >= 0 ? 'var(--green)' : 'var(--red)';
+      html += `<div style="padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); cursor: pointer;" onclick="loadBacktestResults('${run.id}')">
+        <div style="display: flex; justify-content: space-between;">
+          <span>${(p.start_date||'').slice(5)} - ${(p.end_date||'').slice(5)}</span>
+          <span style="color: ${retColor}; font-family: var(--font-mono);">${run.total_return_pct >= 0 ? '+' : ''}${(run.total_return_pct||0).toFixed(1)}%</span>
+        </div>
+        <div style="color: var(--text-dim); font-size: 11px;">${run.total_trades} trades, WR ${(run.win_rate||0).toFixed(0)}%, Sharpe ${(run.sharpe_ratio||0).toFixed(2)}</div>
+      </div>`;
+    }
+    document.getElementById('bt-history').innerHTML = html;
+  } catch(e) {
+    document.getElementById('bt-history').innerHTML = '<span style="color:var(--text-dim)">Failed to load</span>';
+  }
+}
 </script>
 
 <footer class="app-footer">

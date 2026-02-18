@@ -13,6 +13,7 @@ import logging
 import sqlite3
 import ctypes
 import time
+import threading
 import yaml
 from pathlib import Path
 from datetime import datetime, date, timedelta
@@ -3520,6 +3521,290 @@ def api_notifications_save():
     except Exception as e:
         logger.error(f"Notification settings save failed: {e}")
         return jsonify({'success': False, 'error': 'Failed to save notification settings'})
+
+
+# ---------------------------------------------------------------------------
+# Backtest API
+# ---------------------------------------------------------------------------
+
+# In-memory backtest job state (only one backtest at a time)
+_backtest_job = {
+    'running': False,
+    'progress': 0,
+    'total_days': 0,
+    'current_date': None,
+    'started_at': None,
+    'results': None,
+    'error': None,
+    'job_id': None,
+}
+_backtest_lock = threading.Lock()
+
+
+def _init_backtest_table():
+    """Create backtest_runs table if it doesn't exist."""
+    db_path = str(DATA_DIR / 'database' / 'trades.db')
+    try:
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS backtest_runs (
+                id TEXT PRIMARY KEY,
+                started_at TIMESTAMP,
+                completed_at TIMESTAMP,
+                params TEXT,
+                results_summary TEXT,
+                total_trades INTEGER DEFAULT 0,
+                total_return_pct REAL DEFAULT 0,
+                sharpe_ratio REAL DEFAULT 0,
+                max_drawdown_pct REAL DEFAULT 0,
+                win_rate REAL DEFAULT 0,
+                full_results TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"Failed to init backtest table: {e}")
+
+
+# Initialize on module load
+_init_backtest_table()
+
+
+@app.route('/api/backtest/run', methods=['POST'])
+def api_backtest_run():
+    """Kick off a backtest in a background thread."""
+    with _backtest_lock:
+        if _backtest_job['running']:
+            return jsonify({
+                'success': False,
+                'error': 'A backtest is already running',
+                'job_id': _backtest_job['job_id'],
+            }), 409
+
+    data = request.json or {}
+    start_date_str = data.get('start_date', '2024-01-01')
+    end_date_str = data.get('end_date', '2025-12-31')
+    capital = float(data.get('capital', 50000))
+    pulse_threshold = float(data.get('pulse_threshold', 10.0))
+    spread_width = float(data.get('spread_width', 5.0))
+    profit_target = float(data.get('profit_target', 80.0))
+    min_credit = float(data.get('min_credit', 1.00))
+    max_contracts = int(data.get('max_contracts', 5))
+    slippage = float(data.get('slippage', 0.02))
+    max_daily_loss = float(data.get('max_daily_loss', 2.0))
+
+    import uuid as _uuid
+    job_id = str(_uuid.uuid4())[:8]
+
+    with _backtest_lock:
+        _backtest_job.update({
+            'running': True,
+            'progress': 0,
+            'total_days': 0,
+            'current_date': None,
+            'started_at': datetime.now(ET).isoformat(),
+            'results': None,
+            'error': None,
+            'job_id': job_id,
+        })
+
+    params = {
+        'start_date': start_date_str,
+        'end_date': end_date_str,
+        'capital': capital,
+        'pulse_threshold': pulse_threshold,
+        'spread_width': spread_width,
+        'profit_target': profit_target,
+        'min_credit': min_credit,
+        'max_contracts': max_contracts,
+        'slippage': slippage,
+        'max_daily_loss': max_daily_loss,
+    }
+
+    def _run_backtest():
+        try:
+            from datetime import date as _date
+            from src.backtest.data_loader import (
+                download_spx_bars, download_vix_daily,
+                load_bars_from_csv, load_vix_daily,
+            )
+            from src.backtest.engine import BacktestEngine
+            from src.backtest.report import generate_report
+
+            sd = _date.fromisoformat(start_date_str)
+            ed = _date.fromisoformat(end_date_str)
+
+            # Download data
+            spx_csv = str(download_spx_bars(sd, ed))
+            vix_daily = {}
+            try:
+                vix_csv = str(download_vix_daily(sd, ed))
+                vix_daily = load_vix_daily(vix_csv, sd, ed)
+            except Exception:
+                pass
+
+            bars_df = load_bars_from_csv(spx_csv, sd, ed)
+
+            def progress_cb(current, total, trading_day):
+                with _backtest_lock:
+                    _backtest_job['progress'] = current
+                    _backtest_job['total_days'] = total
+                    _backtest_job['current_date'] = str(trading_day)
+
+            engine = BacktestEngine(
+                bars_df=bars_df,
+                vix_daily=vix_daily,
+                initial_capital=capital,
+                pulse_threshold=pulse_threshold,
+                spread_width=spread_width,
+                profit_target_pct=profit_target,
+                min_credit=min_credit,
+                max_contracts=max_contracts,
+                slippage=slippage,
+                max_daily_loss_pct=max_daily_loss,
+                progress_callback=progress_cb,
+            )
+
+            results = engine.run()
+            report = generate_report(results)
+
+            # Save to DB
+            try:
+                db_path = str(DATA_DIR / 'database' / 'trades.db')
+                conn = sqlite3.connect(db_path, timeout=10)
+                conn.execute("PRAGMA journal_mode=WAL")
+                core = report.get('core', {})
+                tm = report.get('trade_metrics', {})
+                conn.execute("""
+                    INSERT INTO backtest_runs
+                    (id, started_at, completed_at, params, results_summary,
+                     total_trades, total_return_pct, sharpe_ratio,
+                     max_drawdown_pct, win_rate, full_results)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    job_id,
+                    _backtest_job['started_at'],
+                    datetime.now(ET).isoformat(),
+                    json.dumps(params),
+                    json.dumps({k: v for k, v in report.items()
+                                if k not in ('equity_curve', 'drawdown_series', 'daily_pnl_series')}),
+                    tm.get('total_trades', 0),
+                    core.get('total_return_pct', 0),
+                    core.get('sharpe_ratio', 0),
+                    core.get('max_drawdown_pct', 0),
+                    tm.get('win_rate', 0),
+                    json.dumps(report),
+                ))
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                logger.error(f"Failed to save backtest results: {e}")
+
+            with _backtest_lock:
+                _backtest_job['results'] = report
+                _backtest_job['running'] = False
+
+        except Exception as e:
+            logger.error(f"Backtest failed: {e}", exc_info=True)
+            with _backtest_lock:
+                _backtest_job['error'] = str(e)
+                _backtest_job['running'] = False
+
+    thread = threading.Thread(target=_run_backtest, daemon=True, name='backtest')
+    thread.start()
+
+    return jsonify({'success': True, 'job_id': job_id})
+
+
+@app.route('/api/backtest/status')
+def api_backtest_status():
+    """Get backtest job progress."""
+    with _backtest_lock:
+        total = _backtest_job['total_days']
+        progress = _backtest_job['progress']
+        pct = (progress / total * 100) if total > 0 else 0
+
+        return jsonify({
+            'running': _backtest_job['running'],
+            'progress': progress,
+            'total_days': total,
+            'progress_pct': round(pct, 1),
+            'current_date': _backtest_job['current_date'],
+            'started_at': _backtest_job['started_at'],
+            'error': _backtest_job['error'],
+            'job_id': _backtest_job['job_id'],
+            'has_results': _backtest_job['results'] is not None,
+        })
+
+
+@app.route('/api/backtest/results')
+def api_backtest_results():
+    """Get backtest results (from current run or historical)."""
+    # Check for specific run ID
+    run_id = request.args.get('run_id')
+    if run_id:
+        try:
+            db_path = str(DATA_DIR / 'database' / 'trades.db')
+            conn = sqlite3.connect(db_path, timeout=10)
+            conn.execute("PRAGMA journal_mode=WAL")
+            row = conn.execute(
+                "SELECT full_results FROM backtest_runs WHERE id = ?",
+                (run_id,)
+            ).fetchone()
+            conn.close()
+            if row:
+                return jsonify({'success': True, 'report': json.loads(row[0])})
+            return jsonify({'success': False, 'error': 'Run not found'}), 404
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    # Return current job results
+    with _backtest_lock:
+        if _backtest_job['results']:
+            return jsonify({'success': True, 'report': _backtest_job['results']})
+        if _backtest_job['error']:
+            return jsonify({'success': False, 'error': _backtest_job['error']})
+        if _backtest_job['running']:
+            return jsonify({'success': False, 'error': 'Backtest still running'})
+        return jsonify({'success': False, 'error': 'No results available'})
+
+
+@app.route('/api/backtest/history')
+def api_backtest_history():
+    """List previous backtest runs."""
+    try:
+        db_path = str(DATA_DIR / 'database' / 'trades.db')
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        rows = conn.execute("""
+            SELECT id, started_at, completed_at, params,
+                   total_trades, total_return_pct, sharpe_ratio,
+                   max_drawdown_pct, win_rate
+            FROM backtest_runs
+            ORDER BY started_at DESC
+            LIMIT 20
+        """).fetchall()
+        conn.close()
+
+        runs = []
+        for row in rows:
+            runs.append({
+                'id': row[0],
+                'started_at': row[1],
+                'completed_at': row[2],
+                'params': json.loads(row[3]) if row[3] else {},
+                'total_trades': row[4],
+                'total_return_pct': row[5],
+                'sharpe_ratio': row[6],
+                'max_drawdown_pct': row[7],
+                'win_rate': row[8],
+            })
+
+        return jsonify({'success': True, 'runs': runs})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ---------------------------------------------------------------------------
