@@ -1,5 +1,9 @@
 # The Daily Melt
 
+![CI](https://github.com/ccharafeddine/spx-income-trader/actions/workflows/ci.yml/badge.svg)
+![Python 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Fully automated options income system trading SPX 0DTE credit spreads. 100% mechanical strategy execution with zero human intervention, real-time position management, and a native desktop application for monitoring.
 
 Built with Python. Trades live through E*TRADE or Charles Schwab. Runs as a standalone desktop app on Windows, Linux, and macOS.

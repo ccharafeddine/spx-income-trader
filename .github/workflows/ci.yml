@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff (syntax errors, undefined names, invalid statements)
+        run: ruff check src/ dashboard/ tests/ --select E9,F63,F7,F82
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run tests
+        run: python -m pytest tests/ -v --tb=short -x --cov=src --cov=dashboard --cov-report=html
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-py${{ matrix.python-version }}
+          path: htmlcov/
+
+  security-check:
+    name: Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Check for hardcoded secrets
+        run: |
+          echo "Scanning for hardcoded credentials..."
+          FOUND=0
+
+          # Check for hardcoded API keys or secrets in Python files
+          if grep -rn "consumer_key\s*=\s*['\"][^'\"]\{10,\}['\"]" --include="*.py" src/ dashboard/ ; then
+            echo "ERROR: Found hardcoded consumer_key"
+            FOUND=1
+          fi
+          if grep -rn "api_key\s*=\s*['\"][^'\"]\{10,\}['\"]" --include="*.py" src/ dashboard/ ; then
+            echo "ERROR: Found hardcoded api_key"
+            FOUND=1
+          fi
+          if grep -rn "app_secret\s*=\s*['\"][^'\"]\{10,\}['\"]" --include="*.py" src/ dashboard/ ; then
+            echo "ERROR: Found hardcoded app_secret"
+            FOUND=1
+          fi
+
+          if [ "$FOUND" -eq 1 ]; then
+            exit 1
+          fi
+          echo "No hardcoded secrets found."
+
+      - name: Verify .gitignore coverage
+        run: |
+          echo "Checking .gitignore for required patterns..."
+          MISSING=0
+          for pattern in ".env" "*.db" "tokens/" "database/*.json" "logs/" "dist/"; do
+            if ! grep -qF "$pattern" .gitignore; then
+              echo "WARNING: .gitignore missing pattern: $pattern"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -eq 1 ]; then
+            echo "Some .gitignore patterns are missing (see above)"
+            exit 1
+          fi
+          echo ".gitignore looks good."
+
+      - name: Check for vulnerable dependencies
+        run: |
+          pip install pip-audit
+          pip install -r requirements.txt
+          pip-audit -r requirements.txt || true

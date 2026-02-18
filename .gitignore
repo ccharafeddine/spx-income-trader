@@ -4,19 +4,20 @@ __pycache__/
 *$py.class
 .Python
 venv/
+.venv*/
 ENV/
 
 # Environment
 .env
 .env.local
+.env.*
 
 # Database
 *.db
 *.sqlite
 
 # Logs
-logs/*.log
-logs/*.json
+logs/
 
 # IDE
 .vscode/
@@ -40,6 +41,7 @@ signals_*.json
 # Build artifacts
 dist/
 build/_pyinstaller/
+build/_py2app/
 build/Output/
 *.spec
 
