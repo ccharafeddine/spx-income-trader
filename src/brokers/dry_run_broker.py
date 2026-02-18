@@ -144,11 +144,12 @@ class DryRunBroker(BrokerInterface):
     def get_options_chain(self, symbol: str, expiration: str) -> Dict[float, Dict]:
         """
         Get options chain, trying real Yahoo Finance data first and
-        falling back to the synthetic model if real data is unavailable.
+        falling back to the synthetic model if real data is unavailable
+        or if the real chain has unusable (all-zero) prices.
         """
         # Try real chain first
         chain = self._fetch_real_options_chain(symbol, expiration)
-        if chain:
+        if chain and self._chain_has_usable_prices(chain, symbol):
             self._last_chain_source = 'real'
             logger.info(f"Using REAL options chain from Yahoo Finance ({len(chain)} strikes)")
             return chain
@@ -159,6 +160,32 @@ class DryRunBroker(BrokerInterface):
             self._last_chain_source = 'synthetic'
             logger.info(f"Using SYNTHETIC options chain ({len(chain)} strikes)")
         return chain
+
+    def _chain_has_usable_prices(self, chain: Dict[float, Dict], symbol: str) -> bool:
+        """Check whether ATM strikes in the chain have non-zero bid prices.
+
+        Yahoo Finance often returns 0DTE SPX chains with all NaN/zero prices.
+        When this happens we should fall back to synthetic Black-Scholes pricing.
+        """
+        current_price = self.get_current_price(symbol)
+        if current_price <= 0:
+            return True  # Can't validate without a price, accept as-is
+
+        atm_strike = min(chain.keys(), key=lambda s: abs(s - current_price))
+        nearby_strikes = [s for s in chain.keys()
+                          if abs(s - atm_strike) <= 3 * self.strike_interval]
+        usable = sum(
+            1 for s in nearby_strikes
+            if chain[s].get('put_bid', 0) > 0 or chain[s].get('call_bid', 0) > 0
+        )
+        if usable == 0:
+            logger.warning(
+                f"Real chain has {len(chain)} strikes but ATM region "
+                f"({len(nearby_strikes)} strikes near {atm_strike}) has all-zero "
+                f"bids - falling back to synthetic pricing"
+            )
+            return False
+        return True
 
     def _fetch_real_options_chain(self, symbol: str, expiration: str) -> Optional[Dict[float, Dict]]:
         """

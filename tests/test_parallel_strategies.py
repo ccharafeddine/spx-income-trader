@@ -1298,3 +1298,102 @@ class TestDuplicateCloseSignalPrevention:
         assert pending_during_close == [True], (
             "_close_pending should be True when broker.close_spread() executes"
         )
+
+
+# ============================================================================
+# TESTS: DryRunBroker chain quality validation
+# ============================================================================
+
+class TestDryRunChainQuality:
+    """Verify that DryRunBroker falls back to synthetic pricing when Yahoo
+    Finance returns chains with all-zero bid/ask prices (common for 0DTE SPX).
+    """
+
+    def test_zero_price_chain_falls_back_to_synthetic(self):
+        """Chain with all-zero bids at ATM should trigger synthetic fallback."""
+        from src.brokers.dry_run_broker import DryRunBroker
+
+        broker = DryRunBroker(initial_balance=50000.0)
+
+        # Build a chain with 219 strikes but all zero prices (simulates Yahoo bug)
+        zero_chain = {}
+        for i in range(-110, 110):
+            strike = 6000.0 + i * 5
+            zero_chain[strike] = {
+                'call_bid': 0, 'call_ask': 0, 'call_last': 0,
+                'call_volume': 0, 'call_oi': 0,
+                'put_bid': 0, 'put_ask': 0, 'put_last': 0,
+                'put_volume': 0, 'put_oi': 0,
+            }
+
+        with patch.object(broker, '_fetch_real_options_chain', return_value=zero_chain), \
+             patch.object(broker, 'get_current_price', return_value=6000.0), \
+             patch.object(broker, '_build_synthetic_chain') as mock_synth:
+            mock_synth.return_value = {6000.0: {'put_bid': 2.50}}
+            chain = broker.get_options_chain('SPX', '2026-02-18')
+
+            # Should have called synthetic fallback
+            mock_synth.assert_called_once()
+            assert broker._last_chain_source == 'synthetic'
+
+    def test_valid_chain_passes_quality_check(self):
+        """Chain with non-zero ATM bids should be accepted as-is."""
+        from src.brokers.dry_run_broker import DryRunBroker
+
+        broker = DryRunBroker(initial_balance=50000.0)
+
+        # Build a chain with some valid prices at ATM
+        valid_chain = {}
+        for i in range(-10, 11):
+            strike = 6000.0 + i * 5
+            valid_chain[strike] = {
+                'call_bid': max(0, 2.0 - abs(i) * 0.2),
+                'call_ask': max(0.1, 2.2 - abs(i) * 0.2),
+                'call_last': 2.1, 'call_volume': 100, 'call_oi': 500,
+                'put_bid': max(0, 2.0 - abs(i) * 0.2),
+                'put_ask': max(0.1, 2.2 - abs(i) * 0.2),
+                'put_last': 2.1, 'put_volume': 100, 'put_oi': 500,
+            }
+
+        with patch.object(broker, '_fetch_real_options_chain', return_value=valid_chain), \
+             patch.object(broker, 'get_current_price', return_value=6000.0), \
+             patch.object(broker, '_build_synthetic_chain') as mock_synth:
+            chain = broker.get_options_chain('SPX', '2026-02-18')
+
+            # Should NOT have called synthetic fallback
+            mock_synth.assert_not_called()
+            assert broker._last_chain_source == 'real'
+            assert len(chain) == 21
+
+    def test_partial_zero_chain_passes_if_atm_has_prices(self):
+        """Chain where only deep OTM strikes are zero should still pass."""
+        from src.brokers.dry_run_broker import DryRunBroker
+
+        broker = DryRunBroker(initial_balance=50000.0)
+
+        chain = {}
+        for i in range(-20, 21):
+            strike = 6000.0 + i * 5
+            # Only strikes within 15 of ATM have prices
+            if abs(i) <= 3:
+                chain[strike] = {
+                    'call_bid': 1.5, 'call_ask': 1.7, 'call_last': 1.6,
+                    'call_volume': 50, 'call_oi': 200,
+                    'put_bid': 1.5, 'put_ask': 1.7, 'put_last': 1.6,
+                    'put_volume': 50, 'put_oi': 200,
+                }
+            else:
+                chain[strike] = {
+                    'call_bid': 0, 'call_ask': 0, 'call_last': 0,
+                    'call_volume': 0, 'call_oi': 0,
+                    'put_bid': 0, 'put_ask': 0, 'put_last': 0,
+                    'put_volume': 0, 'put_oi': 0,
+                }
+
+        with patch.object(broker, '_fetch_real_options_chain', return_value=chain), \
+             patch.object(broker, 'get_current_price', return_value=6000.0), \
+             patch.object(broker, '_build_synthetic_chain') as mock_synth:
+            result = broker.get_options_chain('SPX', '2026-02-18')
+
+            mock_synth.assert_not_called()
+            assert broker._last_chain_source == 'real'
