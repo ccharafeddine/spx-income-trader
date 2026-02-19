@@ -27,8 +27,7 @@ from config.settings import (
     STRATEGY_PARAMS,
     DATABASE_PATH,
     LOG_FILE,
-    LOG_LEVEL,
-    get_database_path,
+    LOG_LEVEL
 )
 from src.brokers.dry_run_broker import DryRunBroker
 from src.brokers.etrade_broker import ETradeBroker
@@ -576,20 +575,6 @@ class TradingBot:
                         self.orb_strategy.reset_daily()
                     if self.bnb_enabled and self.bnb_strategy:
                         self.bnb_strategy.on_day_start()  # Activate overnight signal
-
-                    # Refresh account balance for position sizing
-                    try:
-                        balance = self.broker.get_account_balance()
-                        live_balance = balance.get('net_account_value', 0)
-                        if live_balance > 0:
-                            old_size = self.portfolio.account_size
-                            self.portfolio.update_account_size(live_balance)
-                            if abs(live_balance - old_size) > 1:
-                                logger.info(
-                                    f"Account size updated: ${old_size:,.2f} -> ${live_balance:,.2f}"
-                                )
-                    except Exception as e:
-                        logger.warning(f"Could not refresh account balance: {e}")
 
                     # Refresh PDT tracker account equity for new day
                     if self.pdt_tracker:
@@ -2428,7 +2413,7 @@ def main():
                 logger.warning("Live mode: per-trade confirmation DISABLED (--auto-trade active)")
 
         strategy = SPXIncomeStrategy()
-        db_manager = DatabaseManager(get_database_path(args.mode or TRADING_MODE))
+        db_manager = DatabaseManager(DATABASE_PATH)
         notifier = NotificationManager()
 
         # Create recorder if --record flag is set

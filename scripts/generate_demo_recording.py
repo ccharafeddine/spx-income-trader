@@ -11,6 +11,7 @@ Usage:
     python scripts/generate_demo_recording.py --all
     python scripts/generate_demo_recording.py --scenario winning
 """
+from __future__ import annotations
 
 import sys
 import json

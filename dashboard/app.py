@@ -39,17 +39,9 @@ from config.settings import (
     get_trading_mode, save_trading_mode, get_etrade_credentials,
     is_schwab_configured, is_any_broker_configured, load_strategy_params,
     save_schwab_credentials, clear_schwab_credentials, get_schwab_credentials,
-    get_database_path, BACKTEST_DB_PATH,
 )
 from src.data.yahoo_finance import YahooFinanceProvider
 from src.utils.version import APP_VERSION
-
-try:
-    import yfinance as yf
-    YFINANCE_AVAILABLE = True
-except ImportError:
-    YFINANCE_AVAILABLE = False
-    yf = None
 
 import pytz
 
@@ -422,12 +414,8 @@ def detect_trading_mode():
 
 
 def get_db_connection():
-    """Get a SQLite connection with WAL mode and timeout for concurrent access.
-
-    Uses the mode-specific trade database (trades_dryrun.db or trades_live.db).
-    """
-    db_path = get_database_path(get_trading_mode())
-    conn = sqlite3.connect(db_path, timeout=10)
+    """Get a SQLite connection with WAL mode and timeout for concurrent access."""
+    conn = sqlite3.connect(DATABASE_PATH, timeout=10)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
     return conn
@@ -1129,7 +1117,7 @@ def _resolve_schwab_token_path():
 
 @app.route('/auth/schwab/start')
 def auth_schwab_start():
-    """Initiate Schwab OAuth2 flow. Returns auth URL and opens system browser."""
+    """Initiate Schwab OAuth2 flow. Returns auth URL for the browser."""
     try:
         import schwab.auth as schwab_auth
         schwab_creds = get_schwab_credentials()
@@ -1146,35 +1134,8 @@ def auth_schwab_start():
             'state': auth_context.state,
         }
 
-        auth_url = auth_context.authorization_url
         logger.info("Schwab OAuth2 flow initiated")
-
-        # Open the auth URL in the system browser (pywebview's window.open doesn't work)
-        browser_opened = False
-        try:
-            import subprocess, platform
-            system = platform.system()
-            if system == 'Darwin':
-                subprocess.Popen(['open', auth_url])
-                browser_opened = True
-            elif system == 'Windows':
-                import os
-                os.startfile(auth_url)
-                browser_opened = True
-            elif system == 'Linux':
-                subprocess.Popen(['xdg-open', auth_url])
-                browser_opened = True
-        except Exception as browser_err:
-            logger.warning(f"Could not open system browser: {browser_err}")
-
-        if not browser_opened:
-            try:
-                import webbrowser
-                browser_opened = webbrowser.open(auth_url)
-            except Exception:
-                pass
-
-        return jsonify({'auth_url': auth_url, 'browser_opened': browser_opened})
+        return jsonify({'auth_url': auth_context.authorization_url})
 
     except Exception as e:
         logger.error(f"Failed to start Schwab OAuth flow: {e}")
@@ -1297,7 +1258,7 @@ def api_pdt_status():
         from src.core.pdt_tracker import PDTTracker
 
         tracker = PDTTracker(
-            db_path=get_database_path(get_trading_mode()),
+            db_path=DATABASE_PATH,
             enabled=pdt_cfg.get('pdt_protection', True),
             threshold=pdt_cfg.get('pdt_threshold', 25000),
             max_day_trades=pdt_cfg.get('pdt_max_day_trades', 3),
@@ -1582,48 +1543,21 @@ def api_today():
     if get_bot_bars:
         bot_bars = get_bot_bars()
 
-    # 2) Yahoo intraday bars for candlestick chart
-    # Use 5d period to ensure we always get data (weekends, holidays, after hours)
+    # 2) Yahoo intraday bars for candlestick chart (cached, fast after first call)
     chart_bars = []
     try:
-        if YFINANCE_AVAILABLE:
-            ticker = yf.Ticker('^GSPC')
-            hist = ticker.history(period='5d', interval='30m')
-            if not hist.empty:
-                if hist.index.tz is None:
-                    hist.index = hist.index.tz_localize('UTC').tz_convert('US/Eastern')
-                else:
-                    hist.index = hist.index.tz_convert('US/Eastern')
-                # Get the most recent trading day
-                trading_days = sorted(set(hist.index.date))
-                if trading_days:
-                    last_day = trading_days[-1]
-                    day_bars = hist[hist.index.date == last_day]
-                    day_bars = day_bars.between_time('09:30', '15:59')
-                    for idx, row in day_bars.iterrows():
-                        ts = idx.strftime('%H:%M')
-                        chart_bars.append({
-                            'timestamp': ts,
-                            'time': ts,
-                            'open': round(float(row['Open']), 2),
-                            'high': round(float(row['High']), 2),
-                            'low': round(float(row['Low']), 2),
-                            'close': round(float(row['Close']), 2),
-                        })
-        if not chart_bars:
-            # Fallback to existing provider
-            intraday = yahoo.get_intraday_bars('30m', '1d') or []
-            for b in intraday:
-                ts = b['timestamp']
-                if hasattr(ts, 'isoformat'):
-                    ts = ts.isoformat()
-                chart_bars.append({
-                    'timestamp': str(ts),
-                    'open': b['open'],
-                    'high': b['high'],
-                    'low': b['low'],
-                    'close': b['close'],
-                })
+        intraday = yahoo.get_intraday_bars('30m', '1d') or []
+        for b in intraday:
+            ts = b['timestamp']
+            if hasattr(ts, 'isoformat'):
+                ts = ts.isoformat()
+            chart_bars.append({
+                'timestamp': str(ts),
+                'open': b['open'],
+                'high': b['high'],
+                'low': b['low'],
+                'close': b['close'],
+            })
     except Exception as e:
         logger.debug(f"Yahoo intraday bars unavailable: {e}")
 
@@ -1690,93 +1624,6 @@ def api_today():
         'open_positions': open_positions,
         'prev_close': prev_close,
     })
-
-
-# ── Chart data cache for /api/chart/today ──
-_chart_today_cache = {'data': None, 'timestamp': None}
-_CHART_CACHE_TTL = 60  # seconds
-
-
-@app.route('/api/chart/today')
-def api_chart_today():
-    """
-    Always-on SPX intraday chart data from Yahoo Finance.
-
-    Returns 30-min OHLC bars for the most recent trading day.
-    Cached for 60 seconds. Works on weekends/holidays (returns
-    the last completed trading day's data).
-    """
-    now = datetime.now(ET)
-
-    # Check cache
-    if (_chart_today_cache['data'] is not None
-            and _chart_today_cache['timestamp'] is not None
-            and (now - _chart_today_cache['timestamp']).total_seconds() < _CHART_CACHE_TTL):
-        return jsonify(_chart_today_cache['data'])
-
-    bars = []
-    trading_date = None
-    error = None
-
-    try:
-        if not YFINANCE_AVAILABLE:
-            raise ImportError("yfinance not installed")
-
-        # Use 5d period to ensure we get data even on weekends/holidays
-        ticker = yf.Ticker('^GSPC')
-        hist = ticker.history(period='5d', interval='30m')
-
-        if hist.empty:
-            raise ValueError("No intraday data returned from Yahoo Finance")
-
-        # Ensure timezone-aware index
-        if hist.index.tz is None:
-            hist.index = hist.index.tz_localize('UTC').tz_convert('US/Eastern')
-        else:
-            hist.index = hist.index.tz_convert('US/Eastern')
-
-        # Get the most recent trading day's bars
-        trading_days = sorted(set(hist.index.date))
-        if not trading_days:
-            raise ValueError("No trading days found in data")
-
-        last_day = trading_days[-1]
-        day_bars = hist[hist.index.date == last_day]
-
-        # Filter to market hours (9:30 - 16:00 ET)
-        day_bars = day_bars.between_time('09:30', '15:59')
-
-        trading_date = str(last_day)
-
-        for idx, row in day_bars.iterrows():
-            ts = idx.strftime('%H:%M')
-            bars.append({
-                'timestamp': ts,
-                'time': ts,
-                'open': round(float(row['Open']), 2),
-                'high': round(float(row['High']), 2),
-                'low': round(float(row['Low']), 2),
-                'close': round(float(row['Close']), 2),
-                'volume': int(row.get('Volume', 0)),
-            })
-
-    except Exception as e:
-        error = str(e)
-        logger.warning(f"Chart today data unavailable: {e}")
-
-    result = {
-        'bars': bars,
-        'trading_date': trading_date,
-        'is_today': trading_date == str(now.date()) if trading_date else False,
-        'market_open': yahoo.is_market_open(),
-        'error': error,
-    }
-
-    # Cache the result
-    _chart_today_cache['data'] = result
-    _chart_today_cache['timestamp'] = now
-
-    return jsonify(result)
 
 
 @app.route('/api/signals')
@@ -3081,10 +2928,10 @@ def api_risk_status():
     # Compute win/loss streaks from trade history
     streaks = {'win_streak': 0, 'loss_streak': 0, 'active': 'none'}
     try:
-        db_path = get_database_path(get_trading_mode())
-        if Path(db_path).exists():
+        db_path = BASE_DIR / 'database' / 'trades.db'
+        if db_path.exists():
             import sqlite3
-            conn = sqlite3.connect(db_path, timeout=10)
+            conn = sqlite3.connect(str(db_path), timeout=10)
             rows = conn.execute(
                 "SELECT pnl FROM trades WHERE LOWER(status) = 'closed' AND pnl IS NOT NULL "
                 "ORDER BY exit_time DESC"
@@ -3631,7 +3478,8 @@ def api_analytics():
         if not run_id:
             return jsonify({'success': False, 'error': 'run_id required'}), 400
         try:
-            conn = sqlite3.connect(BACKTEST_DB_PATH, timeout=10)
+            db_path = str(DATA_DIR / 'database' / 'trades.db')
+            conn = sqlite3.connect(db_path, timeout=10)
             row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
             conn.close()
             if not row:
@@ -3666,10 +3514,10 @@ def api_analytics():
             logger.error(f"Analytics backtest error: {e}", exc_info=True)
             return jsonify({'success': False, 'error': str(e)}), 500
 
-    # Live trades (uses current mode's DB)
+    # Live trades
     try:
-        trade_db_path = get_database_path(get_trading_mode())
-        conn = sqlite3.connect(trade_db_path, timeout=10)
+        db_path = str(DATA_DIR / 'database' / 'trades.db')
+        conn = sqlite3.connect(db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         spx_quote = yahoo.get_spx_quote() or {}
@@ -3789,14 +3637,10 @@ def api_set_trading_mode():
         })
 
     if save_trading_mode(mode):
-        # Ensure the target mode's DB exists with full schema
-        from database.db_manager import DatabaseManager
-        DatabaseManager.ensure_schema(get_database_path(mode))
-
         return jsonify({
             'success': True,
             'mode': mode,
-            'message': f'Trading mode set to {mode}. Dashboard updated. Restart the bot to apply changes to the trading engine.',
+            'message': f'Trading mode set to {mode}. Restart the bot for changes to take effect.',
         })
     else:
         return jsonify({'error': 'Failed to save trading mode'}), 500
@@ -4276,9 +4120,10 @@ _backtest_lock = threading.Lock()
 
 
 def _init_backtest_table():
-    """Create backtest_runs table in the dedicated backtest database."""
+    """Create backtest_runs table if it doesn't exist."""
+    db_path = str(DATA_DIR / 'database' / 'trades.db')
     try:
-        conn = sqlite3.connect(BACKTEST_DB_PATH, timeout=10)
+        conn = sqlite3.connect(db_path, timeout=10)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS backtest_runs (
@@ -4301,85 +4146,7 @@ def _init_backtest_table():
         logger.warning(f"Failed to init backtest table: {e}")
 
 
-def _migrate_shared_db():
-    """One-time migration: trades.db -> trades_dryrun.db, backtest_runs -> backtest.db.
-
-    All historical data in trades.db was generated in dry-run mode, so we
-    rename it to trades_dryrun.db.  Backtest runs are extracted into a
-    dedicated backtest.db so they remain accessible regardless of trading mode.
-    """
-    old_path = Path(DATA_DIR / 'database' / 'trades.db')
-    dryrun_path = Path(DATA_DIR / 'database' / 'trades_dryrun.db')
-    backtest_path = Path(BACKTEST_DB_PATH)
-
-    if old_path.exists() and not dryrun_path.exists():
-        # Rename old shared DB to dry-run DB
-        import shutil
-        shutil.copy2(str(old_path), str(dryrun_path))
-        logger.info(f"Migrated trades.db -> trades_dryrun.db")
-
-    # Extract backtest_runs into dedicated backtest.db if needed
-    source_db = dryrun_path if dryrun_path.exists() else old_path
-    if source_db.exists() and not backtest_path.exists():
-        try:
-            src_conn = sqlite3.connect(str(source_db), timeout=10)
-            # Check if backtest_runs table exists in source
-            has_table = src_conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='backtest_runs'"
-            ).fetchone()
-            if has_table:
-                rows = src_conn.execute("SELECT * FROM backtest_runs").fetchall()
-                cols = [d[0] for d in src_conn.execute("SELECT * FROM backtest_runs LIMIT 0").description]
-                src_conn.close()
-
-                if rows:
-                    dst_conn = sqlite3.connect(str(backtest_path), timeout=10)
-                    dst_conn.execute("PRAGMA journal_mode=WAL")
-                    # Create the table in backtest.db
-                    dst_conn.execute("""
-                        CREATE TABLE IF NOT EXISTS backtest_runs (
-                            id TEXT PRIMARY KEY,
-                            started_at TIMESTAMP,
-                            completed_at TIMESTAMP,
-                            params TEXT,
-                            results_summary TEXT,
-                            total_trades INTEGER DEFAULT 0,
-                            total_return_pct REAL DEFAULT 0,
-                            sharpe_ratio REAL DEFAULT 0,
-                            max_drawdown_pct REAL DEFAULT 0,
-                            win_rate REAL DEFAULT 0,
-                            full_results TEXT
-                        )
-                    """)
-                    placeholders = ','.join(['?'] * len(cols))
-                    dst_conn.executemany(
-                        f"INSERT OR IGNORE INTO backtest_runs ({','.join(cols)}) VALUES ({placeholders})",
-                        rows,
-                    )
-                    dst_conn.commit()
-                    dst_conn.close()
-                    logger.info(f"Migrated {len(rows)} backtest runs to backtest.db")
-            else:
-                src_conn.close()
-        except Exception as e:
-            logger.warning(f"Backtest migration failed (non-fatal): {e}")
-
-    # If migration completed and old file was copied (not moved), remove it
-    # to avoid confusion.  Only remove after dryrun_path is confirmed.
-    if old_path.exists() and dryrun_path.exists() and old_path != dryrun_path:
-        try:
-            old_path.unlink()
-            logger.info("Removed legacy trades.db after migration")
-        except Exception as e:
-            logger.warning(f"Could not remove legacy trades.db: {e}")
-
-    # Ensure the current mode's DB exists with full schema
-    from database.db_manager import DatabaseManager
-    DatabaseManager.ensure_schema(get_database_path(get_trading_mode()))
-
-
 # Initialize on module load
-_migrate_shared_db()
 _init_backtest_table()
 
 
@@ -4405,15 +4172,6 @@ def api_backtest_run():
     max_contracts = int(data.get('max_contracts', 5))
     slippage = float(data.get('slippage', 0.02))
     max_daily_loss = float(data.get('max_daily_loss', 2.0))
-
-    # Strategy toggles from UI (all enabled by default)
-    strat_toggles = data.get('strategies', {})
-    ui_strategies = {
-        'daily_income': {'enabled': strat_toggles.get('daily_income', True)},
-        'tag_n_turn': {'enabled': strat_toggles.get('tag_n_turn', True)},
-        'bnb': {'enabled': strat_toggles.get('bnb', True)},
-        'orb': {'enabled': strat_toggles.get('orb', True)},
-    }
 
     import uuid as _uuid
     job_id = str(_uuid.uuid4())[:8]
@@ -4485,15 +4243,15 @@ def api_backtest_run():
                 slippage=slippage,
                 max_daily_loss_pct=max_daily_loss,
                 progress_callback=progress_cb,
-                strategies=ui_strategies,
             )
 
             results = engine.run()
             report = generate_report(results)
 
-            # Save to backtest DB
+            # Save to DB
             try:
-                conn = sqlite3.connect(BACKTEST_DB_PATH, timeout=10)
+                db_path = str(DATA_DIR / 'database' / 'trades.db')
+                conn = sqlite3.connect(db_path, timeout=10)
                 conn.execute("PRAGMA journal_mode=WAL")
                 core = report.get('core', {})
                 tm = report.get('trade_metrics', {})
@@ -4528,16 +4286,8 @@ def api_backtest_run():
 
         except Exception as e:
             logger.error(f"Backtest failed: {e}", exc_info=True)
-            error_msg = str(e)
-            # Surface helpful context for common failures
-            if 'No SPX data' in error_msg or 'No VIX data' in error_msg:
-                error_msg = f"Data download failed: {error_msg}"
-            elif 'No module' in error_msg:
-                error_msg = f"Missing dependency: {error_msg}"
-            elif 'timeout' in error_msg.lower() or 'connection' in error_msg.lower():
-                error_msg = f"Network error: {error_msg}"
             with _backtest_lock:
-                _backtest_job['error'] = error_msg
+                _backtest_job['error'] = str(e)
                 _backtest_job['running'] = False
 
     thread = threading.Thread(target=_run_backtest, daemon=True, name='backtest')
@@ -4574,7 +4324,8 @@ def api_backtest_results():
     run_id = request.args.get('run_id')
     if run_id:
         try:
-            conn = sqlite3.connect(BACKTEST_DB_PATH, timeout=10)
+            db_path = str(DATA_DIR / 'database' / 'trades.db')
+            conn = sqlite3.connect(db_path, timeout=10)
             conn.execute("PRAGMA journal_mode=WAL")
             row = conn.execute(
                 "SELECT full_results FROM backtest_runs WHERE id = ?",
@@ -4602,7 +4353,8 @@ def api_backtest_results():
 def api_backtest_history():
     """List previous backtest runs."""
     try:
-        conn = sqlite3.connect(BACKTEST_DB_PATH, timeout=10)
+        db_path = str(DATA_DIR / 'database' / 'trades.db')
+        conn = sqlite3.connect(db_path, timeout=10)
         conn.execute("PRAGMA journal_mode=WAL")
         rows = conn.execute("""
             SELECT id, started_at, completed_at, params,

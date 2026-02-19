@@ -305,24 +305,24 @@ ETRADE_CONFIG = {
 TRADING_MODE = _get_trading_mode()
 
 # Database Configuration
-# Legacy: points to the old shared trades.db path; prefer get_database_path().
 DATABASE_PATH = os.getenv('DATABASE_PATH', str(DB_PATH))
 
-# Backtest runs are mode-independent and live in their own DB.
-BACKTEST_DB_PATH = str(DB_PATH.parent / 'backtest.db')
+# Mode-specific database paths
+_DB_DIR = str(Path(DB_PATH).parent)
+BACKTEST_DB_PATH = os.path.join(_DB_DIR, 'backtest.db')
 
 
-def get_database_path(mode=None):
-    """Return the correct trade-database path for the given trading mode.
+def get_database_path(mode: str = None) -> str:
+    """Return mode-specific database path.
 
-    dry-run  -> database/trades_dryrun.db
-    live     -> database/trades_live.db
+    Args:
+        mode: 'dry-run' or 'live'. Defaults to current TRADING_MODE.
     """
     if mode is None:
-        mode = _get_trading_mode()
+        mode = TRADING_MODE
     if mode == 'live':
-        return str(DB_PATH.parent / 'trades_live.db')
-    return str(DB_PATH.parent / 'trades_dryrun.db')
+        return os.path.join(_DB_DIR, 'trades_live.db')
+    return os.path.join(_DB_DIR, 'trades_dryrun.db')
 
 # Logging Configuration
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')

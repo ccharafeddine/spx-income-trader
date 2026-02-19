@@ -80,7 +80,7 @@
 | Weekly Drawdown | `portfolio.drawdown_limits.weekly.max_loss_pct` | NO | YES | DrawdownManager cached |
 | Monthly Drawdown | `portfolio.drawdown_limits.monthly.max_loss_pct` | NO | YES | DrawdownManager cached |
 | Max Contracts | `portfolio.position_sizing.max_contracts` | NO | YES | Cached at init |
-| Account Size | `portfolio.account_size` | **YES** | YES | Auto-refreshed from broker at daily reset |
+| Account Size | `portfolio.account_size` | NO | PARTIAL | Editable in dry-run only |
 | Slack/Discord/Webhook | `notifications.*` | **YES*** | **NO** | `reload_config()` exists but bot never calls it |
 | TNT Enabled | `tag_n_turn.enabled` | NO | NO | Cannot enable mid-session |
 | B&B Enabled | `bnb.enabled` | NO | NO | Cannot enable mid-session |
@@ -189,26 +189,6 @@
 **Impact**: Changing `timing.morning_start`/`timing.morning_end` in settings has no effect.
 
 **Fix applied**: `SPXIncomeStrategy.__init__()` now reads `timing.morning_start`/`timing.morning_end` from `STRATEGY_PARAMS` and stores as `self._morning_start`/`self._morning_end`. `_is_setup_window()` uses these instead of hardcoded `time(9, 30)` and `time(11, 30)`.
-
-### CRITICAL: Position sizing not scaling with account size (backtest + live) - FIXED
-
-**Impact**: Both backtest and live trading used static position sizes regardless of account balance. A $1M account traded the same number of contracts as a $50k account.
-
-**Root cause (backtest)**: `engine.py:562` used `qty = quantity or min(self.max_contracts, 1)` which always produced 1 contract for DI. B&B/ORB/TNT used hardcoded `max_contracts_override` values (2-3) that never scaled. Daily loss circuit breaker used `self.initial_capital` (static) instead of current balance.
-
-**Root cause (live)**: `PortfolioManager.account_size` set once from YAML config at startup. `update_account_size()` method existed but was never called anywhere in the live bot. As the account grew or shrank over weeks, position sizing, circuit breaker, and daily risk limits all used the stale initial value.
-
-**Fix applied (backtest)** in `src/backtest/engine.py`:
-1. Added `_calculate_position_size()` method mirroring `PortfolioManager._calculate_percent_risk_size()`: `floor(broker.balance * risk_pct / max_risk_per_contract)`, clamped to `[1, max_contracts]`, with per-strategy override as ceiling
-2. All 4 strategy entry paths (DI, TNT, B&B, ORB) now call `_calculate_position_size()` with `spread.max_risk` as the risk-per-contract input
-3. Daily loss circuit breaker uses `self.broker.balance` (current) instead of `self.initial_capital` (static)
-4. Verified: $50k/max-20 backtest produces ~$14k P&L, $1M/max-100 produces ~$317k P&L (23x ratio, expected ~20x)
-
-**Fix applied (live)** in `src/main.py`:
-1. Added account balance refresh at start of each trading day (in daily reset block)
-2. Calls `broker.get_account_balance()` -> `portfolio.update_account_size(live_balance)`
-3. This updates `account_size`, `max_daily_loss`, and cascades to `DrawdownManager`
-4. Works for all broker types (dry run, E*TRADE, Schwab)
 
 ### MEDIUM: Email/SMS credentials in env vars
 

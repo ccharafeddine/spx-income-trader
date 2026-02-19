@@ -587,8 +587,8 @@ class PortfolioManager:
             # Import here to avoid circular imports
             from database.db_manager import DatabaseManager
 
-            from config.settings import get_database_path
-            db = DatabaseManager(get_database_path())
+            db_path = Path(__file__).parent.parent.parent / 'database' / 'trades.db'
+            db = DatabaseManager(str(db_path))
             stats = db.get_strategy_stats(strategy.value)
 
             if not stats or stats.get('total_trades', 0) == 0:

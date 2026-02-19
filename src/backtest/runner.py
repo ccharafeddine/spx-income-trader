@@ -70,8 +70,6 @@ def main():
                         help='Path to existing SPX CSV (skips download)')
     parser.add_argument('--vix-csv', type=str, default=None,
                         help='Path to existing VIX CSV (skips download)')
-    parser.add_argument('--strategies', type=str, default='all',
-                        help='Comma-separated strategies: di,tnt,bnb,orb or "all" (default: all)')
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='Verbose logging')
 
@@ -155,29 +153,8 @@ def main():
                 pct = current / total * 100
                 print(f"  Progress: {pct:.0f}% ({current}/{total} days) - {trading_day}")
 
-    # Parse strategy selection
-    shorthand = {'di': 'daily_income', 'tnt': 'tag_n_turn', 'bnb': 'bnb', 'orb': 'orb'}
-    if args.strategies.lower() == 'all':
-        enabled = {'daily_income', 'tag_n_turn', 'bnb', 'orb'}
-    else:
-        enabled = set()
-        for token in args.strategies.lower().split(','):
-            token = token.strip()
-            if token in shorthand:
-                enabled.add(shorthand[token])
-            elif token in shorthand.values():
-                enabled.add(token)
-            else:
-                print(f"WARNING: Unknown strategy '{token}', skipping. Valid: di, tnt, bnb, orb")
-
-    strategies = {
-        'daily_income': {'enabled': 'daily_income' in enabled},
-        'tag_n_turn': {'enabled': 'tag_n_turn' in enabled},
-        'bnb': {'enabled': 'bnb' in enabled},
-        'orb': {'enabled': 'orb' in enabled},
-    }
-    active = [k for k, v in strategies.items() if v['enabled']]
-    print(f"\nRunning backtest with strategies: {', '.join(active)}...")
+    # Run backtest
+    print("\nRunning backtest...")
     engine = BacktestEngine(
         bars_df=bars_df,
         vix_daily=vix_daily,
@@ -190,7 +167,6 @@ def main():
         slippage=args.slippage,
         max_daily_loss_pct=args.max_daily_loss,
         progress_callback=progress_callback,
-        strategies=strategies,
     )
 
     results = engine.run()
@@ -223,16 +199,6 @@ def main():
     print(f"  Avg Loss:         ${tm['avg_loss']:+.2f}")
     print(f"  Max Consec Wins:  {tm['max_consecutive_wins']}")
     print(f"  Max Consec Losses:{tm['max_consecutive_losses']}")
-    print(f"{'='*60}")
-
-    # Per-strategy breakdown
-    by_strat = report.get('by_strategy', [])
-    if by_strat:
-        print(f"  BY STRATEGY:")
-        for s in by_strat:
-            print(f"    {s['strategy']:15s}  {s['total']:>4} trades  "
-                  f"WR={s['win_rate']:5.1f}%  "
-                  f"P&L=${s['total_pnl']:>+10,.2f}")
     print(f"{'='*60}\n")
 
     # Save markdown report

@@ -410,15 +410,19 @@ class SchwabBroker(BrokerInterface):
     # =========================================================================
 
     def _build_option_symbol(self, strike: float, contract_type: str, expiration) -> str:
-        """Build Schwab OCC option symbol.
+        """Build OCC option symbol for Schwab API.
+
+        Format: SPXW  YYMMDDCSSSSSSSS
+        - Root symbol padded to 6 chars
+        - YYMMDD expiration date
+        - C/P for call/put
+        - 8-digit strike price (price * 1000, zero-padded)
 
         Args:
             strike: Strike price
             contract_type: 'call' or 'put'
-            expiration: date or datetime object
+            expiration: date, datetime, or string 'YYYY-MM-DD'
         """
-        from schwab.orders.options import OptionSymbol
-
         if hasattr(expiration, 'date'):
             exp_date = expiration.date()
         elif isinstance(expiration, str):
@@ -427,12 +431,10 @@ class SchwabBroker(BrokerInterface):
             exp_date = expiration
 
         ct = 'C' if contract_type.lower() == 'call' else 'P'
+        date_str = exp_date.strftime('%y%m%d')
+        strike_int = int(strike * 1000)
 
-        # Format strike as string (Schwab expects whole/decimal number)
-        strike_str = str(int(strike)) if strike == int(strike) else str(strike)
-
-        sym = OptionSymbol('SPXW', exp_date, ct, strike_str)
-        return sym.build()
+        return f"SPXW  {date_str}{ct}{strike_int:08d}"
 
     def _log_order_details(
         self,

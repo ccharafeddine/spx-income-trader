@@ -11,6 +11,7 @@ import threading
 import logging
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 import pytz
 
@@ -51,7 +52,7 @@ class EventRecorder:
         return self._event_count
 
     @property
-    def file_path(self) -> Path | None:
+    def file_path(self) -> Optional[Path]:
         if self._file_date is None:
             return None
         return self._output_dir / f'{self._file_date}.jsonl'
