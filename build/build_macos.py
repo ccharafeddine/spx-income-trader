@@ -4,6 +4,9 @@ Build script for SPX Income Trader macOS distribution.
 Creates a py2app .app bundle from app_desktop.py with all
 required data files (templates, config, icon) and proper Info.plist.
 
+Automatically creates an isolated virtual environment for the build
+to avoid conflicts with Anaconda or other bloated site-packages.
+
 Usage:
     python build/build_macos.py          # Standard build
     python build/build_macos.py --clean  # Clean previous build first
@@ -27,6 +30,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent          # build/
 PROJECT_ROOT = SCRIPT_DIR.parent                      # repo root
 DIST_DIR = PROJECT_ROOT / "dist"
 BUILD_DIR = PROJECT_ROOT / "build" / "_py2app"        # temp build artifacts
+VENV_DIR = PROJECT_ROOT / "build" / "_venv"           # isolated build venv
 ENTRY_POINT = PROJECT_ROOT / "app_desktop.py"
 ICON_ICNS = PROJECT_ROOT / "assets" / "icon.icns"
 ICON_ICO = PROJECT_ROOT / "assets" / "icon.ico"
@@ -56,14 +60,11 @@ DATA_FILES = [
 # If dashboard/static exists, include everything in it
 STATIC_DIR = PROJECT_ROOT / "dashboard" / "static"
 if STATIC_DIR.is_dir():
-    static_files = [str(f) for f in STATIC_DIR.rglob("*") if f.is_file()]
-    if static_files:
-        # Preserve subdirectory structure under dashboard/static
-        for f in STATIC_DIR.rglob("*"):
-            if f.is_file():
-                rel = f.relative_to(STATIC_DIR)
-                dest = f"dashboard/static/{rel.parent}" if rel.parent != Path(".") else "dashboard/static"
-                DATA_FILES.append((dest, [str(f)]))
+    for f in STATIC_DIR.rglob("*"):
+        if f.is_file():
+            rel = f.relative_to(STATIC_DIR)
+            dest = f"dashboard/static/{rel.parent}" if rel.parent != Path(".") else "dashboard/static"
+            DATA_FILES.append((dest, [str(f)]))
 
 # ---------------------------------------------------------------------------
 # py2app options
@@ -72,7 +73,6 @@ if STATIC_DIR.is_dir():
 PY2APP_OPTIONS = {
     "argv_emulation": False,
     "iconfile": str(ICON_ICNS),
-    "bundle_identifier": BUNDLE_ID,
     "plist": {
         "CFBundleName": APP_NAME,
         "CFBundleDisplayName": APP_NAME,
@@ -82,19 +82,14 @@ PY2APP_OPTIONS = {
         "CFBundleExecutable": APP_NAME.replace(" ", ""),
         "CFBundlePackageType": "APPL",
         "CFBundleSignature": "????",
-        # Menu-bar only capable (set to True to hide from Dock)
         "LSUIElement": False,
-        # Retina / HiDPI support
         "NSHighResolutionCapable": True,
-        # Minimum macOS version
         "LSMinimumSystemVersion": "10.15",
-        # App category
         "LSApplicationCategoryType": "public.app-category.finance",
-        # Privacy descriptions (required by modern macOS)
         "NSAppleEventsUsageDescription": "SPX Income Trader needs automation access.",
     },
     "packages": [
-        # Project packages (no __init__.py -- namespace packages)
+        # Project packages
         "src",
         "src.brokers",
         "src.core",
@@ -109,7 +104,6 @@ PY2APP_OPTIONS = {
         "jinja2",
         "sqlalchemy",
         "keyring",
-        "plotly",
         "yaml",
         "engineio",
         "requests",
@@ -134,18 +128,170 @@ PY2APP_OPTIONS = {
         "sqlalchemy.dialects.sqlite",
     ],
     "excludes": [
-        "pytest",
-        "black",
-        "flake8",
-        "pytest_cov",
+        "pytest", "pytest_cov", "_pytest",
+        "black", "flake8",
         "tkinter",
         "matplotlib",
+        "test", "tests",
     ],
     "resources": [],
     "site_packages": True,
     "strip": True,
     "optimize": 2,
 }
+
+# ---------------------------------------------------------------------------
+# Virtual environment for isolated builds
+# ---------------------------------------------------------------------------
+
+
+def _get_native_arch() -> str:
+    """Return the native CPU architecture (arm64 or x86_64).
+
+    Uses hw.optional.arm64 because hw.machine lies under Rosetta.
+    """
+    result = subprocess.run(
+        ["sysctl", "-n", "hw.optional.arm64"], capture_output=True, text=True,
+    )
+    if result.returncode == 0 and result.stdout.strip() == "1":
+        return "arm64"
+    return "x86_64"
+
+
+def _find_system_python() -> tuple:
+    """Find a suitable Python >=3.10 interpreter for the build venv.
+
+    Returns (python_path, needs_arch_prefix) where needs_arch_prefix is True
+    if we need to use 'arch -arm64' to force the correct architecture.
+    """
+    native_arch = _get_native_arch()
+
+    # Candidates in preference order: framework Python, Homebrew, system
+    candidates = [
+        "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3",
+        "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3",
+        "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3",
+        "/opt/homebrew/bin/python3",     # Homebrew Apple Silicon
+        "/usr/local/bin/python3",        # Homebrew Intel
+        "/usr/bin/python3",              # macOS system Python
+    ]
+    for c in candidates:
+        if not Path(c).exists():
+            continue
+        try:
+            # Check version >= 3.10
+            result = subprocess.run(
+                [c, "-c", "import sys; print(sys.version_info[:2])"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode != 0:
+                continue
+            version_tuple = eval(result.stdout.strip())
+            if version_tuple < (3, 10):
+                continue
+
+            # Check architecture
+            arch_result = subprocess.run(
+                [c, "-c", "import struct; print(struct.calcsize('P') * 8)"],
+                capture_output=True, text=True, timeout=5,
+            )
+            file_result = subprocess.run(
+                ["file", c], capture_output=True, text=True, timeout=5,
+            )
+            file_info = file_result.stdout
+
+            # Determine if we need arch prefix
+            needs_arch = False
+            if native_arch == "arm64" and "universal" in file_info:
+                # Universal binary running under Rosetta — force arm64
+                needs_arch = True
+            elif native_arch == "arm64" and "arm64" in file_info:
+                needs_arch = False  # already native
+            elif native_arch == "arm64" and "x86_64" in file_info and "arm64" not in file_info:
+                continue  # x86_64-only, skip
+
+            ver = f"Python {version_tuple[0]}.{version_tuple[1]}"
+            arch_note = f" (will force {native_arch})" if needs_arch else ""
+            print(f"  Found: {c} ({ver}){arch_note}")
+            return c, needs_arch
+        except Exception:
+            continue
+
+    print("  Warning: using current python3 (may be Anaconda)")
+    return sys.executable, False
+
+
+def _run_in_venv(cmd, **kwargs):
+    """Run a command, prefixing with 'arch -arm64' if needed on Apple Silicon."""
+    if _RUN_WITH_ARCH:
+        native = _get_native_arch()
+        cmd = ["arch", f"-{native}"] + list(cmd)
+    return subprocess.run(cmd, **kwargs)
+
+
+# Module-level flag set during venv creation
+_RUN_WITH_ARCH = False
+
+
+def _ensure_venv() -> Path:
+    """Create (or reuse) an isolated venv with only build dependencies."""
+    global _RUN_WITH_ARCH
+
+    venv_python = VENV_DIR / "bin" / "python"
+
+    if venv_python.exists():
+        # Verify venv python matches native arch
+        native = _get_native_arch()
+        result = subprocess.run(
+            ["arch", f"-{native}", str(venv_python), "-c",
+             "import platform; print(platform.machine())"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0 and native in result.stdout:
+            print(f"Reusing build venv at {VENV_DIR}")
+            return venv_python
+        else:
+            print(f"Venv arch mismatch, recreating...")
+            shutil.rmtree(VENV_DIR)
+
+    print("Creating isolated build virtual environment...")
+    base_python, needs_arch = _find_system_python()
+    _RUN_WITH_ARCH = needs_arch
+
+    _run_in_venv(
+        [base_python, "-m", "venv", str(VENV_DIR)],
+        check=True,
+    )
+
+    venv_pip = str(VENV_DIR / "bin" / "pip")
+
+    # Upgrade pip
+    _run_in_venv(
+        [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
+        check=True, capture_output=True,
+    )
+
+    # Install py2app and project dependencies
+    # Use --no-cache-dir to avoid stale x86_64 wheels from Anaconda's cache
+    print("Installing build dependencies in venv...")
+    _run_in_venv(
+        [venv_pip, "install", "--no-cache-dir", "py2app", "setuptools"],
+        check=True,
+    )
+
+    # Install runtime requirements
+    req_desktop = PROJECT_ROOT / "requirements-desktop.txt"
+    req_base = PROJECT_ROOT / "requirements.txt"
+    req_file = req_desktop if req_desktop.exists() else req_base
+    print(f"Installing runtime dependencies from {req_file.name}...")
+    _run_in_venv(
+        [venv_pip, "install", "--no-cache-dir", "-r", str(req_file)],
+        check=True,
+    )
+
+    print(f"Build venv ready at {VENV_DIR}\n")
+    return venv_python
+
 
 # ---------------------------------------------------------------------------
 # Icon generation
@@ -163,8 +309,6 @@ def _ensure_icon():
     if ICON_ICO.exists():
         print(f"Converting {ICON_ICO} to .icns via sips...")
         try:
-            # sips can convert to .icns via iconutil pipeline
-            # First convert to png, then build iconset, then iconutil
             _convert_ico_to_icns()
             if ICON_ICNS.exists():
                 print(f"  Created {ICON_ICNS}")
@@ -185,14 +329,12 @@ def _convert_ico_to_icns():
         tmpdir = Path(tmpdir)
         png_path = tmpdir / "icon_512.png"
 
-        # Convert .ico to PNG using sips
         subprocess.run(
             ["sips", "-s", "format", "png", "-z", "512", "512",
              str(ICON_ICO), "--out", str(png_path)],
             check=True, capture_output=True,
         )
 
-        # Create iconset directory with required sizes
         iconset = tmpdir / "icon.iconset"
         iconset.mkdir()
 
@@ -204,7 +346,6 @@ def _convert_ico_to_icns():
                  str(png_path), "--out", str(out)],
                 check=True, capture_output=True,
             )
-            # @2x variant (retina) - includes 512x512@2x (1024x1024)
             if size <= 512:
                 out_2x = iconset / f"icon_{size}x{size}@2x.png"
                 retina_size = size * 2
@@ -214,7 +355,6 @@ def _convert_ico_to_icns():
                     check=True, capture_output=True,
                 )
 
-        # Convert iconset to icns
         subprocess.run(
             ["iconutil", "-c", "icns", str(iconset), "-o", str(ICON_ICNS)],
             check=True, capture_output=True,
@@ -236,14 +376,11 @@ def _generate_placeholder_icns():
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
 
-        # Create a 512x512 icon image
         img = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-        # Dark rounded rectangle background
         draw.rounded_rectangle(
             [(20, 20), (492, 492)], radius=80, fill=(10, 14, 23, 255)
         )
-        # Green dollar sign / chart line motif
         draw.text(
             (180, 100), "SPX", fill=(0, 200, 120, 255),
         )
@@ -256,12 +393,10 @@ def _generate_placeholder_icns():
         for size in sizes:
             resized = img.resize((size, size), Image.LANCZOS)
             resized.save(iconset / f"icon_{size}x{size}.png")
-            # @2x variant (retina) - includes 512x512@2x (1024x1024)
             if size <= 512:
                 retina = img.resize((size * 2, size * 2), Image.LANCZOS)
                 retina.save(iconset / f"icon_{size}x{size}@2x.png")
 
-        # Use iconutil to create .icns
         result = subprocess.run(
             ["iconutil", "-c", "icns", str(iconset), "-o", str(ICON_ICNS)],
             capture_output=True, text=True,
@@ -269,10 +404,8 @@ def _generate_placeholder_icns():
         if result.returncode != 0:
             print(f"  iconutil failed: {result.stderr}")
             print("  Creating minimal .icns from PNG fallback...")
-            # Last resort: save a single PNG as the icon reference
             img.save(ICON_ICNS.with_suffix(".png"))
             print(f"  Saved PNG icon to {ICON_ICNS.with_suffix('.png')}")
-            print("  Convert manually: iconutil -c icns icon.iconset -o assets/icon.icns")
         else:
             print(f"  Created {ICON_ICNS}")
 
@@ -294,6 +427,7 @@ def _write_setup_py() -> Path:
 
     content = f'''"""Auto-generated setup.py for py2app. Do not edit manually."""
 import sys
+sys.setrecursionlimit(5000)
 sys.path.insert(0, {str(PROJECT_ROOT)!r})
 
 from setuptools import setup
@@ -320,9 +454,9 @@ setup(
 
 
 def clean():
-    """Remove previous macOS build artifacts (preserves other builds in dist/)."""
+    """Remove previous macOS build artifacts."""
     app_bundle = DIST_DIR / f"{APP_NAME}.app"
-    for d in [app_bundle, BUILD_DIR]:
+    for d in [app_bundle, BUILD_DIR, VENV_DIR]:
         if d.exists():
             print(f"Removing {d}")
             shutil.rmtree(d)
@@ -332,36 +466,35 @@ def clean():
 
 
 def build(debug: bool = False):
-    """Run py2app build."""
+    """Run py2app build using an isolated venv."""
     if not ENTRY_POINT.exists():
         sys.exit(f"Entry point not found: {ENTRY_POINT}")
 
     _ensure_icon()
 
+    venv_python = _ensure_venv()
     setup_py = _write_setup_py()
 
     try:
         mode = "py2app"
-        cmd = [sys.executable, str(setup_py), mode]
+        cmd = [str(venv_python), str(setup_py), mode]
 
         if debug:
-            cmd.extend(["-A"])  # alias mode: symlinks instead of copying
+            cmd.extend(["-A"])
             print("Building in ALIAS mode (for development/debugging)...")
         else:
             print("Building standalone .app bundle...")
 
         print(f"  Command: {' '.join(cmd)}\n")
-        result = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
+        result = _run_in_venv(cmd, cwd=str(PROJECT_ROOT))
         if result.returncode != 0:
             sys.exit(f"py2app failed with exit code {result.returncode}")
     finally:
-        # Clean up generated setup.py
         if setup_py.exists():
             setup_py.unlink()
 
     app_path = DIST_DIR / f"{APP_NAME}.app"
     if not app_path.exists():
-        # py2app may use different naming
         candidates = list(DIST_DIR.glob("*.app"))
         if candidates:
             app_path = candidates[0]
@@ -392,17 +525,14 @@ def verify():
 
     errors = []
 
-    # Check executable exists
     executables = list(macos_dir.glob("*")) if macos_dir.exists() else []
     if not executables:
         errors.append(f"No executable found in {macos_dir}")
 
-    # Check Info.plist
     plist = app_bundle / "Contents" / "Info.plist"
     if not plist.exists():
         errors.append("Info.plist missing")
 
-    # Check bundled data files
     expected = [
         "dashboard/templates/index.html",
         "dashboard/templates/settings.html",

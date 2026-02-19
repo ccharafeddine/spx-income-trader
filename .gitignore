@@ -48,6 +48,7 @@ dist/
 build/bdist.*/
 build/_pyinstaller/
 build/_py2app/
+build/_venv/
 build/Output/
 *.spec
 
