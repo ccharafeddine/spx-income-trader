@@ -272,7 +272,7 @@ class DryRunBroker(BrokerInterface):
 
     def _chain_has_valid_prices(self, chain: Dict[float, Dict]) -> bool:
         """Check that at least some ATM strikes have non-zero bid prices."""
-        price = self.get_current_price()
+        price = self.get_current_price('SPX')
         if not price:
             return bool(chain)
         # Check strikes near ATM (+/- 50 points)

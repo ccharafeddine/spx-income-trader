@@ -145,12 +145,6 @@ header::after {
 }
 /* Bot controls (desktop mode only) */
 .bot-controls { display: flex; align-items: center; gap: 8px; }
-.bot-mode-select {
-  background: var(--bg); color: var(--text); border: 1px solid var(--border);
-  border-radius: 3px; padding: 3px 6px; font-size: 11px; font-family: var(--font-ui);
-  cursor: pointer; outline: none;
-}
-.bot-mode-select:focus { border-color: var(--cyan); }
 .bot-ctrl-btn {
   padding: 3px 10px; border-radius: 3px; font-size: 11px; font-weight: 600;
   font-family: var(--font-ui); cursor: pointer; border: 1px solid; transition: all 0.2s;
@@ -2269,10 +2263,6 @@ header::after {
       <div class="pdt-frees-subtitle" id="pdt-frees-subtitle"></div>
     </div>
     <div class="bot-controls" id="bot-controls" style="display:none">
-      <select id="bot-mode-select" class="bot-mode-select">
-        <option value="dry-run">Dry Run</option>
-        <option value="live">Live</option>
-      </select>
       <button class="bot-ctrl-btn start" id="bot-start-btn" onclick="startBot()">Start Bot</button>
       <button class="bot-ctrl-btn stop" id="bot-stop-btn" onclick="stopBot()" style="display:none">Stop Bot</button>
     </div>
@@ -5317,14 +5307,11 @@ function updateBotControls(botRunning) {
   if (!desktopMode || DEMO_MODE) return;
   const startBtn = document.getElementById('bot-start-btn');
   const stopBtn = document.getElementById('bot-stop-btn');
-  const modeSelect = document.getElementById('bot-mode-select');
   if (botRunning) {
     startBtn.style.display = 'none';
-    modeSelect.style.display = 'none';
     stopBtn.style.display = 'inline-block';
   } else {
     startBtn.style.display = 'inline-block';
-    modeSelect.style.display = 'inline-block';
     stopBtn.style.display = 'none';
   }
 }
@@ -5334,7 +5321,9 @@ async function startBot() {
   btn.disabled = true;
   btn.textContent = 'Starting...';
   try {
-    const mode = document.getElementById('bot-mode-select').value;
+    const modeResp = await fetch('/api/settings/trading-mode');
+    const modeData = await modeResp.json();
+    const mode = modeData.mode || 'dry-run';
     const resp = await fetch('/api/bot/start', {
       method: 'POST',
       headers: API_HEADERS,
