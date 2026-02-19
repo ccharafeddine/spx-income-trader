@@ -13,5 +13,5 @@ pytest==7.4.4
 pytest-cov==4.1.0
 black==24.1.1
 flake8==7.0.0
-yfinance==0.2.36
+yfinance>=1.2.0
 schwab-py==1.5.1

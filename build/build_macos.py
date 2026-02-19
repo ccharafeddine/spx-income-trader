@@ -72,7 +72,6 @@ if STATIC_DIR.is_dir():
 PY2APP_OPTIONS = {
     "argv_emulation": False,
     "iconfile": str(ICON_ICNS),
-    "bundle_identifier": BUNDLE_ID,
     "plist": {
         "CFBundleName": APP_NAME,
         "CFBundleDisplayName": APP_NAME,
@@ -124,6 +123,7 @@ PY2APP_OPTIONS = {
         "schwab",
         "authlib",
         "httpx",
+        "charset_normalizer",
     ],
     "includes": [
         "keyring.backends",
@@ -132,6 +132,7 @@ PY2APP_OPTIONS = {
         "engineio.async_drivers.threading",
         "jinja2.ext",
         "sqlalchemy.dialects.sqlite",
+        "charset_normalizer.md__mypyc",
     ],
     "excludes": [
         "pytest",

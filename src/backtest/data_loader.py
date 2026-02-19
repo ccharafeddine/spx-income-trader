@@ -133,6 +133,15 @@ def _synthesize_30m_from_daily(daily_df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _flatten_yf_columns(data: pd.DataFrame) -> pd.DataFrame:
+    """Flatten multi-level columns from yfinance (v1.x returns Price/Ticker levels)."""
+    if hasattr(data.columns, 'nlevels') and data.columns.nlevels > 1:
+        data.columns = data.columns.get_level_values(0)
+    # Normalize to lowercase
+    data.columns = [c.lower().strip() for c in data.columns]
+    return data
+
+
 def _download_daily_bars(
     start_date: date,
     end_date: date,
@@ -147,20 +156,26 @@ def _download_daily_bars(
         return csv_path
 
     logger.info(f"Downloading SPX daily bars: {start_date} to {end_date}")
-    data = yf.download(
-        '^GSPC',
-        start=str(start_date),
-        end=str(end_date + timedelta(days=1)),
-        interval='1d',
-        progress=False,
-    )
+    try:
+        data = yf.download(
+            '^GSPC',
+            start=str(start_date),
+            end=str(end_date + timedelta(days=1)),
+            interval='1d',
+            progress=False,
+        )
+    except Exception as e:
+        raise ValueError(
+            f"Yahoo Finance download failed for {start_date} to {end_date}: {e}"
+        ) from e
 
     if data.empty:
-        raise ValueError(f"No SPX data available for {start_date} to {end_date}")
+        raise ValueError(
+            f"No SPX daily data returned by Yahoo Finance for {start_date} to {end_date}. "
+            f"Check your internet connection and date range."
+        )
 
-    if hasattr(data.columns, 'nlevels') and data.columns.nlevels > 1:
-        data.columns = data.columns.get_level_values(0)
-
+    data = _flatten_yf_columns(data)
     data.to_csv(csv_path)
     logger.info(f"Saved {len(data)} daily bars to {csv_path}")
     return csv_path
@@ -206,6 +221,7 @@ def download_spx_bars(
     all_frames = []
     chunk_start = start_date
     chunk_size = timedelta(days=55)
+    last_error = None
 
     while chunk_start <= end_date:
         chunk_end = min(chunk_start + chunk_size, end_date + timedelta(days=1))
@@ -219,12 +235,11 @@ def download_spx_bars(
                 progress=False,
             )
             if not data.empty:
-                # Flatten multi-level columns if present
-                if hasattr(data.columns, 'nlevels') and data.columns.nlevels > 1:
-                    data.columns = data.columns.get_level_values(0)
+                data = _flatten_yf_columns(data)
                 all_frames.append(data)
                 logger.info(f"  Downloaded {len(data)} bars for {chunk_start} to {chunk_end}")
         except Exception as e:
+            last_error = str(e)
             logger.warning(f"  Download failed for {chunk_start} to {chunk_end}: {e}")
 
         chunk_start = chunk_end.date() if isinstance(chunk_end, datetime) else chunk_end
@@ -273,20 +288,26 @@ def download_vix_daily(
 
     logger.info(f"Downloading VIX daily: {start_date} to {end_date}")
 
-    data = yf.download(
-        '^VIX',
-        start=str(start_date),
-        end=str(end_date + timedelta(days=1)),
-        interval='1d',
-        progress=False,
-    )
+    try:
+        data = yf.download(
+            '^VIX',
+            start=str(start_date),
+            end=str(end_date + timedelta(days=1)),
+            interval='1d',
+            progress=False,
+        )
+    except Exception as e:
+        raise ValueError(
+            f"Yahoo Finance VIX download failed for {start_date} to {end_date}: {e}"
+        ) from e
 
     if data.empty:
-        raise ValueError(f"No VIX data available for {start_date} to {end_date}")
+        raise ValueError(
+            f"No VIX data returned by Yahoo Finance for {start_date} to {end_date}. "
+            f"Check your internet connection and date range."
+        )
 
-    if hasattr(data.columns, 'nlevels') and data.columns.nlevels > 1:
-        data.columns = data.columns.get_level_values(0)
-
+    data = _flatten_yf_columns(data)
     data.to_csv(csv_path)
     logger.info(f"Saved {len(data)} VIX days to {csv_path}")
     return csv_path

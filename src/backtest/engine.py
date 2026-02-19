@@ -12,6 +12,7 @@ Supports 4 strategies running in parallel with 2 position slots:
 """
 
 import logging
+import math
 import tempfile
 import uuid
 from dataclasses import dataclass, field
@@ -136,6 +137,8 @@ class BacktestEngine:
         )
 
         # Initialize DI strategy (SAME class as live trading)
+        strat_cfg = strategies or {}
+        self._di_enabled = strat_cfg.get('daily_income', {}).get('enabled', True)
         self.strategy = SPXIncomeStrategy(
             pulse_threshold=pulse_threshold,
             spread_width=spread_width,
@@ -147,7 +150,7 @@ class BacktestEngine:
         self._di_min_credit = min_credit
 
         # Initialize parallel strategies (TNT, B&B, ORB)
-        self._init_strategies(strategies or {})
+        self._init_strategies(strat_cfg)
 
         # Results
         self.trades: List[BacktestTrade] = []
@@ -173,6 +176,35 @@ class BacktestEngine:
 
         # Backward compat alias
         self._active_trade = None
+
+    def _calculate_position_size(
+        self,
+        max_risk_per_contract: float,
+        max_contracts_override: Optional[int] = None,
+    ) -> int:
+        """
+        Calculate position size based on current account balance and risk budget.
+
+        Mirrors PortfolioManager._calculate_percent_risk_size():
+            contracts = floor(account_balance * risk_pct / max_risk_per_contract)
+
+        Clamps to [1, self.max_contracts] then applies per-strategy override.
+        """
+        if max_risk_per_contract <= 0:
+            return 1
+
+        current_balance = self.broker.balance
+        risk_budget = current_balance * (self.max_daily_loss_pct / 100.0)
+        contracts = int(math.floor(risk_budget / max_risk_per_contract))
+
+        # Clamp to configured bounds
+        contracts = max(1, min(contracts, self.max_contracts))
+
+        # Apply per-strategy ceiling if provided
+        if max_contracts_override is not None and max_contracts_override > 0:
+            contracts = min(contracts, max_contracts_override)
+
+        return contracts
 
     def _init_strategies(self, strategies: Dict):
         """Initialize parallel strategy instances for backtest."""
@@ -237,7 +269,7 @@ class BacktestEngine:
         logger.info(
             f"Starting backtest: {total_days} trading days, "
             f"${self.initial_capital:,.0f} capital, "
-            f"strategies: DI"
+            f"strategies: {'DI' if self._di_enabled else ''}"
             f"{'+TNT' if self._tnt_enabled else ''}"
             f"{'+BnB' if self._bnb_enabled else ''}"
             f"{'+ORB' if self._orb_enabled else ''}"
@@ -319,7 +351,7 @@ class BacktestEngine:
         bars_for_day: List[Bar] = []
         spx_open = float(day_bars.iloc[0]['open'])
         spx_close = float(day_bars.iloc[-1]['close'])
-        max_daily_loss = self.initial_capital * (self.max_daily_loss_pct / 100.0)
+        max_daily_loss = self.broker.balance * (self.max_daily_loss_pct / 100.0)
 
         for timestamp, row in day_bars.iterrows():
             bar_dt = timestamp.to_pydatetime()
@@ -414,7 +446,7 @@ class BacktestEngine:
                             self._orb_strat.rollback_entry()
 
                 # DI: pulse -> breakout flow
-                if not self._0dte_trade:
+                if self._di_enabled and not self._0dte_trade:
                     bar_time = bar_dt.time()
 
                     # Check breakout trigger
@@ -557,7 +589,12 @@ class BacktestEngine:
             self._pending_setup = None
             return False
 
-        qty = quantity or min(self.max_contracts, 1)
+        # Position sizing: scale with current account balance
+        max_risk_per_contract = spread.max_risk  # spread_width * 100 minus credit
+        qty = self._calculate_position_size(
+            max_risk_per_contract=max_risk_per_contract,
+            max_contracts_override=quantity,  # per-strategy cap (B&B/ORB override)
+        )
         order_id = self.broker.place_spread_order(spread, qty)
         order_status = self.broker.get_order_status(order_id)
 
@@ -635,6 +672,13 @@ class BacktestEngine:
         if spread is None:
             self._tnt_strat._reset_to_idle("Spread construction failed")
             return False
+
+        # Position sizing: scale with current account balance
+        max_risk_per_contract = spread.max_risk
+        tnt_qty = self._calculate_position_size(
+            max_risk_per_contract=max_risk_per_contract,
+            max_contracts_override=tnt_cfg.get('max_contracts_override'),
+        )
 
         order_id = self.broker.place_spread_order(spread, tnt_qty)
         order_status = self.broker.get_order_status(order_id)

@@ -826,9 +826,23 @@ header {
       <!-- Step 2: paste redirect URL (shown after browser opens) -->
       <div id="schwab-paste-section" style="display:none; margin-top:12px;">
         <p style="font-size:12px; color:var(--text-dim); margin-bottom:6px;">
-          After logging in and authorizing, your browser will show a page that <strong>can't be reached</strong>. That's expected.
+          Your browser should have opened the Schwab login page. After logging in and authorizing,
+          your browser will show a page that <strong>can't be reached</strong>. That's expected.
           Copy the <strong>entire URL</strong> from your browser's address bar and paste it below.
         </p>
+        <!-- Fallback: manual open button + clickable link if browser didn't open -->
+        <div id="schwab-open-fallback" style="display:none; margin-bottom:10px; padding:10px; background:rgba(255,200,0,0.08); border:1px solid rgba(255,200,0,0.2); border-radius:6px;">
+          <p style="font-size:12px; color:var(--yellow); margin-bottom:6px;">
+            Browser didn't open automatically. Click below to open it manually:
+          </p>
+          <button type="button" id="schwab-open-browser-btn" class="btn btn-primary" style="margin-bottom:6px; font-size:12px; padding:6px 14px;">
+            Open Schwab Login
+          </button>
+          <p style="font-size:11px; color:var(--text-dim); margin-top:4px; word-break:break-all;">
+            Or copy this link into your browser: <a id="schwab-auth-url-link" href="#" target="_blank" rel="noopener"
+              style="color:var(--blue); text-decoration:underline;"></a>
+          </p>
+        </div>
         <input type="text" id="schwab-redirect-url" placeholder="Paste the redirect URL here (https://127.0.0.1?code=...)"
                style="width:100%; padding:10px 12px; background:var(--bg); border:1px solid var(--border); border-radius:6px;
                       color:var(--text); font-family:var(--font-mono); font-size:12px;" autocomplete="off" spellcheck="false">
@@ -1798,6 +1812,9 @@ document.getElementById('schwab-connect-btn').addEventListener('click', async ()
   const pasteSection = document.getElementById('schwab-paste-section');
   const resultDiv = document.getElementById('schwab-auth-result');
   const urlInput = document.getElementById('schwab-redirect-url');
+  const fallbackDiv = document.getElementById('schwab-open-fallback');
+  const fallbackLink = document.getElementById('schwab-auth-url-link');
+  const fallbackBtn = document.getElementById('schwab-open-browser-btn');
   btn.disabled = true;
   btn.textContent = 'Starting...';
   resultDiv.style.display = 'none';
@@ -1813,9 +1830,19 @@ document.getElementById('schwab-connect-btn').addEventListener('click', async ()
       return;
     }
 
-    // Open auth URL in browser
-    window.open(data.auth_url, 'schwab_auth',
-      'width=800,height=700,scrollbars=yes,resizable=yes');
+    // Server attempts to open system browser; show fallback if it didn't work
+    const authUrl = data.auth_url;
+    fallbackLink.href = authUrl;
+    fallbackLink.textContent = authUrl.substring(0, 80) + '...';
+    fallbackBtn.onclick = () => { window.open(authUrl, '_blank'); };
+
+    if (!data.browser_opened) {
+      fallbackDiv.style.display = 'block';
+    } else {
+      // Even if server says it opened, show fallback after a short delay
+      // in case the open command failed silently
+      setTimeout(() => { fallbackDiv.style.display = 'block'; }, 3000);
+    }
 
     // Show paste section
     btn.style.display = 'none';
