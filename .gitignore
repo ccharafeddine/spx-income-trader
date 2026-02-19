@@ -45,10 +45,14 @@ database/recordings/
 
 # Build artifacts
 dist/
+build/bdist.*/
 build/_pyinstaller/
 build/_py2app/
 build/Output/
 *.spec
+
+# Downloaded market data (cached, re-downloadable)
+database/backtest_data/
 
 # OS files
 .DS_Store
