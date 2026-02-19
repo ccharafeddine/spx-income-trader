@@ -11,7 +11,26 @@ logger = logging.getLogger(__name__)
 
 class DatabaseManager:
     """Manage SQLite database for trade history and analytics"""
-    
+
+    @staticmethod
+    def ensure_schema(db_path: str):
+        """Create the database with full schema if it doesn't exist.
+
+        Called during mode switch or startup to guarantee the target DB
+        is ready to use.  Safe to call on an existing database (uses
+        CREATE TABLE IF NOT EXISTS).
+        """
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        schema_file = Path(__file__).parent / 'schema.sql'
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        if schema_file.exists():
+            with open(schema_file, 'r') as f:
+                conn.executescript(f.read())
+        conn.commit()
+        conn.close()
+        logger.info(f"Schema ensured for {db_path}")
+
     def __init__(self, db_path: str):
         self.db_path = db_path
         

@@ -110,9 +110,12 @@ header::after {
   font-weight: bold;
   font-family: var(--font-ui);
   background: var(--border);
+  text-decoration: none;
+  cursor: pointer;
 }
 .mode-badge.dry { background: rgba(245,158,11,0.15); color: var(--amber); border: 1px solid var(--amber); }
 .mode-badge.live { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+body.live-mode { border-top: 3px solid var(--red); }
 .broker-badge {
   padding: 2px 8px;
   border-radius: 3px;
@@ -145,12 +148,6 @@ header::after {
 }
 /* Bot controls (desktop mode only) */
 .bot-controls { display: flex; align-items: center; gap: 8px; }
-.bot-mode-select {
-  background: var(--bg); color: var(--text); border: 1px solid var(--border);
-  border-radius: 3px; padding: 3px 6px; font-size: 11px; font-family: var(--font-ui);
-  cursor: pointer; outline: none;
-}
-.bot-mode-select:focus { border-color: var(--cyan); }
 .bot-ctrl-btn {
   padding: 3px 10px; border-radius: 3px; font-size: 11px; font-weight: 600;
   font-family: var(--font-ui); cursor: pointer; border: 1px solid; transition: all 0.2s;
@@ -2262,17 +2259,13 @@ header::after {
       <span class="dot" id="bot-dot"></span>
       <span id="bot-status-text">--</span>
     </div>
-    <span class="mode-badge" id="mode-badge">--</span>
+    <a href="/settings" class="mode-badge" id="mode-badge" title="Click to change trading mode in Settings">--</a>
     <span class="broker-badge" id="broker-badge" style="display:none">--</span>
     <div class="pdt-container">
       <a href="/settings" class="pdt-badge" id="pdt-badge" title="PDT Rule Status - Click for settings">PDT: -/-</a>
       <div class="pdt-frees-subtitle" id="pdt-frees-subtitle"></div>
     </div>
     <div class="bot-controls" id="bot-controls" style="display:none">
-      <select id="bot-mode-select" class="bot-mode-select">
-        <option value="dry-run">Dry Run</option>
-        <option value="live">Live</option>
-      </select>
       <button class="bot-ctrl-btn start" id="bot-start-btn" onclick="startBot()">Start Bot</button>
       <button class="bot-ctrl-btn stop" id="bot-stop-btn" onclick="stopBot()" style="display:none">Stop Bot</button>
     </div>
@@ -3062,6 +3055,24 @@ header::after {
           <input type="number" id="bt-max-loss" value="2.0" step="0.5" class="form-input" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
         </div>
 
+        <div style="margin-bottom: 14px;">
+          <label style="display: block; font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 6px;">Strategies</label>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px;">
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); cursor: pointer;">
+              <input type="checkbox" id="bt-strat-di" checked style="accent-color: var(--cyan);"> Daily Income
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); cursor: pointer;">
+              <input type="checkbox" id="bt-strat-tnt" checked style="accent-color: var(--cyan);"> Tag 'n Turn
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); cursor: pointer;">
+              <input type="checkbox" id="bt-strat-bnb" checked style="accent-color: var(--cyan);"> B&B
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); cursor: pointer;">
+              <input type="checkbox" id="bt-strat-orb" checked style="accent-color: var(--cyan);"> ORB
+            </label>
+          </div>
+        </div>
+
         <button onclick="runBacktest()" id="bt-run-btn" style="width: 100%; padding: 10px; background: var(--blue); color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px;">Run Backtest</button>
 
         <!-- Progress -->
@@ -3592,6 +3603,13 @@ async function updateStatus() {
     badge.style.border = '';
   }
 
+  // Live mode visual indicator (red top border)
+  if (d.mode === 'LIVE') {
+    document.body.classList.add('live-mode');
+  } else {
+    document.body.classList.remove('live-mode');
+  }
+
   // Broker badge + track current broker for chart annotations
   const brokerBadge = document.getElementById('broker-badge');
   const ab = d.active_broker || 'dry_run';
@@ -3911,6 +3929,92 @@ async function updateStatus() {
   }
 }
 
+async function loadChartFallback() {
+  // Fetch from dedicated chart endpoint when /api/today has no bars
+  const cd = await fetchJSON('/api/chart/today');
+  if (!cd || !cd.bars || !cd.bars.length) {
+    document.getElementById('candle-chart').innerHTML = '<div class="empty">No chart data available</div>';
+    return;
+  }
+
+  const bars = cd.bars;
+  const timestamps = bars.map(b => b.time || b.timestamp);
+  const opens = bars.map(b => b.open);
+  const highs = bars.map(b => b.high);
+  const lows = bars.map(b => b.low);
+  const closes = bars.map(b => b.close);
+
+  // Pad with session slots
+  const sessionTimes = ['09:30','10:00','10:30','11:00','11:30','12:00','12:30','13:00','13:30','14:00','14:30','15:00','15:30','16:00'];
+  const existingTimes = new Set(timestamps);
+  const paddedTimestamps = [...timestamps];
+  const paddedOpens = [...opens];
+  const paddedHighs = [...highs];
+  const paddedLows = [...lows];
+  const paddedCloses = [...closes];
+
+  sessionTimes.forEach(t => {
+    if (!existingTimes.has(t)) {
+      paddedTimestamps.push(t);
+      paddedOpens.push(null);
+      paddedHighs.push(null);
+      paddedLows.push(null);
+      paddedCloses.push(null);
+    }
+  });
+
+  const indices = paddedTimestamps.map((_, i) => i);
+  indices.sort((a, b) => paddedTimestamps[a].localeCompare(paddedTimestamps[b]));
+  const sortedTimestamps = indices.map(i => paddedTimestamps[i]);
+  const sortedOpens = indices.map(i => paddedOpens[i]);
+  const sortedHighs = indices.map(i => paddedHighs[i]);
+  const sortedLows = indices.map(i => paddedLows[i]);
+  const sortedCloses = indices.map(i => paddedCloses[i]);
+
+  const candleTrace = {
+    x: sortedTimestamps,
+    open: sortedOpens, high: sortedHighs, low: sortedLows, close: sortedCloses,
+    type: 'candlestick',
+    increasing: {line: {color: '#10b981', width: 1}, fillcolor: 'rgba(16,185,129,0.4)'},
+    decreasing: {line: {color: '#ef4444', width: 1}, fillcolor: 'rgba(239,68,68,0.4)'},
+    name: 'SPX',
+  };
+
+  const annotations = [{
+    x: 0.5, y: 0.5, xref: 'paper', yref: 'paper',
+    text: 'SPX', showarrow: false,
+    font: {color: 'rgba(255,255,255,0.04)', size: 120, family: 'JetBrains Mono, Consolas, monospace'},
+  }];
+
+  // Show trading date if not today
+  if (cd.trading_date && !cd.is_today) {
+    annotations.push({
+      x: 0.01, y: 0.98, xref: 'paper', yref: 'paper',
+      text: cd.trading_date + ' (last trading day)', showarrow: false, xanchor: 'left', yanchor: 'top',
+      font: {color: 'rgba(255,255,255,0.35)', size: 11, family: 'DM Sans, sans-serif'},
+    });
+  } else {
+    annotations.push({
+      x: 0.01, y: 0.98, xref: 'paper', yref: 'paper',
+      text: 'Yahoo Finance', showarrow: false, xanchor: 'left', yanchor: 'top',
+      font: {color: 'rgba(255,255,255,0.25)', size: 11, family: 'DM Sans, sans-serif'},
+    });
+  }
+
+  const layout = {
+    paper_bgcolor: '#0a0e17', plot_bgcolor: '#0a0e17',
+    font: {color: '#6b7280', family: 'JetBrains Mono, Consolas, monospace', size: 11},
+    margin: {l: 55, r: 90, t: 15, b: 55},
+    xaxis: {gridcolor: 'rgba(255,255,255,0.04)', type: 'category', rangeslider: {visible: false}},
+    yaxis: {gridcolor: 'rgba(255,255,255,0.04)', side: 'right'},
+    shapes: [],
+    annotations: annotations,
+    showlegend: false,
+  };
+
+  Plotly.react('candle-chart', [candleTrace], layout, {displayModeBar: false, responsive: true});
+}
+
 async function updateToday() {
   const d = await fetchJSON('/api/today');
   if (!d) return;
@@ -4181,7 +4285,8 @@ async function updateToday() {
 
     Plotly.react('candle-chart', [candleTrace], layout, {displayModeBar: false, responsive: true});
   } else {
-    document.getElementById('candle-chart').innerHTML = '<div class="empty">No bar data yet (market may be closed)</div>';
+    // No bars from /api/today — try dedicated chart endpoint as fallback
+    loadChartFallback();
   }
 
   // Update trade plan panel with position data
@@ -5317,14 +5422,11 @@ function updateBotControls(botRunning) {
   if (!desktopMode || DEMO_MODE) return;
   const startBtn = document.getElementById('bot-start-btn');
   const stopBtn = document.getElementById('bot-stop-btn');
-  const modeSelect = document.getElementById('bot-mode-select');
   if (botRunning) {
     startBtn.style.display = 'none';
-    modeSelect.style.display = 'none';
     stopBtn.style.display = 'inline-block';
   } else {
     startBtn.style.display = 'inline-block';
-    modeSelect.style.display = 'inline-block';
     stopBtn.style.display = 'none';
   }
 }
@@ -5334,11 +5436,10 @@ async function startBot() {
   btn.disabled = true;
   btn.textContent = 'Starting...';
   try {
-    const mode = document.getElementById('bot-mode-select').value;
     const resp = await fetch('/api/bot/start', {
       method: 'POST',
       headers: API_HEADERS,
-      body: JSON.stringify({mode}),
+      body: JSON.stringify({}),
     });
     const data = await resp.json();
     if (!data.success) {
@@ -6181,6 +6282,12 @@ async function runBacktest() {
     max_contracts: parseInt(document.getElementById('bt-contracts').value),
     slippage: parseFloat(document.getElementById('bt-slippage').value),
     max_daily_loss: parseFloat(document.getElementById('bt-max-loss').value),
+    strategies: {
+      daily_income: document.getElementById('bt-strat-di').checked,
+      tag_n_turn: document.getElementById('bt-strat-tnt').checked,
+      bnb: document.getElementById('bt-strat-bnb').checked,
+      orb: document.getElementById('bt-strat-orb').checked,
+    },
   };
 
   try {
