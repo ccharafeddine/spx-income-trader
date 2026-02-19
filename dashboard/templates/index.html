@@ -3052,6 +3052,24 @@ header::after {
           <input type="number" id="bt-max-loss" value="2.0" step="0.5" class="form-input" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
         </div>
 
+        <div style="margin-bottom: 14px;">
+          <label style="display: block; font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 6px;">Strategies</label>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px;">
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); cursor: pointer;">
+              <input type="checkbox" id="bt-strat-di" checked style="accent-color: var(--cyan);"> Daily Income
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); cursor: pointer;">
+              <input type="checkbox" id="bt-strat-tnt" checked style="accent-color: var(--cyan);"> Tag 'n Turn
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); cursor: pointer;">
+              <input type="checkbox" id="bt-strat-bnb" checked style="accent-color: var(--cyan);"> B&B
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); cursor: pointer;">
+              <input type="checkbox" id="bt-strat-orb" checked style="accent-color: var(--cyan);"> ORB
+            </label>
+          </div>
+        </div>
+
         <button onclick="runBacktest()" id="bt-run-btn" style="width: 100%; padding: 10px; background: var(--blue); color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px;">Run Backtest</button>
 
         <!-- Progress -->
