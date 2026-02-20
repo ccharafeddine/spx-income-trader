@@ -3087,8 +3087,16 @@ header::after {
 
         <!-- History -->
         <div style="margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px;">
-          <div style="font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 8px;">Previous Runs</div>
-          <div id="bt-history" style="font-size: 12px; color: var(--text-dim);">Loading...</div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <div style="font-size: 12px; font-weight: 600; color: var(--text);">Previous Runs</div>
+            <div id="bt-history-actions" style="display: none; gap: 6px; display: none; align-items: center;">
+              <label style="font-size: 11px; color: var(--text-dim); cursor: pointer; display: flex; align-items: center; gap: 3px;">
+                <input type="checkbox" id="bt-select-all" onchange="btToggleSelectAll(this.checked)" style="cursor: pointer;"> All
+              </label>
+              <button onclick="btDeleteSelected()" style="font-size: 11px; padding: 2px 8px; background: transparent; border: 1px solid var(--red); color: var(--red); border-radius: 4px; cursor: pointer;">Delete</button>
+            </div>
+          </div>
+          <div id="bt-history" style="font-size: 12px; color: var(--text-dim); max-height: 500px; overflow-y: auto;">Loading...</div>
         </div>
       </div>
 
@@ -6424,26 +6432,63 @@ async function loadBacktestHistory() {
   try {
     const resp = await fetch('/api/backtest/history');
     const data = await resp.json();
+    const actionsEl = document.getElementById('bt-history-actions');
     if (!data.success || !data.runs.length) {
       document.getElementById('bt-history').innerHTML = '<span style="color:var(--text-dim)">No previous runs</span>';
+      actionsEl.style.display = 'none';
       return;
     }
+
+    actionsEl.style.display = 'flex';
+    document.getElementById('bt-select-all').checked = false;
 
     let html = '';
     for (const run of data.runs) {
       const p = run.params || {};
       const retColor = run.total_return_pct >= 0 ? 'var(--green)' : 'var(--red)';
-      html += `<div style="padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); cursor: pointer;" onclick="loadBacktestResults('${run.id}')">
-        <div style="display: flex; justify-content: space-between;">
-          <span>${(p.start_date||'').slice(5)} - ${(p.end_date||'').slice(5)}</span>
-          <span style="color: ${retColor}; font-family: var(--font-mono);">${run.total_return_pct >= 0 ? '+' : ''}${(run.total_return_pct||0).toFixed(1)}%</span>
+      html += `<div style="padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); display: flex; align-items: flex-start; gap: 6px;">
+        <input type="checkbox" class="bt-run-cb" value="${run.id}" onclick="event.stopPropagation(); btUpdateSelectAll()" style="margin-top: 3px; cursor: pointer; flex-shrink: 0;">
+        <div style="flex: 1; cursor: pointer;" onclick="loadBacktestResults('${run.id}')">
+          <div style="display: flex; justify-content: space-between;">
+            <span>${(p.start_date||'').slice(5)} - ${(p.end_date||'').slice(5)}</span>
+            <span style="color: ${retColor}; font-family: var(--font-mono);">${run.total_return_pct >= 0 ? '+' : ''}${(run.total_return_pct||0).toFixed(1)}%</span>
+          </div>
+          <div style="color: var(--text-dim); font-size: 11px;">${run.total_trades} trades, WR ${(run.win_rate||0).toFixed(0)}%, Sharpe ${(run.sharpe_ratio||0).toFixed(2)}</div>
         </div>
-        <div style="color: var(--text-dim); font-size: 11px;">${run.total_trades} trades, WR ${(run.win_rate||0).toFixed(0)}%, Sharpe ${(run.sharpe_ratio||0).toFixed(2)}</div>
       </div>`;
     }
     document.getElementById('bt-history').innerHTML = html;
   } catch(e) {
     document.getElementById('bt-history').innerHTML = '<span style="color:var(--text-dim)">Failed to load</span>';
+  }
+}
+
+function btToggleSelectAll(checked) {
+  document.querySelectorAll('.bt-run-cb').forEach(cb => cb.checked = checked);
+}
+
+function btUpdateSelectAll() {
+  const all = document.querySelectorAll('.bt-run-cb');
+  const checked = document.querySelectorAll('.bt-run-cb:checked');
+  document.getElementById('bt-select-all').checked = all.length > 0 && all.length === checked.length;
+}
+
+async function btDeleteSelected() {
+  const checked = document.querySelectorAll('.bt-run-cb:checked');
+  if (!checked.length) return;
+  const ids = Array.from(checked).map(cb => cb.value);
+  if (!confirm(`Delete ${ids.length} backtest run${ids.length > 1 ? 's' : ''}?`)) return;
+
+  try {
+    const resp = await fetch('/api/backtest/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-API-Token': API_TOKEN},
+      body: JSON.stringify({ids}),
+    });
+    const data = await resp.json();
+    if (data.success) loadBacktestHistory();
+  } catch(e) {
+    console.error('Failed to delete backtest runs:', e);
   }
 }
 </script>

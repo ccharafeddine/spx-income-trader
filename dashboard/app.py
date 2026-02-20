@@ -4386,7 +4386,6 @@ def api_backtest_history():
                    max_drawdown_pct, win_rate
             FROM backtest_runs
             ORDER BY started_at DESC
-            LIMIT 20
         """).fetchall()
         conn.close()
 
@@ -4405,6 +4404,30 @@ def api_backtest_history():
             })
 
         return jsonify({'success': True, 'runs': runs})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/backtest/delete', methods=['POST'])
+def api_backtest_delete():
+    """Delete one or more backtest runs by ID."""
+    data = request.json or {}
+    ids = data.get('ids', [])
+    if not ids or not isinstance(ids, list):
+        return jsonify({'success': False, 'error': 'No run IDs provided'}), 400
+
+    try:
+        db_path = str(DB_PATH)
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        placeholders = ','.join('?' for _ in ids)
+        conn.execute(
+            f"DELETE FROM backtest_runs WHERE id IN ({placeholders})", ids
+        )
+        conn.commit()
+        deleted = conn.total_changes
+        conn.close()
+        return jsonify({'success': True, 'deleted': deleted})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
