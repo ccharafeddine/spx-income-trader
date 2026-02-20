@@ -271,16 +271,30 @@ class DryRunBroker(BrokerInterface):
             return None
 
     def _chain_has_valid_prices(self, chain: Dict[float, Dict]) -> bool:
-        """Check that at least some ATM strikes have non-zero bid prices."""
+        """Check that ATM strikes have non-zero bid prices on BOTH sides.
+
+        Both put and call bids must be present so the chain works for
+        either bullish (put spread) or bearish (call spread) trades.
+        """
         price = self.get_current_price('SPX')
         if not price:
             return bool(chain)
         # Check strikes near ATM (+/- 50 points)
+        has_valid_put = False
+        has_valid_call = False
         for strike, data in chain.items():
             if abs(strike - price) <= 50:
-                if data.get('put_bid', 0) > 0 or data.get('call_bid', 0) > 0:
+                if data.get('put_bid', 0) > 0:
+                    has_valid_put = True
+                if data.get('call_bid', 0) > 0:
+                    has_valid_call = True
+                if has_valid_put and has_valid_call:
                     return True
-        logger.warning("Real chain has all-zero ATM prices, falling back to synthetic")
+        if not has_valid_put or not has_valid_call:
+            side = "put" if not has_valid_put else "call"
+            logger.warning(f"Real chain missing valid {side} prices near ATM, falling back to synthetic")
+        else:
+            logger.warning("Real chain has all-zero ATM prices, falling back to synthetic")
         return False
 
     def _build_synthetic_chain(self, symbol: str, expiration: str) -> Dict[float, Dict]:

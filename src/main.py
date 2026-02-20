@@ -1609,6 +1609,19 @@ class TradingBot:
                 min_credit=min_credit,
                 expiration_str=expiration_str,
             )
+
+            # Retry with synthetic chain in dry-run mode if real chain failed
+            if not spread and hasattr(self.broker, '_build_synthetic_chain'):
+                logger.warning(f"{strategy_name}: Retrying with synthetic pricing")
+                synthetic_chain = self.broker._build_synthetic_chain("SPX", chain_exp)
+                if synthetic_chain:
+                    spread = self._construct_strategy_spread(
+                        current_price, direction, synthetic_chain,
+                        spread_width=spread_width,
+                        min_credit=min_credit,
+                        expiration_str=expiration_str,
+                    )
+
             if not spread:
                 logger.warning(f"{strategy_name}: Failed to construct spread")
                 return False
@@ -1948,9 +1961,21 @@ class TradingBot:
                 options_chain
             )
 
+            # If spread construction failed (e.g. stale/zero prices from Yahoo),
+            # retry with synthetic chain in dry-run mode
+            if not spread and hasattr(self.broker, '_build_synthetic_chain'):
+                logger.warning("Failed to construct spread with real chain, retrying with synthetic pricing")
+                synthetic_chain = self.broker._build_synthetic_chain("SPX", expiration)
+                if synthetic_chain:
+                    spread = self.strategy.construct_spread(
+                        current_price,
+                        direction,
+                        synthetic_chain
+                    )
+
             if not spread:
                 logger.warning("Failed to construct spread")
-                self._record_rejection('daily_income', 'credit_below_minimum',
+                self._record_rejection('daily_income', 'stale_chain',
                     f"Could not construct {direction.value} spread at SPX {current_price:.0f}")
                 return
 
