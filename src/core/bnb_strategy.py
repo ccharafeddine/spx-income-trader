@@ -1,23 +1,16 @@
 """
 B&B (Bed & Breakfast) Strategy - Production Line Trading p.23-25
-Also includes Just Breakfast logic (p.26)
 
 Concept: Identify setups in the last 60 minutes of trading (15:00-16:00 ET)
-for NEXT DAY entry.
+to provide directional confluence for DI the next day.
 
 Rules:
 - Window: 15:00-16:00 ET (last 2 bars of the day)
 - Look for pulse bars in this window
-- The 15:30 bar is "presumptive" - if it's a pulse, assume continuation into close
+- Only the final bar (15:30) creates a signal; the 15:00 bar can reinforce
 - Signal is stored overnight
-- Entry: Next day at market open (09:30)
-- Exit: After first 30 minutes (10:00) OR roll into main daily setup if first bar confirms
-
-Just Breakfast:
-- Uses B&B signal from previous day
-- Entry: Opening bell (09:30)
-- Exit: After first 30 minutes (10:00)
-- AGGRESSIVE: If first bar ALSO qualifies as pulse in same direction, roll to daily
+- Next day: provides directional bias to DI (informational only, V1)
+- Gap invalidation: if market gaps against signal, it's invalid
 """
 
 import json
@@ -25,7 +18,7 @@ import logging
 from dataclasses import dataclass, asdict
 from datetime import datetime, time
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +30,6 @@ class BnBSignal:
     direction: str  # bullish or bearish
     pulse_bar_time: str  # HH:MM of the pulse bar
     pulse_bar_close: float
-    is_presumptive: bool  # True if 15:30 bar (presumed continuation)
     spx_close: float  # EOD close price
 
 
@@ -46,12 +38,11 @@ class BnBStrategy:
     Bed & Breakfast strategy.
 
     Scans 15:00-16:00 for pulse bars, generates overnight signals
-    for next-day morning entry.
+    for next-day directional confluence with DI.
     """
 
     BNB_WINDOW_START = time(15, 0)
     BNB_WINDOW_END = time(16, 0)
-    FIRST_BAR_END = time(10, 0)
 
     def __init__(self, config: Dict[str, Any], persistence_path: Optional[Path] = None):
         """
@@ -64,15 +55,13 @@ class BnBStrategy:
         self.config = config
         self.enabled = config.get('enabled', False)
         self.pulse_threshold = config.get('pulse_threshold', 10.0)
-        self.aggressive_roll = config.get('aggressive_roll', True)
-        self.max_contracts_override = config.get('max_contracts_override', 3)
+        self.gap_invalidation_pct = config.get('gap_invalidation_pct', 0.3)
 
         # State
         self.todays_bnb_bars = []
+        self._window_pulses: List[Tuple[str, str]] = []  # (bar_time HH:MM, direction)
         self.pending_signal: Optional[BnBSignal] = None  # EOD signal waiting for next day
-        self.active_signal: Optional[BnBSignal] = None  # Signal ready for entry today
-        self.position_open = False
-        self.entry_price: Optional[float] = None
+        self.active_signal: Optional[BnBSignal] = None  # Signal ready for bias today
 
         # Persistence
         if persistence_path:
@@ -85,7 +74,7 @@ class BnBStrategy:
         logger.info(
             f"BnBStrategy initialized: enabled={self.enabled}, "
             f"pulse={self.pulse_threshold}%, window=15:00-16:00 ET, "
-            f"aggressive_roll={self.aggressive_roll}"
+            f"gap_invalidation={self.gap_invalidation_pct}%"
         )
 
     def _load_signals(self):
@@ -103,7 +92,7 @@ class BnBStrategy:
 
             if data.get('active_signal'):
                 sig = data['active_signal']
-                # Only load if it's from a previous day (still valid for entry)
+                # Only load if it's from a previous day (still valid for bias)
                 signal_date = sig.get('signal_date')
                 today = datetime.now().strftime('%Y-%m-%d')
                 if signal_date and signal_date < today:
@@ -112,9 +101,6 @@ class BnBStrategy:
                         f"B&B: Loaded overnight signal from {signal_date}: "
                         f"{self.active_signal.direction.upper()}"
                     )
-
-            self.position_open = data.get('position_open', False)
-            self.entry_price = data.get('entry_price')
 
         except Exception as e:
             logger.error(f"Failed to load B&B signals: {e}")
@@ -125,8 +111,6 @@ class BnBStrategy:
             data = {
                 'pending_signal': asdict(self.pending_signal) if self.pending_signal else None,
                 'active_signal': asdict(self.active_signal) if self.active_signal else None,
-                'position_open': self.position_open,
-                'entry_price': self.entry_price,
             }
             self.persistence_path.parent.mkdir(exist_ok=True)
             self.persistence_path.write_text(json.dumps(data, indent=2))
@@ -152,18 +136,17 @@ class BnBStrategy:
             return "bearish"
         return None
 
-    def on_bar_complete(self, bar, current_price: float) -> Optional[Dict]:
+    def on_bar_complete(self, bar, current_price: float):
         """
         Process a completed bar for B&B signals.
 
-        During 15:00-16:00: Look for pulse bars
-        Returns action dict if entry/exit signal triggered.
+        During 15:00-16:00: Look for pulse bars and collect them.
+        Signal resolution happens in on_day_end().
         """
         if not self.enabled:
             return None
 
         bar_time = bar.timestamp
-        action = None
 
         # During B&B window, collect and evaluate bars
         if self.is_bnb_window(bar_time):
@@ -171,120 +154,76 @@ class BnBStrategy:
 
             pulse_dir = self._is_pulse_bar(bar)
             if pulse_dir:
-                is_presumptive = bar_time.time() >= time(15, 30)
-
-                self.pending_signal = BnBSignal(
-                    signal_date=bar_time.strftime('%Y-%m-%d'),
-                    direction=pulse_dir,
-                    pulse_bar_time=bar_time.strftime('%H:%M'),
-                    pulse_bar_close=bar.close,
-                    is_presumptive=is_presumptive,
-                    spx_close=current_price
-                )
+                bar_time_str = bar_time.strftime('%H:%M')
+                self._window_pulses.append((bar_time_str, pulse_dir))
 
                 logger.info(
-                    f"B&B: {pulse_dir.upper()} pulse detected at {bar_time.strftime('%H:%M')} "
-                    f"{'(presumptive)' if is_presumptive else ''}"
+                    f"B&B: {pulse_dir.upper()} pulse detected at {bar_time_str}"
                 )
-                self._save_signals()
-
-        # Check for Just Breakfast exit at 10:00
-        if self.position_open and bar_time.time() >= self.FIRST_BAR_END:
-            # Check if first bar is ALSO a pulse in same direction (roll opportunity)
-            first_bar_pulse = self._is_pulse_bar(bar)
-
-            if self.aggressive_roll and first_bar_pulse == self.active_signal.direction:
-                action = {
-                    "strategy": "bnb",
-                    "action": "roll_to_daily",
-                    "direction": self.active_signal.direction,
-                    "reason": "First bar confirms - rolling to daily setup",
-                    "entry_price": self.entry_price,
-                }
-                logger.info(
-                    f"B&B/JB: Rolling to daily setup - first bar confirms "
-                    f"{self.active_signal.direction.upper()}"
-                )
-            else:
-                action = {
-                    "strategy": "bnb",
-                    "action": "exit",
-                    "direction": self.active_signal.direction,
-                    "reason": "Just Breakfast 30-minute exit",
-                    "exit_price": current_price,
-                    "entry_price": self.entry_price,
-                }
-                logger.info(f"B&B/JB: 30-minute exit at ${current_price:,.2f}")
-
-            self.position_open = False
-            self.entry_price = None
-            self.active_signal = None
-            self._save_signals()
-
-        return action
-
-    def check_entry_signal(self, current_price: float, current_time: datetime) -> Optional[Dict]:
-        """
-        Check if B&B entry conditions are met.
-
-        Called at market open to check for overnight signal entry.
-        """
-        if not self.enabled or not self.active_signal:
-            return None
-
-        if self.position_open:
-            return None
-
-        # Entry at market open (09:30-10:00 window)
-        t = current_time.time()
-        if time(9, 30) <= t < time(10, 0):
-            self.position_open = True
-            self.entry_price = current_price
-            self._save_signals()
-
-            signal = {
-                "strategy": "bnb",
-                "action": "enter",
-                "direction": self.active_signal.direction,
-                "entry_price": current_price,
-                "signal_date": self.active_signal.signal_date,
-                "pulse_bar_time": self.active_signal.pulse_bar_time,
-                "is_presumptive": self.active_signal.is_presumptive,
-            }
-
-            logger.info(
-                f"B&B ENTRY: {self.active_signal.direction.upper()} "
-                f"@ ${current_price:,.2f} (signal from {self.active_signal.signal_date})"
-            )
-
-            return signal
 
         return None
 
-    def rollback_entry(self):
-        """Rollback premature state changes when trade execution fails.
-
-        check_entry_signal() sets position_open=True BEFORE returning the
-        signal dict. If the caller's execution pipeline fails, call this to
-        restore the strategy so it can retry on the next tick.
-        """
-        self.position_open = False
-        self.entry_price = None
-        self._save_signals()
-        logger.info("B&B: Entry rolled back (execution failed), will retry on next tick")
-
     def on_day_end(self, spx_close: float):
-        """Called at market close to finalize B&B signal"""
-        if self.pending_signal:
-            self.pending_signal.spx_close = spx_close
-            self._save_signals()
-            logger.info(
-                f"B&B: Signal locked for tomorrow: {self.pending_signal.direction.upper()} "
-                f"(from {self.pending_signal.pulse_bar_time})"
-            )
+        """Called at market close to resolve window pulses into a signal."""
+        # Resolve the window pulses into a signal
+        self.pending_signal = None
+
+        if self._window_pulses:
+            final_bar_pulse = None
+            first_bar_pulse = None
+
+            for bar_time_str, direction in self._window_pulses:
+                if bar_time_str >= '15:30':
+                    final_bar_pulse = direction
+                else:
+                    first_bar_pulse = direction
+
+            if final_bar_pulse:
+                # Final bar has a pulse - check for conflict
+                if first_bar_pulse and first_bar_pulse != final_bar_pulse:
+                    # Conflicting directions - no signal
+                    logger.info(
+                        f"B&B: Conflicting pulses ({first_bar_pulse} vs {final_bar_pulse}), no signal"
+                    )
+                else:
+                    # Final bar pulse is the signal (first bar may reinforce)
+                    reinforced = " (reinforced)" if first_bar_pulse == final_bar_pulse else ""
+                    # Use the last pulse bar time at 15:30 or later
+                    pulse_time = None
+                    pulse_close = spx_close
+                    for bar_time_str, direction in self._window_pulses:
+                        if bar_time_str >= '15:30' and direction == final_bar_pulse:
+                            pulse_time = bar_time_str
+                            # Try to get close from todays_bnb_bars
+                            for b in self.todays_bnb_bars:
+                                if b.timestamp.strftime('%H:%M') == bar_time_str:
+                                    pulse_close = b.close
+                                    break
+
+                    self.pending_signal = BnBSignal(
+                        signal_date=datetime.now().strftime('%Y-%m-%d') if not self.todays_bnb_bars
+                        else self.todays_bnb_bars[0].timestamp.strftime('%Y-%m-%d'),
+                        direction=final_bar_pulse,
+                        pulse_bar_time=pulse_time or '15:30',
+                        pulse_bar_close=pulse_close,
+                        spx_close=spx_close,
+                    )
+
+                    logger.info(
+                        f"B&B: Signal locked for tomorrow: {final_bar_pulse.upper()}{reinforced} "
+                        f"(from {pulse_time or '15:30'})"
+                    )
+            else:
+                # Only first bar (15:00) had pulse, no final bar pulse - no signal
+                logger.info("B&B: Only 15:00 bar had pulse, no final bar confirmation - no signal")
+        else:
+            logger.debug("B&B: No pulses in window, no signal")
+
+        self._save_signals()
 
         # Reset for next day
         self.todays_bnb_bars = []
+        self._window_pulses = []
 
     def on_day_start(self):
         """Called at market open to activate overnight signal"""
@@ -298,9 +237,32 @@ class BnBStrategy:
                 f"(from {self.active_signal.signal_date} {self.active_signal.pulse_bar_time})"
             )
 
+    def get_bias(self) -> Optional[str]:
+        """Return 'bullish', 'bearish', or None based on overnight signal."""
+        if self.active_signal:
+            return self.active_signal.direction
+        return None
+
+    def validate_signal(self, current_price: float) -> bool:
+        """Check if overnight signal is still valid given morning price.
+        If market gapped against the signal, the signal is invalid."""
+        if not self.active_signal:
+            return False
+        gap_pct = self.gap_invalidation_pct
+        prev_close = self.active_signal.spx_close
+        if prev_close <= 0:
+            return True
+        move_pct = (current_price - prev_close) / prev_close * 100
+        if self.active_signal.direction == 'bullish' and move_pct < -gap_pct:
+            return False  # Gapped down against bullish signal
+        if self.active_signal.direction == 'bearish' and move_pct > gap_pct:
+            return False  # Gapped up against bearish signal
+        return True
+
     def reset_daily(self):
         """Reset daily state (called on new trading day)"""
         self.todays_bnb_bars = []
+        self._window_pulses = []
         # Don't reset pending/active signals - they persist overnight
 
     def get_status(self) -> Dict:
@@ -309,7 +271,5 @@ class BnBStrategy:
             'enabled': self.enabled,
             'pending_signal': asdict(self.pending_signal) if self.pending_signal else None,
             'active_signal': asdict(self.active_signal) if self.active_signal else None,
-            'position_open': self.position_open,
-            'entry_price': self.entry_price,
             'in_window': False,  # Updated by caller based on current time
         }

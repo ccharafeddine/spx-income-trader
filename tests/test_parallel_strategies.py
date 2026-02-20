@@ -362,24 +362,6 @@ class TestExecuteStrategyTrade:
         call_kwargs = bot.portfolio.register_position.call_args[1]
         assert call_kwargs['is_0dte'] is False
 
-    def test_bnb_execution(self):
-        """Execute a B&B trade."""
-        from src.main import TradingBot
-
-        bot = _make_mock_bot()
-
-        result = TradingBot._execute_strategy_trade(
-            bot,
-            strategy_type=StrategyType.BNB,
-            direction=TradeDirection.BEARISH,
-            current_price=6000.0,
-            is_0dte=True,
-            spread_width=5.0,
-        )
-
-        assert result is True
-        assert bot.dte0_trades_today == 1  # B&B is 0DTE
-
     def test_portfolio_risk_blocks_trade(self):
         """Portfolio risk gate should prevent execution."""
         from src.main import TradingBot
@@ -440,7 +422,7 @@ class TestRestoreDailyCounters:
     """Test restoring trade counts from DB into shared-slot model."""
 
     def test_restore_mixed_strategies(self):
-        """DI+ORB+B&B sum into dte0_trades_today, TNT into tnt_trades_today."""
+        """DI+ORB sum into dte0_trades_today, TNT into tnt_trades_today."""
         from src.main import TradingBot
 
         bot = _make_mock_bot()
@@ -453,7 +435,7 @@ class TestRestoreDailyCounters:
 
         TradingBot._restore_daily_counters(bot, date(2026, 2, 11))
 
-        assert bot.dte0_trades_today == 2  # DI(1) + ORB(1) + B&B(0)
+        assert bot.dte0_trades_today == 2  # DI(1) + ORB(1)
         assert bot.tnt_trades_today == 2
         assert bot.portfolio.daily_realized_pnl == -150.0
 
@@ -548,22 +530,32 @@ class TestDIPositionIndependence:
 # ============================================================================
 
 class TestORBRollbackOnFailure:
-    """ORB sets triggered_today=True inside check_breakout() before returning.
+    """ORB sets triggered_today=True inside check_breakout() after confirmation.
     If execution fails, rollback_entry() must restore retryable state."""
 
     def test_rollback_resets_triggered_today(self, tmp_path):
         """After rollback, ORB can trigger again on next tick."""
         from src.core.orb_strategy import ORBStrategy, ORBRange
 
-        orb = ORBStrategy({'enabled': True}, persistence_path=tmp_path / 'orb.json')
+        orb = ORBStrategy(
+            {'enabled': True, 'confirmation_minutes': 0},
+            persistence_path=tmp_path / 'orb.json',
+        )
         orb.opening_range = ORBRange(
             date='2026-02-11', high=6010.0, low=5990.0,
             close=6008.0, range_size=20.0,
             close_position_pct=90.0, direction_bias='bullish',
         )
 
-        # First breakout signal (sets triggered_today=True internally)
-        signal = orb.check_breakout(6015.0)
+        t0 = datetime(2026, 2, 11, 10, 30)
+        t1 = datetime(2026, 2, 11, 10, 31)
+        t2 = datetime(2026, 2, 11, 10, 32)
+        t3 = datetime(2026, 2, 11, 10, 33)
+
+        # First call: sets breakout pending
+        signal = orb.check_breakout(6015.0, t0)
+        # With confirmation_minutes=0, next call confirms immediately
+        signal = orb.check_breakout(6015.0, t1)
         assert signal is not None
         assert orb.triggered_today is True
         assert orb.position_open is True
@@ -575,82 +567,186 @@ class TestORBRollbackOnFailure:
         assert orb.entry_price is None
 
         # Should be able to trigger again
-        signal2 = orb.check_breakout(6015.0)
+        signal2 = orb.check_breakout(6015.0, t2)
+        signal2 = orb.check_breakout(6015.0, t3)
         assert signal2 is not None, "ORB should retry after rollback"
 
     def test_no_retry_without_rollback(self, tmp_path):
         """Without rollback, triggered_today blocks all future breakouts."""
         from src.core.orb_strategy import ORBStrategy, ORBRange
 
-        orb = ORBStrategy({'enabled': True}, persistence_path=tmp_path / 'orb.json')
+        orb = ORBStrategy(
+            {'enabled': True, 'confirmation_minutes': 0},
+            persistence_path=tmp_path / 'orb.json',
+        )
         orb.opening_range = ORBRange(
             date='2026-02-11', high=6010.0, low=5990.0,
             close=6008.0, range_size=20.0,
             close_position_pct=90.0, direction_bias='bullish',
         )
 
-        signal = orb.check_breakout(6015.0)
+        t0 = datetime(2026, 2, 11, 10, 30)
+        t1 = datetime(2026, 2, 11, 10, 31)
+        t2 = datetime(2026, 2, 11, 10, 35)
+
+        signal = orb.check_breakout(6015.0, t0)
+        signal = orb.check_breakout(6015.0, t1)
         assert signal is not None
 
         # Without rollback: no retry
-        signal2 = orb.check_breakout(6020.0)
+        signal2 = orb.check_breakout(6020.0, t2)
         assert signal2 is None, "ORB should be blocked without rollback"
 
 
-class TestBnBRollbackOnFailure:
-    """B&B sets position_open=True inside check_entry_signal() before returning.
-    If execution fails, rollback_entry() must restore retryable state."""
+class TestBnBSignalLogic:
+    """B&B final-bar-only signal logic and bias/validation methods."""
 
-    def test_rollback_allows_retry(self, tmp_path):
-        """After rollback, B&B can signal again on next tick."""
-        from src.core.bnb_strategy import BnBStrategy, BnBSignal
-        import pytz
+    def test_bnb_final_bar_only(self, tmp_path):
+        """15:00 pulse alone = no signal; 15:30 pulse = signal."""
+        from src.core.bnb_strategy import BnBStrategy
+        from src.models.bar import Bar
 
         bnb = BnBStrategy({'enabled': True}, persistence_path=tmp_path / 'bnb.json')
+
+        # 15:00 bar with pulse (close at top of range)
+        bar_1500 = Bar(
+            timestamp=datetime(2026, 2, 11, 15, 0),
+            open=6000, high=6020, low=6000, close=6019,  # bullish pulse
+        )
+        bnb.on_bar_complete(bar_1500, 6019)
+
+        # 15:30 bar with NO pulse (close in middle)
+        bar_1530 = Bar(
+            timestamp=datetime(2026, 2, 11, 15, 30),
+            open=6019, high=6030, low=6010, close=6020,  # middle
+        )
+        bnb.on_bar_complete(bar_1530, 6020)
+
+        bnb.on_day_end(6020)
+        assert bnb.pending_signal is None, "Only 15:00 pulse should not create signal"
+
+        # Reset and test 15:30 pulse only
+        bnb.reset_daily()
+        bar_1500_flat = Bar(
+            timestamp=datetime(2026, 2, 11, 15, 0),
+            open=6000, high=6020, low=6000, close=6010,  # middle
+        )
+        bnb.on_bar_complete(bar_1500_flat, 6010)
+
+        bar_1530_pulse = Bar(
+            timestamp=datetime(2026, 2, 11, 15, 30),
+            open=6010, high=6030, low=6010, close=6029,  # bullish pulse
+        )
+        bnb.on_bar_complete(bar_1530_pulse, 6029)
+
+        bnb.on_day_end(6029)
+        assert bnb.pending_signal is not None, "15:30 pulse should create signal"
+        assert bnb.pending_signal.direction == 'bullish'
+
+    def test_bnb_conflicting_pulses(self, tmp_path):
+        """15:00 bullish + 15:30 bearish = no signal."""
+        from src.core.bnb_strategy import BnBStrategy
+        from src.models.bar import Bar
+
+        bnb = BnBStrategy({'enabled': True}, persistence_path=tmp_path / 'bnb.json')
+
+        bar_1500 = Bar(
+            timestamp=datetime(2026, 2, 11, 15, 0),
+            open=6000, high=6020, low=6000, close=6019,  # bullish
+        )
+        bnb.on_bar_complete(bar_1500, 6019)
+
+        bar_1530 = Bar(
+            timestamp=datetime(2026, 2, 11, 15, 30),
+            open=6019, high=6020, low=6000, close=6001,  # bearish
+        )
+        bnb.on_bar_complete(bar_1530, 6001)
+
+        bnb.on_day_end(6001)
+        assert bnb.pending_signal is None, "Conflicting pulses should produce no signal"
+
+    def test_bnb_reinforcing_pulses(self, tmp_path):
+        """Both bars same direction = signal."""
+        from src.core.bnb_strategy import BnBStrategy
+        from src.models.bar import Bar
+
+        bnb = BnBStrategy({'enabled': True}, persistence_path=tmp_path / 'bnb.json')
+
+        bar_1500 = Bar(
+            timestamp=datetime(2026, 2, 11, 15, 0),
+            open=6000, high=6020, low=6000, close=6001,  # bearish
+        )
+        bnb.on_bar_complete(bar_1500, 6001)
+
+        bar_1530 = Bar(
+            timestamp=datetime(2026, 2, 11, 15, 30),
+            open=6001, high=6010, low=5990, close=5991,  # bearish
+        )
+        bnb.on_bar_complete(bar_1530, 5991)
+
+        bnb.on_day_end(5991)
+        assert bnb.pending_signal is not None, "Reinforcing pulses should create signal"
+        assert bnb.pending_signal.direction == 'bearish'
+
+    def test_bnb_get_bias(self, tmp_path):
+        """get_bias() returns correct direction from active_signal."""
+        from src.core.bnb_strategy import BnBStrategy, BnBSignal
+
+        bnb = BnBStrategy({'enabled': True}, persistence_path=tmp_path / 'bnb.json')
+
+        assert bnb.get_bias() is None, "No active signal should return None"
+
+        bnb.active_signal = BnBSignal(
+            signal_date='2026-02-10', direction='bearish',
+            pulse_bar_time='15:30', pulse_bar_close=6000.0,
+            spx_close=6005.0,
+        )
+        assert bnb.get_bias() == 'bearish'
+
+    def test_bnb_validate_signal_gap_invalidation(self, tmp_path):
+        """Gap > 0.3% against direction = invalid."""
+        from src.core.bnb_strategy import BnBStrategy, BnBSignal
+
+        bnb = BnBStrategy(
+            {'enabled': True, 'gap_invalidation_pct': 0.3},
+            persistence_path=tmp_path / 'bnb.json',
+        )
+
         bnb.active_signal = BnBSignal(
             signal_date='2026-02-10', direction='bullish',
             pulse_bar_time='15:30', pulse_bar_close=6000.0,
-            is_presumptive=True, spx_close=6005.0,
+            spx_close=6000.0,
         )
 
-        tz = pytz.timezone("America/New_York")
-        entry_time = datetime(2026, 2, 11, 9, 35, tzinfo=tz)
+        # Gap down > 0.3% against bullish signal = invalid
+        gapped_price = 6000.0 * (1 - 0.004)  # -0.4%
+        assert bnb.validate_signal(gapped_price) is False
 
-        # First signal (sets position_open=True internally)
-        signal = bnb.check_entry_signal(6000.0, entry_time)
-        assert signal is not None
-        assert bnb.position_open is True
+        # Gap up against bearish signal = invalid
+        bnb.active_signal.direction = 'bearish'
+        gapped_up = 6000.0 * (1 + 0.004)  # +0.4%
+        assert bnb.validate_signal(gapped_up) is False
 
-        # Simulate execution failure -> rollback
-        bnb.rollback_entry()
-        assert bnb.position_open is False
-        assert bnb.entry_price is None
-
-        # Should be able to signal again
-        signal2 = bnb.check_entry_signal(6001.0, entry_time)
-        assert signal2 is not None, "B&B should retry after rollback"
-
-    def test_no_retry_without_rollback(self, tmp_path):
-        """Without rollback, position_open=True blocks all future signals."""
+    def test_bnb_validate_signal_valid(self, tmp_path):
+        """Small or favorable gap = valid."""
         from src.core.bnb_strategy import BnBStrategy, BnBSignal
-        import pytz
 
-        bnb = BnBStrategy({'enabled': True}, persistence_path=tmp_path / 'bnb.json')
+        bnb = BnBStrategy(
+            {'enabled': True, 'gap_invalidation_pct': 0.3},
+            persistence_path=tmp_path / 'bnb.json',
+        )
+
         bnb.active_signal = BnBSignal(
             signal_date='2026-02-10', direction='bullish',
             pulse_bar_time='15:30', pulse_bar_close=6000.0,
-            is_presumptive=True, spx_close=6005.0,
+            spx_close=6000.0,
         )
 
-        tz = pytz.timezone("America/New_York")
-        entry_time = datetime(2026, 2, 11, 9, 35, tzinfo=tz)
+        # Small gap down (within tolerance) = valid
+        assert bnb.validate_signal(5990.0) is True  # -0.17%
 
-        signal = bnb.check_entry_signal(6000.0, entry_time)
-        assert signal is not None
-
-        # Without rollback: blocked
-        signal2 = bnb.check_entry_signal(6001.0, entry_time)
-        assert signal2 is None, "B&B should be blocked without rollback"
+        # Gap up (favorable for bullish) = valid
+        assert bnb.validate_signal(6020.0) is True
 
 
 class TestTNTResetOnFailure:
@@ -962,109 +1058,103 @@ class TestTNTExitExecution:
 
 
 # ============================================================================
-# TESTS: B&B Exit Execution
+# TESTS: ORB Filter and Confirmation
 # ============================================================================
 
-class TestBnBExitExecution:
-    """Test B&B exit and roll_to_daily wiring."""
+class TestORBFilters:
+    """Test ORB range filter and confirmation delay."""
 
-    def test_bnb_exit_closes_position(self):
-        """B&B 'exit' action triggers broker close."""
-        from src.main import TradingBot
-        import pytz
+    def test_orb_range_too_small(self, tmp_path):
+        """Range < min_range_points results in no signal from set_opening_range()."""
+        from src.core.orb_strategy import ORBStrategy
+        from src.models.bar import Bar
 
-        bot = _make_mock_bot()
-        bot.tag_n_turn_enabled = False
-        bot.orb_enabled = False
-        bot.bnb_enabled = True
-        bot.bnb_strategy = MagicMock()
-
-        bot.bollinger = MagicMock()
-        bot.bollinger.day_open = 6000.0
-        bot.bar_builder = MagicMock()
-        bot.bar_builder.current_bar_start = None
-        bot._current_spx_price = 0
-        bot.broker.get_current_price.return_value = 6000.0
-
-        # Simulate a completed bar triggering B&B exit
-        completed_bar = Bar(
-            timestamp=datetime(2026, 2, 11, 10, 0),
-            open=5990, high=6010, low=5985, close=6005,
+        orb = ORBStrategy(
+            {'enabled': True, 'min_range_points': 8.0},
+            persistence_path=tmp_path / 'orb.json',
         )
-        bot.bar_builder.add_price.return_value = completed_bar
 
-        bot.bnb_strategy.on_bar_complete.return_value = {
-            'action': 'exit',
-            'reason': 'Just Breakfast 30-min exit',
-            'strategy': 'bnb',
-        }
-
-        # Mock portfolio position for B&B
-        mock_slot = MagicMock()
-        mock_slot.position_id = "bnb-trade-001"
-        bot.portfolio.get_positions_by_strategy.return_value = [mock_slot]
-
-        # Mock successful close
-        bot.position_manager.close_trade_by_id = MagicMock(return_value=-50.0)
-        bot.position_manager.recently_closed = []
-        bot._drain_recently_closed = MagicMock()
-
-        tz = pytz.timezone("America/New_York")
-        current_time = datetime(2026, 2, 11, 10, 0, tzinfo=tz)
-        TradingBot._update_market_state(bot, current_time)
-
-        bot.position_manager.close_trade_by_id.assert_called_once_with(
-            "bnb-trade-001", "B&B: Just Breakfast 30-min exit"
+        # Bar with only 5-point range (too small)
+        bar = Bar(
+            timestamp=datetime(2026, 2, 11, 9, 30),
+            open=6000, high=6005, low=6000, close=6004.5,  # 5pt range
         )
-        bot._drain_recently_closed.assert_called_once()
+        result = orb.set_opening_range(bar)
+        assert result is None, "Range < 8.0 should skip"
 
-    def test_bnb_roll_to_daily_no_close(self):
-        """B&B 'roll_to_daily' action should NOT close the position."""
-        from src.main import TradingBot
-        import pytz
+    def test_orb_strong_signal_confirmed_breakout(self, tmp_path):
+        """Strong pulse + price stays beyond ORB level for 3 min = entry."""
+        from src.core.orb_strategy import ORBStrategy, ORBRange
 
-        bot = _make_mock_bot()
-        bot.tag_n_turn_enabled = False
-        bot.orb_enabled = False
-        bot.bnb_enabled = True
-        bot.bnb_strategy = MagicMock()
-
-        bot.bollinger = MagicMock()
-        bot.bollinger.day_open = 6000.0
-        bot.bar_builder = MagicMock()
-        bot.bar_builder.current_bar_start = None
-        bot._current_spx_price = 0
-        bot.broker.get_current_price.return_value = 6000.0
-
-        completed_bar = Bar(
-            timestamp=datetime(2026, 2, 11, 10, 0),
-            open=5990, high=6010, low=5985, close=6005,
+        orb = ORBStrategy(
+            {'enabled': True, 'confirmation_minutes': 3},
+            persistence_path=tmp_path / 'orb.json',
         )
-        bot.bar_builder.add_price.return_value = completed_bar
+        orb.opening_range = ORBRange(
+            date='2026-02-11', high=6010.0, low=5990.0,
+            close=6009.0, range_size=20.0,
+            close_position_pct=95.0, direction_bias='bullish',
+        )
 
-        bot.bnb_strategy.on_bar_complete.return_value = {
-            'action': 'roll_to_daily',
-            'direction': 'bullish',
-            'reason': 'First bar confirms - rolling to daily setup',
-            'strategy': 'bnb',
-        }
+        t0 = datetime(2026, 2, 11, 10, 30)
+        t3 = datetime(2026, 2, 11, 10, 33)
 
-        bot.position_manager.close_trade_by_id = MagicMock()
+        # First: breakout detected, pending confirmation
+        signal = orb.check_breakout(6015.0, t0)
+        assert signal is None
+        assert orb._breakout_pending is not None
 
-        tz = pytz.timezone("America/New_York")
-        current_time = datetime(2026, 2, 11, 10, 0, tzinfo=tz)
-        TradingBot._update_market_state(bot, current_time)
+        # After 3 min, price still above - confirmed
+        signal = orb.check_breakout(6016.0, t3)
+        assert signal is not None
+        assert signal['direction'] == 'bullish'
+        assert orb.triggered_today is True
 
-        # Should NOT close position
-        bot.position_manager.close_trade_by_id.assert_not_called()
-        assert bot.portfolio.daily_realized_pnl == 0.0
+    def test_orb_breakout_retreats_during_confirmation(self, tmp_path):
+        """Strong pulse + breakout + retreat within 3 min = no entry, no retry."""
+        from src.core.orb_strategy import ORBStrategy, ORBRange
 
-        # Should log the roll signal
-        bot._log_signal.assert_called_with("BNB_ROLL_TO_DAILY", {
-            "strategy": "bnb",
-            "direction": "bullish",
-            "reason": "First bar confirms - rolling to daily setup",
-        })
+        orb = ORBStrategy(
+            {'enabled': True, 'confirmation_minutes': 3},
+            persistence_path=tmp_path / 'orb.json',
+        )
+        orb.opening_range = ORBRange(
+            date='2026-02-11', high=6010.0, low=5990.0,
+            close=6009.0, range_size=20.0,
+            close_position_pct=95.0, direction_bias='bullish',
+        )
+
+        t0 = datetime(2026, 2, 11, 10, 30)
+        t3 = datetime(2026, 2, 11, 10, 33)
+
+        # Breakout detected
+        signal = orb.check_breakout(6015.0, t0)
+        assert signal is None
+
+        # After 3 min, price retreated back inside range
+        signal = orb.check_breakout(6005.0, t3)
+        assert signal is None
+        assert orb.triggered_today is True, "Failed confirmation should block retry"
+        assert orb._breakout_pending is None
+
+    def test_orb_no_weak_signals(self, tmp_path):
+        """Close at 30% (old weak zone) results in direction_bias=None."""
+        from src.core.orb_strategy import ORBStrategy
+        from src.models.bar import Bar
+
+        orb = ORBStrategy(
+            {'enabled': True, 'min_range_points': 1.0},
+            persistence_path=tmp_path / 'orb.json',
+        )
+
+        # Bar where close is at 30% of range (used to be "weak" signal)
+        bar = Bar(
+            timestamp=datetime(2026, 2, 11, 9, 30),
+            open=6000, high=6020, low=6000, close=6006,  # 30% position
+        )
+        result = orb.set_opening_range(bar)
+        assert result is not None
+        assert result.direction_bias is None, "30% close should not generate signal (no weak signals)"
 
 
 # ============================================================================

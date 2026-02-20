@@ -810,11 +810,10 @@ class TradingBot:
         """Restore trade counts and daily_pnl from DB (survives mid-day restarts)."""
         try:
             counts = self.db.get_daily_counts_by_strategy(trade_date)
-            # DI + ORB + B&B share the 0DTE slot
+            # DI + ORB share the 0DTE slot (B&B is informational-only)
             self.dte0_trades_today = (
                 counts.get('daily_income', 0)
                 + counts.get('orb', 0)
-                + counts.get('bnb', 0)
             )
             self.tnt_trades_today = counts.get('tag_n_turn', 0)
 
@@ -1270,54 +1269,7 @@ class TradingBot:
 
                 # B&B: Process bar for end-of-day signals (15:00-16:00)
                 if self.bnb_enabled and self.bnb_strategy:
-                    bnb_action = self.bnb_strategy.on_bar_complete(bar, current_price)
-                    if bnb_action:
-                        logger.info(f"B&B ACTION: {bnb_action}")
-                        self.db.log_event("bnb_action", "B&B strategy action", bnb_action)
-
-                        if bnb_action['action'] == 'exit':
-                            # Just Breakfast 30-minute exit
-                            bnb_positions = self.portfolio.get_positions_by_strategy(
-                                StrategyType.BNB
-                            )
-                            if bnb_positions:
-                                trade_id = bnb_positions[0].position_id
-                                realized = self.position_manager.close_trade_by_id(
-                                    trade_id, f"B&B: {bnb_action['reason']}"
-                                )
-                                if realized is not None:
-                                    self._drain_recently_closed()
-                                    logger.info(
-                                        f"B&B trade closed (Just Breakfast), "
-                                        f"P&L: ${realized:+.2f}"
-                                    )
-                                    self._log_signal("BNB_EXIT", {
-                                        "trade_id": trade_id,
-                                        "strategy": "bnb",
-                                        "reason": bnb_action['reason'],
-                                        "exit_price": current_price,
-                                        "pnl": realized,
-                                    })
-                                else:
-                                    logger.warning(
-                                        "B&B exit: close not filled, "
-                                        "generic rules will handle"
-                                    )
-                            else:
-                                logger.warning(
-                                    "B&B exit signal but no B&B position in portfolio"
-                                )
-
-                        elif bnb_action['action'] == 'roll_to_daily':
-                            # First bar confirms -- keep position open, DI generic rules manage it
-                            logger.info(
-                                "B&B rolled to daily: position stays open under DI exit rules"
-                            )
-                            self._log_signal("BNB_ROLL_TO_DAILY", {
-                                "strategy": "bnb",
-                                "direction": bnb_action['direction'],
-                                "reason": bnb_action['reason'],
-                            })
+                    self.bnb_strategy.on_bar_complete(bar, current_price)
 
             # Check parallel strategy tick-level signals (run every cycle, own timing)
             # These execute BEFORE the Daily Income limit gate so they're never
@@ -1417,7 +1369,7 @@ class TradingBot:
                         )
 
             if self.orb_enabled and self.orb_strategy:
-                orb_signal = self.orb_strategy.check_breakout(current_price)
+                orb_signal = self.orb_strategy.check_breakout(current_price, current_time)
                 if orb_signal:
                     logger.info(
                         f"ORB SIGNAL: {orb_signal['direction'].upper()} "
@@ -1449,38 +1401,7 @@ class TradingBot:
                                 f"Already traded {self.dte0_trades_today} 0DTE today")
                         self.orb_strategy.rollback_entry()
 
-            if self.bnb_enabled and self.bnb_strategy:
-                bnb_signal = self.bnb_strategy.check_entry_signal(current_price, current_time)
-                if bnb_signal:
-                    logger.info(
-                        f"B&B ENTRY SIGNAL: {bnb_signal['direction'].upper()} "
-                        f"@ ${current_price:,.2f} (from {bnb_signal['signal_date']})"
-                    )
-                    self.db.log_event("bnb_signal", "B&B entry signal", bnb_signal)
-                    # Execute if 0DTE limit allows and circuit breaker not tripped
-                    if (self._check_daily_loss_circuit_breaker()
-                            and self._check_0dte_limit()):
-                        from src.models.spread import TradeDirection as TD
-                        bnb_dir = TD.BULLISH if bnb_signal['direction'] == 'bullish' else TD.BEARISH
-                        bnb_ok = self._execute_strategy_trade(
-                            strategy_type=StrategyType.BNB,
-                            direction=bnb_dir,
-                            current_price=current_price,
-                            is_0dte=True,
-                            spread_width=5.0,
-                        )
-                        if not bnb_ok:
-                            # Rollback premature state set by check_entry_signal()
-                            self.bnb_strategy.rollback_entry()
-                    else:
-                        # Limit or circuit breaker blocked execution - rollback strategy state
-                        if not self._check_daily_loss_circuit_breaker():
-                            self._record_rejection('bnb', 'circuit_breaker',
-                                f"Daily P&L ${self.portfolio.daily_realized_pnl:.2f} hit limit")
-                        else:
-                            self._record_rejection('bnb', '0dte_limit_reached',
-                                f"Already traded {self.dte0_trades_today} 0DTE today")
-                        self.bnb_strategy.rollback_entry()
+            # B&B is informational-only (no entry) - bias checked in _check_for_setups()
 
         except Exception as e:
             logger.error(f"Error updating market state: {e}", exc_info=True)
@@ -1954,6 +1875,19 @@ class TradingBot:
                     f"(H=${bar.high:.2f} L=${bar.low:.2f} C=${bar.close:.2f}). "
                     f"Entry trigger: price {above_below} ${trigger_price:,.2f}{window_label}"
                 )
+
+                # B&B confluence check (informational only)
+                if self.bnb_enabled and self.bnb_strategy:
+                    bnb_bias = self.bnb_strategy.get_bias()
+                    if bnb_bias:
+                        if self.bnb_strategy.validate_signal(current_price):
+                            di_dir = direction.value  # 'bullish' or 'bearish'
+                            if bnb_bias == di_dir:
+                                logger.info(f"B&B confluence confirmed: {bnb_bias.upper()} bias matches DI")
+                            else:
+                                logger.info(f"B&B divergence warning: {bnb_bias.upper()} bias vs DI {di_dir.upper()}")
+                        else:
+                            logger.info("B&B signal invalidated by morning gap")
             else:
                 logger.debug("No setup detected")
 

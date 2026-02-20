@@ -1,20 +1,21 @@
 """
 ORB (Opening Range Breakout) Strategy - Production Line Trading p.22
 
-Concept: Use the first 30-minute bar's range as entry trigger with relaxed threshold.
+Concept: Use the first 30-minute bar's range as entry trigger with strong-only threshold.
 
 Rules from PDF:
 - Uses first 30-minute bar high-low range
-- More flexible threshold: 10% to 40% (vs strict 10% for main strategy)
-- Good for when you can't watch the screen - set and forget
-- Entry on breakout of opening range
+- Strong threshold only: close in top/bottom 10% of range
+- Minimum range filter: skip days with narrow opening ranges
+- Confirmation delay: breakout must hold for N minutes before entry
+- Entry on confirmed breakout of opening range
 - Can run alongside daily income strategy
 """
 
 import json
 import logging
 from dataclasses import dataclass, asdict
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -30,15 +31,15 @@ class ORBRange:
     close: float
     range_size: float
     close_position_pct: float  # Where close is within range (0-100)
-    direction_bias: Optional[str]  # bullish/bearish/bullish_weak/bearish_weak
+    direction_bias: Optional[str]  # bullish, bearish, or None
 
 
 class ORBStrategy:
     """
     Opening Range Breakout strategy.
 
-    Uses first 30-min bar with relaxed 10-40% threshold.
-    Good for set-and-forget trading.
+    Uses first 30-min bar with strong 10% threshold only.
+    Includes range filter and confirmation delay.
     """
 
     FIRST_BAR_END = time(10, 0)
@@ -54,7 +55,8 @@ class ORBStrategy:
         self.config = config
         self.enabled = config.get('enabled', False)
         self.min_threshold = config.get('min_threshold', 10.0)
-        self.max_threshold = config.get('max_threshold', 40.0)
+        self.min_range_points = config.get('min_range_points', 8.0)
+        self.confirmation_minutes = config.get('confirmation_minutes', 3)
         self.max_contracts_override = config.get('max_contracts_override', 3)
 
         # State
@@ -63,6 +65,7 @@ class ORBStrategy:
         self.position_open = False
         self.entry_price: Optional[float] = None
         self.entry_direction: Optional[str] = None
+        self._breakout_pending: Optional[Dict] = None
 
         # Persistence
         if persistence_path:
@@ -74,7 +77,9 @@ class ORBStrategy:
 
         logger.info(
             f"ORBStrategy initialized: enabled={self.enabled}, "
-            f"threshold={self.min_threshold}-{self.max_threshold}%"
+            f"threshold={self.min_threshold}%, "
+            f"min_range={self.min_range_points}pts, "
+            f"confirmation={self.confirmation_minutes}min"
         )
 
     def _load_state(self):
@@ -94,6 +99,7 @@ class ORBStrategy:
                 self.position_open = data.get('position_open', False)
                 self.entry_price = data.get('entry_price')
                 self.entry_direction = data.get('entry_direction')
+                self._breakout_pending = data.get('breakout_pending')
                 logger.info(f"ORB: State restored for {today}")
 
         except Exception as e:
@@ -109,6 +115,7 @@ class ORBStrategy:
                 'position_open': self.position_open,
                 'entry_price': self.entry_price,
                 'entry_direction': self.entry_direction,
+                'breakout_pending': self._breakout_pending,
             }
             self.persistence_path.parent.mkdir(exist_ok=True)
             self.persistence_path.write_text(json.dumps(data, indent=2))
@@ -129,24 +136,20 @@ class ORBStrategy:
             logger.debug("ORB: First bar has zero range, skipping")
             return None
 
+        if bar_range < self.min_range_points:
+            logger.info(
+                f"ORB: Range too small ({bar_range:.1f} < {self.min_range_points}), skipping"
+            )
+            return None
+
         close_position = (first_bar.close - first_bar.low) / bar_range * 100
 
-        # Check if close is in the threshold zone (bullish or bearish)
+        # Only strong signals: close in top/bottom min_threshold% of range
         direction_bias = None
-
-        # Bullish: close in top portion of range
-        if close_position >= (100 - self.max_threshold):
-            if close_position >= (100 - self.min_threshold):
-                direction_bias = "bullish"  # Strong (top 10%)
-            else:
-                direction_bias = "bullish_weak"  # Relaxed (10-40%)
-
-        # Bearish: close in bottom portion of range
-        elif close_position <= self.max_threshold:
-            if close_position <= self.min_threshold:
-                direction_bias = "bearish"  # Strong (bottom 10%)
-            else:
-                direction_bias = "bearish_weak"  # Relaxed (10-40%)
+        if close_position >= (100 - self.min_threshold):
+            direction_bias = "bullish"
+        elif close_position <= self.min_threshold:
+            direction_bias = "bearish"
 
         self.opening_range = ORBRange(
             date=first_bar.timestamp.strftime('%Y-%m-%d'),
@@ -161,11 +164,10 @@ class ORBStrategy:
         self._save_state()
 
         if direction_bias:
-            strength = "STRONG" if direction_bias in ('bullish', 'bearish') else "WEAK"
             logger.info(
                 f"ORB: Opening range set - High=${first_bar.high:.2f}, "
                 f"Low=${first_bar.low:.2f}, Close={close_position:.1f}%, "
-                f"Bias={direction_bias.upper()} ({strength})"
+                f"Bias={direction_bias.upper()}"
             )
         else:
             logger.info(
@@ -175,11 +177,12 @@ class ORBStrategy:
 
         return self.opening_range
 
-    def check_breakout(self, current_price: float) -> Optional[Dict]:
+    def check_breakout(self, current_price: float, current_time: datetime) -> Optional[Dict]:
         """
         Check if price has broken out of the opening range.
 
-        Only triggers once per day.
+        Uses confirmation delay: breakout must hold for confirmation_minutes
+        before firing. Only triggers once per day.
         """
         if not self.enabled or not self.opening_range or self.triggered_today:
             return None
@@ -190,55 +193,87 @@ class ORBStrategy:
         if not orb.direction_bias:
             return None
 
-        # Bullish breakout: price breaks above opening range high
-        if 'bullish' in orb.direction_bias and current_price > orb.high:
-            self.triggered_today = True
-            self.position_open = True
-            self.entry_price = current_price
-            self.entry_direction = 'bullish'
-            self._save_state()
+        # Check for pending breakout confirmation
+        if self._breakout_pending:
+            elapsed = (current_time - datetime.fromisoformat(self._breakout_pending['trigger_time']))
+            if hasattr(elapsed, 'total_seconds'):
+                elapsed_minutes = elapsed.total_seconds() / 60
+            else:
+                elapsed_minutes = 0
 
-            logger.info(
-                f"ORB BREAKOUT: BULLISH - Price ${current_price:,.2f} > "
-                f"ORB high ${orb.high:.2f}"
-            )
+            if elapsed_minutes >= self.confirmation_minutes:
+                # Check if price still beyond breakout level
+                direction = self._breakout_pending['direction']
+                if direction == 'bullish' and current_price > orb.high:
+                    return self._fire_breakout(direction, current_price)
+                elif direction == 'bearish' and current_price < orb.low:
+                    return self._fire_breakout(direction, current_price)
+                else:
+                    # Price retreated - cancel breakout
+                    logger.info("ORB: Breakout failed confirmation")
+                    self._breakout_pending = None
+                    self.triggered_today = True
+                    self._save_state()
+                    return None
+            else:
+                # Still waiting for confirmation
+                return None
 
-            return {
-                "strategy": "orb",
-                "action": "enter",
-                "direction": "bullish",
-                "entry_price": current_price,
-                "opening_range_high": orb.high,
-                "opening_range_low": orb.low,
-                "bias_strength": "strong" if orb.direction_bias == "bullish" else "weak",
-                "trigger": f"Break above ORB high ${orb.high:.2f}"
+        # No pending breakout - check for new breakout
+        if orb.direction_bias == 'bullish' and current_price > orb.high:
+            self._breakout_pending = {
+                'direction': 'bullish',
+                'trigger_time': current_time.isoformat(),
+                'trigger_price': current_price,
             }
-
-        # Bearish breakout: price breaks below opening range low
-        if 'bearish' in orb.direction_bias and current_price < orb.low:
-            self.triggered_today = True
-            self.position_open = True
-            self.entry_price = current_price
-            self.entry_direction = 'bearish'
             self._save_state()
-
             logger.info(
-                f"ORB BREAKOUT: BEARISH - Price ${current_price:,.2f} < "
-                f"ORB low ${orb.low:.2f}"
+                f"ORB: Bullish breakout pending confirmation "
+                f"(${current_price:,.2f} > ${orb.high:.2f})"
             )
+            return None
 
-            return {
-                "strategy": "orb",
-                "action": "enter",
-                "direction": "bearish",
-                "entry_price": current_price,
-                "opening_range_high": orb.high,
-                "opening_range_low": orb.low,
-                "bias_strength": "strong" if orb.direction_bias == "bearish" else "weak",
-                "trigger": f"Break below ORB low ${orb.low:.2f}"
+        if orb.direction_bias == 'bearish' and current_price < orb.low:
+            self._breakout_pending = {
+                'direction': 'bearish',
+                'trigger_time': current_time.isoformat(),
+                'trigger_price': current_price,
             }
+            self._save_state()
+            logger.info(
+                f"ORB: Bearish breakout pending confirmation "
+                f"(${current_price:,.2f} < ${orb.low:.2f})"
+            )
+            return None
 
         return None
+
+    def _fire_breakout(self, direction: str, current_price: float) -> Dict:
+        """Fire confirmed breakout signal."""
+        orb = self.opening_range
+        self.triggered_today = True
+        self.position_open = True
+        self.entry_price = current_price
+        self.entry_direction = direction
+        self._breakout_pending = None
+        self._save_state()
+
+        level = "high" if direction == "bullish" else "low"
+        level_price = orb.high if direction == "bullish" else orb.low
+        logger.info(
+            f"ORB BREAKOUT: {direction.upper()} - Price ${current_price:,.2f} "
+            f"confirmed beyond ORB {level} ${level_price:.2f}"
+        )
+
+        return {
+            "strategy": "orb",
+            "action": "enter",
+            "direction": direction,
+            "entry_price": current_price,
+            "opening_range_high": orb.high,
+            "opening_range_low": orb.low,
+            "trigger": f"Break {'above' if direction == 'bullish' else 'below'} ORB {level} ${level_price:.2f}"
+        }
 
     def rollback_entry(self):
         """Rollback premature state changes when trade execution fails.
@@ -252,6 +287,7 @@ class ORBStrategy:
         self.position_open = False
         self.entry_price = None
         self.entry_direction = None
+        self._breakout_pending = None
         self._save_state()
         logger.info("ORB: Entry rolled back (execution failed), will retry on next tick")
 
@@ -280,6 +316,7 @@ class ORBStrategy:
         self.position_open = False
         self.entry_price = None
         self.entry_direction = None
+        self._breakout_pending = None
         self._save_state()
         logger.debug("ORB: Daily reset")
 

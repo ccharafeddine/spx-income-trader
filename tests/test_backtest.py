@@ -554,7 +554,7 @@ class TestMultiStrategyEngine:
     def test_orb_processes_first_bar(self):
         """ORB should set opening range from first bar when enabled."""
         engine = self._make_engine(strategies={
-            'orb': {'enabled': True, 'min_threshold': 10.0, 'max_threshold': 40.0},
+            'orb': {'enabled': True, 'min_threshold': 10.0},
         })
 
         results = engine.run()
@@ -665,7 +665,8 @@ class TestMultiStrategyEngine:
 
         orb = engine._orb_strat
         assert orb.min_threshold == 10.0
-        assert orb.max_threshold == 40.0
+        assert orb.min_range_points == 8.0
+        assert orb.confirmation_minutes == 3
         assert orb.max_contracts_override == 3
 
 

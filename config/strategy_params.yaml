@@ -179,30 +179,26 @@ tag_n_turn:
   max_dte: 7
 
 # B&B (Bed & Breakfast) Strategy - Production Line Trading p.23-25
-# Includes Just Breakfast (p.26)
-# Detects end-of-day pulse setups for next-day morning entry
+# Detects end-of-day pulse setups as directional confluence for DI
 bnb:
-  enabled: true  # Enable when ready to test
+  enabled: false
 
   # Pulse bar detection threshold
   pulse_threshold: 10.0
-
-  # Position sizing
-  max_contracts_override: 3
-
-  # Just Breakfast settings
-  # If first bar of next day confirms signal direction, roll into daily setup
-  aggressive_roll: true
+  # Gap invalidation: if market gaps > N% against signal, invalidate
+  gap_invalidation_pct: 0.3
 
 # ORB (Opening Range Breakout) Strategy - Production Line Trading p.22
-# Uses first 30-min bar range with relaxed thresholds
-# Good for set-and-forget trading
+# Uses first 30-min bar range with strong-only threshold
 orb:
-  enabled: true  # Enable when ready to test
+  enabled: false
 
-  # Threshold range (more flexible than strict 10%)
-  min_threshold: 10.0  # Strong signal threshold
-  max_threshold: 40.0  # Relaxed signal threshold
+  # Strong signal threshold (close in top/bottom N% of range)
+  min_threshold: 10.0
+  # Minimum opening range size in points (skip narrow days)
+  min_range_points: 8.0
+  # Minutes breakout must hold before entry
+  confirmation_minutes: 3
 
   # Position sizing
   max_contracts_override: 3

@@ -293,8 +293,7 @@ class BacktestEngine:
             cfg = {
                 'enabled': True,
                 'pulse_threshold': bnb_cfg.get('pulse_threshold', 10.0),
-                'max_contracts_override': bnb_cfg.get('max_contracts_override', 3),
-                'aggressive_roll': bnb_cfg.get('aggressive_roll', True),
+                'gap_invalidation_pct': bnb_cfg.get('gap_invalidation_pct', 0.3),
             }
             self._bnb_strat = BnBStrategy(cfg, persistence_path=tmp / 'bnb.json')
 
@@ -306,7 +305,8 @@ class BacktestEngine:
             cfg = {
                 'enabled': True,
                 'min_threshold': orb_cfg.get('min_threshold', 10.0),
-                'max_threshold': orb_cfg.get('max_threshold', 40.0),
+                'min_range_points': orb_cfg.get('min_range_points', 8.0),
+                'confirmation_minutes': orb_cfg.get('confirmation_minutes', 3),
                 'max_contracts_override': orb_cfg.get('max_contracts_override', 3),
             }
             self._orb_strat = ORBStrategy(cfg, persistence_path=tmp / 'orb.json')
@@ -465,11 +465,8 @@ class BacktestEngine:
                     self._orb_strat.set_opening_range(bar)
 
             # B&B: Process bars for end-of-day signals (15:00-16:00)
-            # and Just Breakfast exit checks
             if self._bnb_enabled and self._bnb_strat:
-                bnb_action = self._bnb_strat.on_bar_complete(bar, bar.close)
-                if bnb_action:
-                    self._handle_bnb_action(bnb_action, bar, bar_dt, vix)
+                self._bnb_strat.on_bar_complete(bar, bar.close)
 
             if self._circuit_breaker_tripped:
                 continue
@@ -484,24 +481,12 @@ class BacktestEngine:
                 if tnt_signal:
                     self._execute_tnt_entry(bar, bar_dt, tnt_signal, vix)
 
-            # 0DTE slot: B&B -> ORB -> DI (priority order matches live bot)
+            # 0DTE slot: ORB -> DI (B&B is informational-only, no entry)
             if self._0dte_trades_today < 1 and not self._0dte_trade:
-                # B&B entry (overnight signal, 9:30-10:00)
-                if self._bnb_enabled and self._bnb_strat:
-                    bnb_signal = self._bnb_strat.check_entry_signal(bar.close, bar_dt)
-                    if bnb_signal:
-                        ok = self._execute_0dte_entry(
-                            bar, bar_dt, bnb_signal['direction'], vix,
-                            strategy_type='bnb',
-                            quantity=self._bnb_strat.max_contracts_override,
-                        )
-                        if not ok:
-                            self._bnb_strat.rollback_entry()
-
                 # ORB breakout
                 if (self._orb_enabled and self._orb_strat
                         and not self._0dte_trade):
-                    orb_signal = self._orb_strat.check_breakout(bar.close)
+                    orb_signal = self._orb_strat.check_breakout(bar.close, bar_dt)
                     if orb_signal:
                         ok = self._execute_0dte_entry(
                             bar, bar_dt, orb_signal['direction'], vix,
@@ -857,30 +842,6 @@ class BacktestEngine:
         if tnt_exit:
             reason = tnt_exit.get('reason', 'unknown')
             self._close_tnt_position(trade, bar, bar_dt, reason, current_value)
-
-    # ------------------------------------------------------------------
-    # B&B action handling
-    # ------------------------------------------------------------------
-
-    def _handle_bnb_action(self, action: Dict, bar: Bar, bar_dt: datetime, vix: float):
-        """Handle B&B actions (exit or roll_to_daily) from on_bar_complete."""
-        if not self._0dte_trade or self._0dte_strategy_type != 'bnb':
-            return
-
-        act = action.get('action')
-        if act == 'exit':
-            # Just Breakfast 30-min exit
-            current_value = self.broker.get_position_value(self._0dte_trade.spread)
-            self._close_0dte_position(
-                self._0dte_trade, bar, bar_dt,
-                'Just Breakfast 30-min exit', current_value,
-            )
-        elif act == 'roll_to_daily':
-            # Roll to DI: keep position, switch strategy type so DI exit logic applies
-            self._0dte_strategy_type = 'daily_income'
-            logger.debug(
-                f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} B&B rolled to Daily Income"
-            )
 
     # ------------------------------------------------------------------
     # Position closing
