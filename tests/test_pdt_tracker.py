@@ -139,9 +139,10 @@ class TestRollingWindowCounting:
 
     def test_single_day_trade(self, tracker):
         """One day trade should be counted."""
-        tracker.record_day_trade('trade1', date.today(), 'profit_target')
-        assert tracker.get_day_trades_count() == 1
-        assert tracker.get_remaining_day_trades() == 2
+        today = date.today()
+        tracker.record_day_trade('trade1', today, 'profit_target')
+        assert tracker.get_day_trades_count(from_date=today) == 1
+        assert tracker.get_remaining_day_trades(from_date=today) == 2
 
     def test_multiple_day_trades(self, tracker):
         """Multiple day trades should all be counted."""
@@ -150,8 +151,8 @@ class TestRollingWindowCounting:
         tracker.record_day_trade('trade2', today, 'early exit')
         tracker.record_day_trade('trade3', today, 'stop loss')
 
-        assert tracker.get_day_trades_count() == 3
-        assert tracker.get_remaining_day_trades() == 0
+        assert tracker.get_day_trades_count(from_date=today) == 3
+        assert tracker.get_remaining_day_trades(from_date=today) == 0
 
     def test_duplicate_trade_id_ignored(self, tracker):
         """Same trade_id should only be counted once."""
@@ -159,7 +160,7 @@ class TestRollingWindowCounting:
         tracker.record_day_trade('trade1', today, 'profit_target')
         tracker.record_day_trade('trade1', today, 'profit_target')  # Duplicate
 
-        assert tracker.get_day_trades_count() == 1
+        assert tracker.get_day_trades_count(from_date=today) == 1
 
     def test_trades_outside_window_not_counted(self, tracker):
         """Trades older than 5 business days should not count."""
@@ -169,7 +170,7 @@ class TestRollingWindowCounting:
         tracker.record_day_trade('old_trade', old_date, 'profit_target')
         tracker.record_day_trade('new_trade', today, 'profit_target')
 
-        assert tracker.get_day_trades_count() == 1  # Only new_trade counts
+        assert tracker.get_day_trades_count(from_date=today) == 1  # Only new_trade counts
 
     def test_window_boundary_trade_counted(self, tracker):
         """Trade exactly at window start should be counted.
