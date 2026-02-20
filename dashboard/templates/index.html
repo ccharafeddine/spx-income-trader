@@ -2066,6 +2066,67 @@ header::after {
   line-height: 1.5;
 }
 
+/* Experimental strategies section */
+.experimental-section {
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.experimental-section:hover {
+  opacity: 1;
+}
+.experimental-title {
+  color: var(--text-dim) !important;
+}
+.experimental-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.experimental-note {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+  margin-top: 8px;
+  opacity: 0.8;
+}
+.info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--text-dim);
+  font-size: 10px;
+  color: var(--text-dim);
+  cursor: help;
+  flex-shrink: 0;
+  position: relative;
+}
+.info-icon:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+.info-icon:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: -8px;
+  width: 240px;
+  padding: 10px 12px;
+  background: #1a2332;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 400;
+  color: var(--text);
+  line-height: 1.5;
+  z-index: 100;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+
 /* Toggle switch */
 .switch {
   position: relative;
@@ -2346,20 +2407,6 @@ header::after {
           <span class="slider-toggle"></span>
         </label>
       </div>
-      <div class="setting-row">
-        <label>B&B</label>
-        <label class="switch">
-          <input type="checkbox" id="set-bnb" onchange="updateSetting('bnb.enabled', this.checked)">
-          <span class="slider-toggle"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <label>ORB</label>
-        <label class="switch">
-          <input type="checkbox" id="set-orb" onchange="updateSetting('orb.enabled', this.checked)">
-          <span class="slider-toggle"></span>
-        </label>
-      </div>
     </div>
 
     <!-- 1pm Management -->
@@ -2482,20 +2529,24 @@ header::after {
       </div>
     </div>
 
-    <!-- B&B Options -->
-    <div class="settings-section">
-      <div class="section-title">B&B Options</div>
+    <!-- Experimental Strategies -->
+    <div class="settings-section experimental-section">
+      <div class="section-title experimental-title">Experimental Strategies</div>
       <div class="setting-row">
-        <label>Aggressive Roll</label>
+        <label class="experimental-label">B&B <span class="info-icon" data-tooltip="Bed &amp; Breakfast &#8212; Detects end-of-day momentum signals and provides directional bias for next-day Daily Income setups. Does not enter trades independently.">?</span></label>
         <label class="switch">
-          <input type="checkbox" id="set-bnb-roll"
-                 onchange="updateSetting('bnb.aggressive_roll', this.checked)">
+          <input type="checkbox" id="set-bnb" onchange="updateSetting('bnb.enabled', this.checked)">
           <span class="slider-toggle"></span>
         </label>
       </div>
-      <div class="setting-description">
-        If first bar confirms B&B direction, roll into daily income trade instead of exiting at 10:00
+      <div class="setting-row">
+        <label class="experimental-label">ORB <span class="info-icon" data-tooltip="Opening Range Breakout &#8212; Trades strong first-bar breakouts with range and confirmation filters. Independent 0DTE strategy, shares position slot with Daily Income.">?</span></label>
+        <label class="switch">
+          <input type="checkbox" id="set-orb" onchange="updateSetting('orb.enabled', this.checked)">
+          <span class="slider-toggle"></span>
+        </label>
       </div>
+      <div class="experimental-note">These strategies are under development and disabled by default.</div>
     </div>
 
     <!-- Schwab Re-Auth Section (hidden unless schwab is active broker) -->
@@ -5786,9 +5837,6 @@ async function loadCurrentSettings() {
   const profitTarget = data.strategy?.profit_target_pct ?? 80;
   document.getElementById('set-profit-target').value = profitTarget;
   document.getElementById('profit-target-val').textContent = profitTarget + '%';
-
-  // B&B options
-  document.getElementById('set-bnb-roll').checked = data.bnb?.aggressive_roll ?? true;
 
   // Schwab section: show if schwab is active broker
   const activeBroker = data.broker?.active || 'dry_run';
