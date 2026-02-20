@@ -310,21 +310,24 @@ class YahooFinanceProvider:
             ticker = yf.Ticker(self.SPX_SYMBOL)
             hist = ticker.history(period=period, interval=interval, timeout=5)
 
-            if hist.empty:
+            if hist is None or hist.empty:
                 # Cache empty result briefly (30s) to avoid hammering Yahoo
                 self._cache[cache_key] = (now, None)
                 return None
 
             bars = []
             for idx, row in hist.iterrows():
-                bars.append({
-                    'timestamp': idx.to_pydatetime(),
-                    'open': float(row['Open']),
-                    'high': float(row['High']),
-                    'low': float(row['Low']),
-                    'close': float(row['Close']),
-                    'volume': int(row['Volume'])
-                })
+                try:
+                    bars.append({
+                        'timestamp': idx.to_pydatetime(),
+                        'open': float(row['Open']),
+                        'high': float(row['High']),
+                        'low': float(row['Low']),
+                        'close': float(row['Close']),
+                        'volume': int(row.get('Volume', 0))
+                    })
+                except (KeyError, TypeError, ValueError):
+                    continue  # Skip malformed rows
 
             self._cache[cache_key] = (now, bars)
             return bars

@@ -103,6 +103,9 @@ def setup_logging(log_file: str, log_level: str = "INFO"):
     json_handler.setFormatter(JSONFormatter())
     logger.addHandler(json_handler)
 
+    # Suppress werkzeug HTTP request logs (floods log files, ~10 lines/sec from dashboard polling)
+    logging.getLogger('werkzeug').setLevel(logging.WARNING)
+
     logger.info("=" * 60)
     logger.info("Logging initialized")
     logger.info(f"Log file: {log_file}")
