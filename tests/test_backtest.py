@@ -667,3 +667,114 @@ class TestMultiStrategyEngine:
         assert orb.min_threshold == 10.0
         assert orb.max_threshold == 40.0
         assert orb.max_contracts_override == 3
+
+
+# ---------------------------------------------------------------
+# Equity-Balance Consistency Tests (regression for /100 bug)
+# ---------------------------------------------------------------
+
+class TestEquityBalanceConsistency:
+    """Verify broker balance stays consistent with daily P&L sums."""
+
+    def test_final_capital_matches_daily_pnl_sum(self):
+        """final_capital must equal initial_capital + sum(daily_pnl)."""
+        from src.backtest.data_loader import load_bars_from_csv
+        from src.backtest.engine import BacktestEngine
+
+        bars_df = load_bars_from_csv(FIXTURE_CSV)
+        vix_daily = {
+            date(2024, 1, 2): 14.5,
+            date(2024, 1, 3): 14.2,
+            date(2024, 1, 4): 15.1,
+            date(2024, 1, 5): 13.8,
+            date(2024, 1, 8): 14.6,
+        }
+
+        engine = BacktestEngine(
+            bars_df=bars_df,
+            vix_daily=vix_daily,
+            initial_capital=50000,
+            pulse_threshold=10.0,
+            spread_width=5.0,
+            profit_target_pct=80.0,
+            min_credit=0.50,
+            max_contracts=1,
+            slippage=0.02,
+        )
+
+        results = engine.run()
+        daily_pnl_sum = sum(dr['pnl'] for dr in results['daily_results'])
+        expected_final = results['initial_capital'] + daily_pnl_sum
+
+        # Allow small slippage tolerance ($1) for rounding
+        assert abs(results['final_capital'] - expected_final) < 1.0, (
+            f"final_capital={results['final_capital']:.2f} != "
+            f"initial({results['initial_capital']:.2f}) + sum(pnl)({daily_pnl_sum:.2f}) "
+            f"= {expected_final:.2f}"
+        )
+
+    def test_equity_curve_matches_daily_pnl(self):
+        """Each equity curve point should equal initial + cumulative P&L."""
+        from src.backtest.data_loader import load_bars_from_csv
+        from src.backtest.engine import BacktestEngine
+
+        bars_df = load_bars_from_csv(FIXTURE_CSV)
+        engine = BacktestEngine(
+            bars_df=bars_df,
+            vix_daily={},
+            initial_capital=50000,
+            min_credit=0.50,
+            slippage=0.02,
+        )
+
+        results = engine.run()
+        running = results['initial_capital']
+        for i, ec in enumerate(results['equity_curve']):
+            running += results['daily_results'][i]['pnl']
+            assert abs(ec['equity'] - running) < 1.0, (
+                f"Day {i}: equity_curve={ec['equity']:.2f} != running={running:.2f}"
+            )
+
+
+# ---------------------------------------------------------------
+# Monthly Return Percentage Tests
+# ---------------------------------------------------------------
+
+class TestMonthlyReturnPct:
+    """Verify monthly return_pct uses start-of-month equity."""
+
+    def test_multi_month_uses_start_of_month_equity(self):
+        """Monthly return_pct should divide by start-of-month equity, not initial capital."""
+        from src.backtest.report import _compute_monthly_returns
+
+        # Simulate: Jan +$5000, Feb -$2000 on $10,000 initial
+        daily_results = [
+            {'date': '2024-01-15', 'pnl': 5000.0},
+            {'date': '2024-02-15', 'pnl': -2000.0},
+        ]
+
+        rows = _compute_monthly_returns(daily_results, initial_capital=10000.0)
+
+        assert len(rows) == 2
+        # Jan: 5000/10000 = 50%
+        assert rows[0]['return_pct'] == 50.0
+        # Feb: -2000/15000 (start-of-month equity) = -13.33%
+        assert abs(rows[1]['return_pct'] - (-13.33)) < 0.01
+
+    def test_single_month_equals_initial_capital_division(self):
+        """With only one month, start-of-month equity == initial capital."""
+        from src.backtest.report import _compute_monthly_returns
+
+        daily_results = [
+            {'date': '2024-01-02', 'pnl': 150.0},
+            {'date': '2024-01-03', 'pnl': -250.0},
+            {'date': '2024-01-04', 'pnl': 120.0},
+            {'date': '2024-01-05', 'pnl': 200.0},
+        ]
+
+        rows = _compute_monthly_returns(daily_results, initial_capital=50000.0)
+
+        assert len(rows) == 1
+        assert rows[0]['pnl'] == 220.0
+        # 220/50000 = 0.44%
+        assert abs(rows[0]['return_pct'] - 0.44) < 0.01

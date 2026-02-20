@@ -911,8 +911,10 @@ class BacktestEngine:
         trade.pnl_percent = (final_pnl / max_profit * 100) if max_profit > 0 else 0
 
         # Update balance for expiration P&L
+        # max_profit and profit_at_price() both return dollar values (multiplier baked in),
+        # so the difference is already in dollars -- no /100 conversion needed.
         if final_pnl < trade.spread.max_profit * trade.quantity:
-            itm_cost = (trade.spread.max_profit * trade.quantity - final_pnl) / 100
+            itm_cost = trade.spread.max_profit * trade.quantity - final_pnl
             self.broker.balance -= itm_cost
 
         self._daily_pnl += final_pnl

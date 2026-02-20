@@ -323,7 +323,11 @@ def _compute_drawdown_series(equity_curve: List[Dict], initial_capital: float) -
 
 
 def _compute_monthly_returns(daily_results: List[Dict], initial_capital: float) -> List[Dict]:
-    """Compute monthly returns grid (year x month)."""
+    """Compute monthly returns grid (year x month).
+
+    return_pct is relative to start-of-month equity (not initial capital),
+    so a -$3,690 loss on a $100k account shows ~-3.7%, not -24.6%.
+    """
     monthly = defaultdict(float)
 
     for dr in daily_results:
@@ -332,13 +336,17 @@ def _compute_monthly_returns(daily_results: List[Dict], initial_capital: float) 
         monthly[key] += dr['pnl']
 
     rows = []
+    running_equity = initial_capital
     for (year, month), pnl in sorted(monthly.items()):
+        start_equity = running_equity
+        pct = round((pnl / start_equity) * 100, 2) if start_equity > 0 else 0
         rows.append({
             'year': year,
             'month': month,
             'pnl': round(pnl, 2),
-            'return_pct': round((pnl / initial_capital) * 100, 2),
+            'return_pct': pct,
         })
+        running_equity += pnl
 
     return rows
 

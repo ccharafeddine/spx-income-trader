@@ -3374,7 +3374,10 @@ def _analytics_by_direction(trades):
 
 
 def _analytics_monthly(daily_pnl, starting_capital):
-    """Monthly returns grid from daily P&L map."""
+    """Monthly returns grid from daily P&L map.
+
+    return_pct is relative to start-of-month equity, not initial capital.
+    """
     monthly = defaultdict(float)
     for day_str, pnl in daily_pnl.items():
         try:
@@ -3383,15 +3386,20 @@ def _analytics_monthly(daily_pnl, starting_capital):
         except (ValueError, TypeError):
             continue
 
-    return [
-        {
+    rows = []
+    running_equity = starting_capital
+    for (year, month), pnl in sorted(monthly.items()):
+        start_equity = running_equity
+        pct = round((pnl / start_equity) * 100, 2) if start_equity > 0 else 0
+        rows.append({
             'year': year,
             'month': month,
             'pnl': round(pnl, 2),
-            'return_pct': round((pnl / starting_capital) * 100, 2) if starting_capital > 0 else 0,
-        }
-        for (year, month), pnl in sorted(monthly.items())
-    ]
+            'return_pct': pct,
+        })
+        running_equity += pnl
+
+    return rows
 
 
 def _analytics_rolling(equity_curve):
