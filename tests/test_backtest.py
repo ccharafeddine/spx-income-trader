@@ -740,6 +740,192 @@ class TestEquityBalanceConsistency:
 # Monthly Return Percentage Tests
 # ---------------------------------------------------------------
 
+class TestVIXAwareSlippage:
+    """Tests for VIX-aware slippage model in BacktestBroker."""
+
+    def test_flat_slippage_backward_compat(self):
+        """Explicit slippage=0.02 should use flat model, not VIX."""
+        from src.backtest.sim_broker import BacktestBroker
+        broker = BacktestBroker(initial_capital=50000, slippage=0.02)
+        broker.set_market_state(
+            price=5000.0, bar_high=5010.0, bar_low=4990.0,
+            vix=30.0, dt=ET.localize(datetime(2024, 1, 2, 10, 0)),
+        )
+        # Even at VIX=30, flat override should give 0.02
+        assert broker._get_slippage() == 0.02
+
+    def test_vix_model_low_vix(self):
+        """VIX < 15 should give $0.10 total slippage ($0.05/leg * 2)."""
+        from src.backtest.sim_broker import BacktestBroker
+        broker = BacktestBroker(initial_capital=50000, slippage=None)
+        broker.set_market_state(
+            price=5000.0, bar_high=5010.0, bar_low=4990.0,
+            vix=12.0, dt=ET.localize(datetime(2024, 1, 2, 10, 0)),
+        )
+        assert broker._get_slippage() == 0.10
+
+    def test_vix_model_high_vix(self):
+        """VIX > 30 should give $0.40 total slippage ($0.20/leg * 2)."""
+        from src.backtest.sim_broker import BacktestBroker
+        broker = BacktestBroker(initial_capital=50000, slippage=None)
+        broker.set_market_state(
+            price=5000.0, bar_high=5010.0, bar_low=4990.0,
+            vix=35.0, dt=ET.localize(datetime(2024, 1, 2, 10, 0)),
+        )
+        assert broker._get_slippage() == 0.40
+
+    def test_vix_model_normal_vix(self):
+        """VIX 15-20 should give $0.16 total slippage ($0.08/leg * 2)."""
+        from src.backtest.sim_broker import BacktestBroker
+        broker = BacktestBroker(initial_capital=50000, slippage=None)
+        broker.set_market_state(
+            price=5000.0, bar_high=5010.0, bar_low=4990.0,
+            vix=18.0, dt=ET.localize(datetime(2024, 1, 2, 10, 0)),
+        )
+        assert broker._get_slippage() == 0.16
+
+    def test_vix_model_elevated_vix(self):
+        """VIX 20-30 should give $0.24 total slippage ($0.12/leg * 2)."""
+        from src.backtest.sim_broker import BacktestBroker
+        broker = BacktestBroker(initial_capital=50000, slippage=None)
+        broker.set_market_state(
+            price=5000.0, bar_high=5010.0, bar_low=4990.0,
+            vix=25.0, dt=ET.localize(datetime(2024, 1, 2, 10, 0)),
+        )
+        assert broker._get_slippage() == 0.24
+
+    def test_slippage_applied_both_legs_on_entry(self):
+        """Entry fill should subtract total slippage (per-leg * 2)."""
+        from src.backtest.sim_broker import BacktestBroker
+        from src.models.spread import CreditSpread, OptionLeg, TradeDirection
+
+        broker = BacktestBroker(initial_capital=50000, slippage=None)
+        broker.set_market_state(
+            price=5000.0, bar_high=5010.0, bar_low=4990.0,
+            vix=12.0,  # $0.05/leg -> $0.10 total
+            dt=ET.localize(datetime(2024, 1, 2, 10, 0)),
+        )
+        spread = CreditSpread(
+            direction=TradeDirection.BULLISH,
+            short_leg=OptionLeg(strike=5000, option_type='put', action='sell', price=2.50),
+            long_leg=OptionLeg(strike=4995, option_type='put', action='buy', price=1.00),
+            credit_received=1.50,
+            entry_time=ET.localize(datetime(2024, 1, 2, 10, 0)),
+            expiration=ET.localize(datetime(2024, 1, 2, 16, 0)),
+            underlying_price_at_entry=5000.0,
+        )
+        order_id = broker.place_spread_order(spread, 1)
+        status = broker.get_order_status(order_id)
+        # 1.50 - (0.05*2) = 1.40
+        assert abs(status['fill_price'] - 1.40) < 0.01
+
+    def test_default_slippage_is_none(self):
+        """BacktestBroker() with no slippage arg should default to VIX model."""
+        from src.backtest.sim_broker import BacktestBroker
+        broker = BacktestBroker(initial_capital=50000)
+        assert broker._flat_slippage is None
+
+
+class TestNYSEHalfDays:
+    """Tests for NYSE half-day calendar."""
+
+    def test_black_friday_2024(self):
+        """Black Friday 2024 (Nov 29) should be a half-day."""
+        from src.backtest.engine import _nyse_half_days
+        half_days = _nyse_half_days(2024)
+        assert date(2024, 11, 29) in half_days
+
+    def test_christmas_eve_2024(self):
+        """Christmas Eve 2024 (Tue) should be a half-day."""
+        from src.backtest.engine import _nyse_half_days
+        half_days = _nyse_half_days(2024)
+        assert date(2024, 12, 24) in half_days
+
+    def test_july_3_2024(self):
+        """Jul 3, 2024 (Wed, day before Jul 4 Thu) should be a half-day."""
+        from src.backtest.engine import _nyse_half_days
+        half_days = _nyse_half_days(2024)
+        assert date(2024, 7, 3) in half_days
+
+    def test_christmas_eve_saturday_not_half_day(self):
+        """Christmas Eve on Saturday should not be a half-day."""
+        from src.backtest.engine import _nyse_half_days
+        # 2022: Dec 24 is Saturday
+        half_days = _nyse_half_days(2022)
+        assert date(2022, 12, 24) not in half_days
+
+    def test_2025_half_days(self):
+        """Verify 2025 half-days."""
+        from src.backtest.engine import _nyse_half_days
+        half_days = _nyse_half_days(2025)
+        # Jul 3 2025 is Thursday (Jul 4 is Friday)
+        assert date(2025, 7, 3) in half_days
+        # Black Friday 2025 = Nov 28
+        assert date(2025, 11, 28) in half_days
+        # Dec 24 2025 is Wednesday
+        assert date(2025, 12, 24) in half_days
+
+
+class TestCreditFlagging:
+    """Tests for unusual credit flagging counter."""
+
+    def test_flagged_count_in_results(self):
+        """Engine results should include flagged_credit_count."""
+        from src.backtest.data_loader import load_bars_from_csv
+        from src.backtest.engine import BacktestEngine
+
+        bars_df = load_bars_from_csv(FIXTURE_CSV)
+        engine = BacktestEngine(
+            bars_df=bars_df,
+            vix_daily={},
+            initial_capital=50000,
+            min_credit=0.50,
+            slippage=0.02,
+        )
+        results = engine.run()
+        assert 'flagged_credit_count' in results
+        assert isinstance(results['flagged_credit_count'], int)
+
+    def test_metadata_keys_in_results(self):
+        """Engine results should include slippage_model and half_day_calendar."""
+        from src.backtest.data_loader import load_bars_from_csv
+        from src.backtest.engine import BacktestEngine
+
+        bars_df = load_bars_from_csv(FIXTURE_CSV)
+        engine = BacktestEngine(
+            bars_df=bars_df,
+            vix_daily={},
+            initial_capital=50000,
+            slippage=None,
+        )
+        results = engine.run()
+        assert results['slippage_model'] == 'vix_aware'
+        assert results['half_day_calendar'] is True
+        assert 'slippage_detail' in results
+
+    def test_assumptions_in_report(self):
+        """Report should include assumptions section from engine metadata."""
+        from src.backtest.data_loader import load_bars_from_csv
+        from src.backtest.engine import BacktestEngine
+        from src.backtest.report import generate_report
+
+        bars_df = load_bars_from_csv(FIXTURE_CSV)
+        engine = BacktestEngine(
+            bars_df=bars_df,
+            vix_daily={},
+            initial_capital=50000,
+            slippage=None,
+        )
+        results = engine.run()
+        report = generate_report(results)
+
+        assert 'assumptions' in report
+        assert report['assumptions']['slippage_model'] == 'vix_aware'
+        assert report['assumptions']['half_day_calendar'] is True
+        assert 'fill_model' in report['assumptions']
+        assert 'pricing_model' in report['assumptions']
+
+
 class TestMonthlyReturnPct:
     """Verify monthly return_pct uses start-of-month equity."""
 

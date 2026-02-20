@@ -32,14 +32,22 @@ class BacktestBroker(BrokerInterface):
     - Tracks simulated account balance
     """
 
+    # VIX-aware slippage tiers (per-leg)
+    _VIX_SLIPPAGE_TIERS = [
+        (15, 0.05),   # VIX < 15
+        (20, 0.08),   # VIX 15-20
+        (30, 0.12),   # VIX 20-30
+        (float('inf'), 0.20),  # VIX > 30
+    ]
+
     def __init__(
         self,
         initial_capital: float = 50000.0,
-        slippage: float = 0.02,
+        slippage: Optional[float] = None,
     ):
         self.initial_capital = initial_capital
         self.balance = initial_capital
-        self.slippage = slippage
+        self._flat_slippage = slippage  # None = use VIX model
 
         # Current market state (set externally by engine each bar)
         self._current_price: float = 0.0
@@ -73,6 +81,21 @@ class BacktestBroker(BrokerInterface):
         self._current_vix = vix
         self._current_dt = dt
         self._current_dte = dte
+
+    def _get_slippage(self) -> float:
+        """Return total per-contract slippage (both legs combined).
+
+        Flat override: used as-is (backward compat).
+        VIX model: per-leg value * 2 (short + long leg).
+        """
+        if self._flat_slippage is not None:
+            return self._flat_slippage
+
+        vix = self._current_vix
+        for threshold, per_leg in self._VIX_SLIPPAGE_TIERS:
+            if vix < threshold:
+                return per_leg * 2
+        return 0.40  # fallback (0.20 * 2)
 
     def get_current_price(self, symbol: str) -> float:
         """Return the current bar's close price."""
@@ -149,8 +172,8 @@ class BacktestBroker(BrokerInterface):
         order_id = f"BT-{self._order_counter}"
 
         fill_price = limit_price if limit_price else spread.credit_received
-        # Apply slippage (reduce credit received)
-        fill_price = max(0.01, fill_price - self.slippage)
+        # Apply slippage (total for both legs)
+        fill_price = max(0.01, fill_price - self._get_slippage())
 
         credit = fill_price * quantity * 100
         self.balance += credit
@@ -185,8 +208,8 @@ class BacktestBroker(BrokerInterface):
         self._order_counter += 1
         order_id = f"BT-CLOSE-{self._order_counter}"
 
-        # Apply slippage (increase debit paid)
-        fill_price = limit_price + self.slippage
+        # Apply slippage (total for both legs)
+        fill_price = limit_price + self._get_slippage()
 
         debit = fill_price * quantity * 100
         self.balance -= debit

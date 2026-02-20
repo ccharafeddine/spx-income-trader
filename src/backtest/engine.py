@@ -40,6 +40,39 @@ logger = logging.getLogger(__name__)
 ET = pytz.timezone('America/New_York')
 
 
+def _nyse_half_days(year: int) -> set:
+    """Return set of NYSE half-day dates (1:00 PM close) for a given year.
+
+    NYSE half-days:
+    - Day before Independence Day (Jul 3, unless Jul 4 is Sat/Sun)
+    - Black Friday (4th Friday of November)
+    - Christmas Eve (Dec 24, unless it's Sat/Sun)
+    """
+    half_days = set()
+
+    # Day before Independence Day
+    jul4 = date(year, 7, 4)
+    if jul4.weekday() == 0:  # Monday -> Friday Jul 2 is half-day
+        half_days.add(date(year, 7, 2))
+    elif jul4.weekday() in (1, 2, 3, 4):  # Tue-Fri -> day before
+        half_days.add(date(year, 7, 3))
+    # If Jul 4 is Sat or Sun, no half-day
+
+    # Black Friday (day after Thanksgiving = 4th Thursday of November)
+    nov1 = date(year, 11, 1)
+    first_thursday = nov1 + timedelta(days=(3 - nov1.weekday()) % 7)
+    thanksgiving = first_thursday + timedelta(weeks=3)
+    black_friday = thanksgiving + timedelta(days=1)
+    half_days.add(black_friday)
+
+    # Christmas Eve (Dec 24, if it falls Mon-Fri)
+    dec24 = date(year, 12, 24)
+    if dec24.weekday() < 5:  # Mon-Fri
+        half_days.add(dec24)
+
+    return half_days
+
+
 @dataclass
 class BacktestTrade:
     """Lightweight trade record for backtest results."""
@@ -118,7 +151,7 @@ class BacktestEngine:
         profit_target_pct: float = 80.0,
         min_credit: float = 1.00,
         max_contracts: int = 5,
-        slippage: float = 0.02,
+        slippage: Optional[float] = None,
         max_daily_loss_pct: float = 2.0,
         progress_callback=None,
         strategies: Optional[Dict] = None,
@@ -129,6 +162,15 @@ class BacktestEngine:
         self.max_contracts = max_contracts
         self.max_daily_loss_pct = max_daily_loss_pct
         self.progress_callback = progress_callback
+
+        # Slippage metadata
+        self._slippage_param = slippage
+        if slippage is None:
+            self._slippage_model = 'vix_aware'
+            self._slippage_detail = 'VIX-aware per-leg: $0.05-$0.20'
+        else:
+            self._slippage_model = 'flat'
+            self._slippage_detail = f'${slippage:.2f}/leg (${slippage * 2:.2f}/contract)'
 
         # Initialize broker
         self.broker = BacktestBroker(
@@ -174,8 +216,21 @@ class BacktestEngine:
         self._tnt_trades_today: int = 0
         self._circuit_breaker_tripped: bool = False
 
+        # Credit flagging (cumulative across entire backtest)
+        self._flagged_credit_count: int = 0
+
+        # Half-day calendar cache
+        self._half_day_cache: Dict[int, set] = {}
+
         # Backward compat alias
         self._active_trade = None
+
+    def _is_half_day(self, trading_day: date) -> bool:
+        """Check if a trading day is an NYSE half-day (1:00 PM close)."""
+        year = trading_day.year
+        if year not in self._half_day_cache:
+            self._half_day_cache[year] = _nyse_half_days(year)
+        return trading_day in self._half_day_cache[year]
 
     def _calculate_position_size(
         self,
@@ -323,6 +378,10 @@ class BacktestEngine:
             'equity_curve': self.equity_curve,
             'initial_capital': self.initial_capital,
             'final_capital': self.broker.balance,
+            'slippage_model': self._slippage_model,
+            'slippage_detail': self._slippage_detail,
+            'half_day_calendar': True,
+            'flagged_credit_count': self._flagged_credit_count,
         }
 
     def _process_day(self, trading_day: date):
@@ -330,6 +389,9 @@ class BacktestEngine:
         day_bars = get_bars_for_day(self.bars_df, trading_day)
         if day_bars.empty:
             return
+
+        is_half_day = self._is_half_day(trading_day)
+        close_time = time(13, 0) if is_half_day else time(16, 0)
 
         # Reset daily state (but NOT cross-day positions like TNT)
         self._daily_pnl = 0.0
@@ -357,6 +419,10 @@ class BacktestEngine:
             bar_dt = timestamp.to_pydatetime()
             if bar_dt.tzinfo is None:
                 bar_dt = ET.localize(bar_dt)
+
+            # Skip bars after market close on half-days
+            if is_half_day and bar_dt.time() >= close_time:
+                continue
 
             bar = Bar(
                 timestamp=bar_dt,
@@ -464,9 +530,13 @@ class BacktestEngine:
 
         # ---- End of day ----
 
+        # Use last processed bar's close for settlement (respects half-day filtering)
+        if bars_for_day:
+            spx_close = bars_for_day[-1].close
+
         # Expire 0DTE positions at settlement
         if self._0dte_trade:
-            self._expire_0dte_position(spx_close, trading_day)
+            self._expire_0dte_position(spx_close, trading_day, close_time)
 
         # TNT: Do NOT expire - swing positions carry across days
 
@@ -619,6 +689,14 @@ class BacktestEngine:
         self._0dte_trades_today += 1
         self._daily_trades += 1
 
+        # Credit validation: flag unusual fills
+        fill_credit = order_status['fill_price']
+        if fill_credit > 3.50 or fill_credit < 1.50:
+            self._flagged_credit_count += 1
+            logger.warning(
+                f"[BT] UNUSUAL CREDIT: ${fill_credit:.2f} on {strategy_type} trade"
+            )
+
         logger.debug(
             f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} {strategy_type.upper()} ENTRY: "
             f"{direction.value} ${spread.short_leg.strike}/{spread.long_leg.strike} "
@@ -702,6 +780,14 @@ class BacktestEngine:
         self._tnt_entry_date = bar_dt.date()
         self._tnt_trades_today += 1
         self._daily_trades += 1
+
+        # Credit validation: flag unusual TNT fills (wider spreads = higher credits)
+        fill_credit = order_status['fill_price']
+        if fill_credit > 5.00 or fill_credit < 2.00:
+            self._flagged_credit_count += 1
+            logger.warning(
+                f"[BT] UNUSUAL CREDIT: ${fill_credit:.2f} on tag_n_turn trade"
+            )
 
         # Notify TNT strategy of position open
         self._tnt_position = {
@@ -892,19 +978,25 @@ class BacktestEngine:
     # 0DTE expiration at end of day
     # ------------------------------------------------------------------
 
-    def _expire_0dte_position(self, settlement_price: float, trading_day: date):
-        """Expire the 0DTE position at end of day (4:00 PM settlement)."""
+    def _expire_0dte_position(
+        self,
+        settlement_price: float,
+        trading_day: date,
+        close_time: time = time(16, 0),
+    ):
+        """Expire the 0DTE position at end of day."""
         trade = self._0dte_trade
         if not trade:
             return
 
         strategy_type = self._0dte_strategy_type or 'daily_income'
-        expire_dt = ET.localize(datetime.combine(trading_day, time(16, 0)))
+        expire_dt = ET.localize(datetime.combine(trading_day, close_time))
         final_pnl = trade.spread.profit_at_price(settlement_price) * trade.quantity
+        expire_label = f"Expiration ({close_time.strftime('%I:%M %p').lstrip('0')})"
 
         trade.exit_price = 0.0
         trade.exit_time = expire_dt
-        trade.exit_reason = 'Expiration (4:00 PM)'
+        trade.exit_reason = expire_label
         trade.status = TradeStatus.CLOSED
         trade.pnl = final_pnl
         max_profit = trade.spread.max_profit * trade.quantity
@@ -931,7 +1023,7 @@ class BacktestEngine:
             exit_price=0.0,
             pnl=final_pnl,
             pnl_pct=trade.pnl_percent or 0,
-            exit_reason='Expiration (4:00 PM)',
+            exit_reason=expire_label,
             quantity=trade.quantity,
             spx_at_entry=trade.spread.underlying_price_at_entry or 0,
             spx_at_exit=settlement_price,
@@ -949,7 +1041,7 @@ class BacktestEngine:
 
         # Notify ORB strategy of close
         if strategy_type == 'orb' and self._orb_strat:
-            self._orb_strat.on_position_closed(settlement_price, 'Expiration (4:00 PM)')
+            self._orb_strat.on_position_closed(settlement_price, expire_label)
 
         self._0dte_trade = None
         self._0dte_strategy_type = None

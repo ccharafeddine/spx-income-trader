@@ -4190,7 +4190,8 @@ def api_backtest_run():
     profit_target = float(data.get('profit_target', 80.0))
     min_credit = float(data.get('min_credit', 1.00))
     max_contracts = int(data.get('max_contracts', 5))
-    slippage = float(data.get('slippage', 0.02))
+    slippage_raw = data.get('slippage', None)
+    slippage = float(slippage_raw) if slippage_raw else None
     max_daily_loss = float(data.get('max_daily_loss', 2.0))
     strategies = data.get('strategies', None)
 

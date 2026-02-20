@@ -79,6 +79,16 @@ def generate_report(
     # Store raw trades so analytics tab can compute additional breakdowns
     report['_trades'] = trades
 
+    # Assumptions
+    report['assumptions'] = {
+        'slippage_model': results.get('slippage_model', 'flat'),
+        'slippage_detail': results.get('slippage_detail', '$0.02/contract'),
+        'fill_model': 'Instant full fill at theoretical mid',
+        'pricing_model': 'Black-Scholes synthetic chain (VIX as IV)',
+        'half_day_calendar': results.get('half_day_calendar', False),
+        'flagged_credit_count': results.get('flagged_credit_count', 0),
+    }
+
     # Summary
     report['initial_capital'] = initial_capital
     report['final_capital'] = final_capital
