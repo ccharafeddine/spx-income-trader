@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch
 from datetime import date, datetime, timedelta
 import tempfile
 import os
+import pytz
 
 import sys
 from pathlib import Path
@@ -27,6 +28,26 @@ from src.core.pdt_tracker import (
     NYSE_HOLIDAYS,
     ACTIVE_CLOSE_REASONS,
 )
+
+# Fixed reference date for all tests (a known Wednesday, no holidays nearby).
+# Using a fixed date instead of REF_DATE avoids UTC/ET timezone divergence
+# when CI runs near midnight (UTC date can be ahead of ET date).
+REF_DATE = date(2026, 2, 4)
+_ET = pytz.timezone("America/New_York")
+_REF_DATETIME = _ET.localize(datetime(2026, 2, 4, 12, 0, 0))
+
+
+@pytest.fixture(autouse=True)
+def _mock_pdt_datetime():
+    """Patch datetime.now in pdt_tracker so internal date resolution uses REF_DATE.
+
+    Methods like can_close_early(), can_open_trade(), and get_pdt_status() call
+    get_day_trades_in_window() without from_date, which falls back to
+    datetime.now(ET).  This fixture ensures that fallback matches REF_DATE.
+    """
+    with patch('src.core.pdt_tracker.datetime') as mock_dt:
+        mock_dt.now.return_value = _REF_DATETIME
+        yield
 
 
 # ============================================================================
@@ -134,19 +155,19 @@ class TestRollingWindowCounting:
 
     def test_empty_window(self, tracker):
         """No day trades should return 0 count."""
-        assert tracker.get_day_trades_count() == 0
-        assert tracker.get_remaining_day_trades() == 3
+        assert tracker.get_day_trades_count(from_date=REF_DATE) == 0
+        assert tracker.get_remaining_day_trades(from_date=REF_DATE) == 3
 
     def test_single_day_trade(self, tracker):
         """One day trade should be counted."""
-        today = date.today()
+        today = REF_DATE
         tracker.record_day_trade('trade1', today, 'profit_target')
         assert tracker.get_day_trades_count(from_date=today) == 1
         assert tracker.get_remaining_day_trades(from_date=today) == 2
 
     def test_multiple_day_trades(self, tracker):
         """Multiple day trades should all be counted."""
-        today = date.today()
+        today = REF_DATE
         tracker.record_day_trade('trade1', today, 'profit_target')
         tracker.record_day_trade('trade2', today, 'early exit')
         tracker.record_day_trade('trade3', today, 'stop loss')
@@ -156,7 +177,7 @@ class TestRollingWindowCounting:
 
     def test_duplicate_trade_id_ignored(self, tracker):
         """Same trade_id should only be counted once."""
-        today = date.today()
+        today = REF_DATE
         tracker.record_day_trade('trade1', today, 'profit_target')
         tracker.record_day_trade('trade1', today, 'profit_target')  # Duplicate
 
@@ -164,7 +185,7 @@ class TestRollingWindowCounting:
 
     def test_trades_outside_window_not_counted(self, tracker):
         """Trades older than 5 business days should not count."""
-        today = date.today()
+        today = REF_DATE
         old_date = get_business_days_ago(6, today)  # Outside 5-day window
 
         tracker.record_day_trade('old_trade', old_date, 'profit_target')
@@ -176,7 +197,7 @@ class TestRollingWindowCounting:
         """Trade exactly at window start should be counted.
 
         Uses a fixed reference date and passes it explicitly to avoid
-        date.today() vs datetime.now(ET).date() timezone divergence
+        REF_DATE vs datetime.now(ET).date() timezone divergence
         when tests run late at night.
         """
         ref_date = date(2026, 2, 4)  # A known Wednesday, no holidays nearby
@@ -240,54 +261,54 @@ class TestExpirationVsActiveClose:
 
     def test_profit_target_counts(self, tracker):
         """Profit target exit should count as day trade."""
-        result = tracker.record_day_trade('t1', date.today(), 'profit_target')
+        result = tracker.record_day_trade('t1', REF_DATE, 'profit_target')
         assert result is True
-        assert tracker.get_day_trades_count() == 1
+        assert tracker.get_day_trades_count(from_date=REF_DATE) == 1
 
     def test_80_profit_target_counts(self, tracker):
         """80% profit target should count as day trade."""
-        result = tracker.record_day_trade('t1', date.today(), '80% profit target')
+        result = tracker.record_day_trade('t1', REF_DATE, '80% profit target')
         assert result is True
 
     def test_1pm_check_counts(self, tracker):
         """1pm trend check exit should count as day trade."""
-        result = tracker.record_day_trade('t1', date.today(), '1PM CHECK - unfavorable')
+        result = tracker.record_day_trade('t1', REF_DATE, '1PM CHECK - unfavorable')
         assert result is True
 
     def test_stop_loss_counts(self, tracker):
         """Stop loss should count as day trade."""
-        result = tracker.record_day_trade('t1', date.today(), 'stop loss')
+        result = tracker.record_day_trade('t1', REF_DATE, 'stop loss')
         assert result is True
 
     def test_early_exit_counts(self, tracker):
         """Early exit should count as day trade."""
-        result = tracker.record_day_trade('t1', date.today(), 'early exit')
+        result = tracker.record_day_trade('t1', REF_DATE, 'early exit')
         assert result is True
 
     def test_manual_close_counts(self, tracker):
         """Manual close should count as day trade."""
-        result = tracker.record_day_trade('t1', date.today(), 'manual close')
+        result = tracker.record_day_trade('t1', REF_DATE, 'manual close')
         assert result is True
 
     def test_expiration_does_not_count(self, tracker):
         """Expiration should NOT count as day trade."""
-        result = tracker.record_day_trade('t1', date.today(), 'expiration')
+        result = tracker.record_day_trade('t1', REF_DATE, 'expiration')
         assert result is False
-        assert tracker.get_day_trades_count() == 0
+        assert tracker.get_day_trades_count(from_date=REF_DATE) == 0
 
     def test_expired_worthless_does_not_count(self, tracker):
         """Expired worthless should NOT count."""
-        result = tracker.record_day_trade('t1', date.today(), 'expired worthless')
+        result = tracker.record_day_trade('t1', REF_DATE, 'expired worthless')
         assert result is False
 
     def test_max_profit_expiration_does_not_count(self, tracker):
         """Max profit at expiration should NOT count."""
-        result = tracker.record_day_trade('t1', date.today(), 'max profit - expiration')
+        result = tracker.record_day_trade('t1', REF_DATE, 'max profit - expiration')
         assert result is False
 
     def test_check_and_record_same_day(self, tracker):
         """check_and_record_day_trade should record same-day active closes."""
-        today = date.today()
+        today = REF_DATE
         result = tracker.check_and_record_day_trade(
             trade_id='t1',
             entry_date=today,
@@ -295,11 +316,11 @@ class TestExpirationVsActiveClose:
             exit_reason='profit_target',
         )
         assert result is True
-        assert tracker.get_day_trades_count() == 1
+        assert tracker.get_day_trades_count(from_date=REF_DATE) == 1
 
     def test_check_and_record_different_days(self, tracker):
         """check_and_record_day_trade should NOT record if different days."""
-        today = date.today()
+        today = REF_DATE
         yesterday = today - timedelta(days=1)
         result = tracker.check_and_record_day_trade(
             trade_id='t1',
@@ -308,7 +329,7 @@ class TestExpirationVsActiveClose:
             exit_reason='profit_target',
         )
         assert result is False
-        assert tracker.get_day_trades_count() == 0
+        assert tracker.get_day_trades_count(from_date=REF_DATE) == 0
 
 
 # ============================================================================
@@ -342,7 +363,7 @@ class TestAccountEquityThreshold:
         tracker_with_equity._cached_equity = None
 
         # Use all 3 day trade slots
-        today = date.today()
+        today = REF_DATE
         tracker_with_equity.record_day_trade('t1', today, 'profit_target')
         tracker_with_equity.record_day_trade('t2', today, 'profit_target')
         tracker_with_equity.record_day_trade('t3', today, 'profit_target')
@@ -356,10 +377,10 @@ class TestAccountEquityThreshold:
         tracker_with_equity._cached_equity = None
 
         # Only 1 day trade used
-        tracker_with_equity.record_day_trade('t1', date.today(), 'profit_target')
+        tracker_with_equity.record_day_trade('t1', REF_DATE, 'profit_target')
 
         assert tracker_with_equity.can_close_early() is True
-        assert tracker_with_equity.get_remaining_day_trades() == 2
+        assert tracker_with_equity.get_remaining_day_trades(from_date=REF_DATE) == 2
 
     def test_cannot_close_early_at_limit(self, tracker_with_equity):
         """Below threshold at limit should block early close."""
@@ -367,13 +388,13 @@ class TestAccountEquityThreshold:
         tracker_with_equity._cached_equity = None
 
         # Use all 3 slots
-        today = date.today()
+        today = REF_DATE
         tracker_with_equity.record_day_trade('t1', today, 'profit_target')
         tracker_with_equity.record_day_trade('t2', today, 'profit_target')
         tracker_with_equity.record_day_trade('t3', today, 'profit_target')
 
         assert tracker_with_equity.can_close_early() is False
-        assert tracker_with_equity.get_remaining_day_trades() == 0
+        assert tracker_with_equity.get_remaining_day_trades(from_date=REF_DATE) == 0
 
 
 # ============================================================================
@@ -389,7 +410,7 @@ class TestMidWeekEquityCrossing:
         tracker_with_equity._cached_equity = None
 
         # Use all slots while under threshold
-        today = date.today()
+        today = REF_DATE
         tracker_with_equity.record_day_trade('t1', today, 'profit_target')
         tracker_with_equity.record_day_trade('t2', today, 'profit_target')
         tracker_with_equity.record_day_trade('t3', today, 'profit_target')
@@ -410,7 +431,7 @@ class TestMidWeekEquityCrossing:
         tracker_with_equity._cached_equity = None
 
         # Use all slots while above threshold (no problem)
-        today = date.today()
+        today = REF_DATE
         tracker_with_equity.record_day_trade('t1', today, 'profit_target')
         tracker_with_equity.record_day_trade('t2', today, 'profit_target')
         tracker_with_equity.record_day_trade('t3', today, 'profit_target')
@@ -459,7 +480,7 @@ class TestDisabledPDT:
         )
 
         # Use many "day trades"
-        today = date.today()
+        today = REF_DATE
         for i in range(10):
             tracker.record_day_trade(f't{i}', today, 'profit_target')
 
@@ -494,7 +515,7 @@ class TestCanOpenTrade:
         tracker_with_equity._cached_equity = None
 
         # Use all 3 slots
-        today = date.today()
+        today = REF_DATE
         tracker_with_equity.record_day_trade('t1', today, 'profit_target')
         tracker_with_equity.record_day_trade('t2', today, 'profit_target')
         tracker_with_equity.record_day_trade('t3', today, 'profit_target')
@@ -506,17 +527,17 @@ class TestCanOpenTrade:
         tracker_with_equity._equity_value[0] = 20000.0
         tracker_with_equity._cached_equity = None
 
-        tracker_with_equity.record_day_trade('t1', date.today(), 'profit_target')
+        tracker_with_equity.record_day_trade('t1', REF_DATE, 'profit_target')
 
         assert tracker_with_equity.can_open_trade() is True
-        assert tracker_with_equity.get_remaining_day_trades() == 2
+        assert tracker_with_equity.get_remaining_day_trades(from_date=REF_DATE) == 2
 
     def test_below_threshold_no_slots_blocks_entry(self, tracker_with_equity):
         """Below $25k with no remaining slots should block entries."""
         tracker_with_equity._equity_value[0] = 20000.0
         tracker_with_equity._cached_equity = None
 
-        today = date.today()
+        today = REF_DATE
         tracker_with_equity.record_day_trade('t1', today, 'profit_target')
         tracker_with_equity.record_day_trade('t2', today, 'profit_target')
         tracker_with_equity.record_day_trade('t3', today, 'profit_target')
@@ -528,7 +549,7 @@ class TestCanOpenTrade:
         tracker_with_equity._equity_value[0] = 20000.0
         tracker_with_equity._cached_equity = None
 
-        today = date.today()
+        today = REF_DATE
         tracker_with_equity.record_day_trade('t1', today, 'profit_target')
         tracker_with_equity.record_day_trade('t2', today, 'profit_target')
         tracker_with_equity.record_day_trade('t3', today, 'profit_target')
@@ -575,7 +596,7 @@ class TestPDTStatus:
         tracker_with_equity._equity_value[0] = 20000.0
         tracker_with_equity._cached_equity = None
 
-        tracker_with_equity.record_day_trade('t1', date.today(), 'profit_target')
+        tracker_with_equity.record_day_trade('t1', REF_DATE, 'profit_target')
 
         status = tracker_with_equity.get_pdt_status()
 
