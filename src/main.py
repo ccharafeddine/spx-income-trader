@@ -1652,6 +1652,8 @@ class TradingBot:
                 logger.error(f"{strategy_name}: Trade execution failed")
                 return False
 
+            actual_qty = trade.quantity
+
             # 6. Update counters
             self._journal_trades_entered += 1
             if is_0dte:
@@ -1666,7 +1668,7 @@ class TradingBot:
                 direction=spread.direction.value,
                 short_strike=spread.short_leg.strike,
                 long_strike=spread.long_leg.strike,
-                credit=spread.credit_received, quantity=quantity,
+                credit=spread.credit_received, quantity=actual_qty,
                 underlying_price=current_price)
 
             if self.recorder:
@@ -1675,15 +1677,15 @@ class TradingBot:
                     direction=spread.direction.value,
                     strikes={'short': spread.short_leg.strike,
                              'long': spread.long_leg.strike},
-                    credit=spread.credit_received, quantity=quantity)
+                    credit=spread.credit_received, quantity=actual_qty)
 
             # 7. Register with portfolio
             self.portfolio.register_position(
                 position_id=trade.id,
                 strategy=strategy_type,
                 direction=spread.direction.value,
-                contracts=quantity,
-                max_risk=max_risk_per_contract * quantity,
+                contracts=actual_qty,
+                max_risk=max_risk_per_contract * actual_qty,
                 is_0dte=is_0dte,
             )
 
@@ -1694,10 +1696,10 @@ class TradingBot:
                 "direction": spread.direction.value,
                 "short_strike": spread.short_leg.strike,
                 "long_strike": spread.long_leg.strike,
-                "quantity": quantity,
+                "quantity": actual_qty,
                 "credit_received": spread.credit_received,
                 "theoretical_mid_credit": spread.theoretical_mid_credit,
-                "max_risk": spread.max_risk * quantity,
+                "max_risk": spread.max_risk * actual_qty,
                 "underlying_price": current_price,
                 "expiration": spread.expiration.isoformat() if spread.expiration else None,
                 "is_0dte": is_0dte,
@@ -1709,8 +1711,19 @@ class TradingBot:
                     f"{strategy_name.upper()} Trade: {spread.direction.value.upper()}",
                     f"Strikes: ${spread.short_leg.strike}/${spread.long_leg.strike}\n"
                     f"Credit: ${spread.credit_received:.2f}\n"
-                    f"Contracts: {quantity}",
+                    f"Contracts: {actual_qty}",
                     level='info'
+                )
+
+            # Partial fill notification
+            if actual_qty != quantity and self.notifier:
+                self.notifier.send(
+                    "Partial Fill Warning",
+                    f"Requested {quantity} contracts, filled {actual_qty}.\n"
+                    f"Strategy: {strategy_name}\n"
+                    f"Strikes: ${spread.short_leg.strike}/${spread.long_leg.strike}\n"
+                    f"Trade {trade.id[:8]} proceeding with {actual_qty} contracts.",
+                    level='warning'
                 )
 
             logger.info(f"{strategy_name}: Trade entered {trade.id}")
@@ -1993,6 +2006,7 @@ class TradingBot:
             )
 
             if trade:
+                actual_qty = trade.quantity
                 logger.info(f"Trade executed: {trade.id}")
                 self._journal_trades_entered += 1
                 metrics.open_positions_count.set(
@@ -2002,7 +2016,7 @@ class TradingBot:
                     direction=spread.direction.value,
                     short_strike=spread.short_leg.strike,
                     long_strike=spread.long_leg.strike,
-                    credit=spread.credit_received, quantity=quantity,
+                    credit=spread.credit_received, quantity=actual_qty,
                     underlying_price=current_price)
 
                 self.dte0_trades_today += 1
@@ -2013,15 +2027,15 @@ class TradingBot:
                         direction=spread.direction.value,
                         strikes={'short': spread.short_leg.strike,
                                  'long': spread.long_leg.strike},
-                        credit=spread.credit_received, quantity=quantity)
+                        credit=spread.credit_received, quantity=actual_qty)
 
                 # Register with portfolio manager for risk tracking
                 self.portfolio.register_position(
                     position_id=trade.id,
                     strategy=StrategyType.DAILY_INCOME,
                     direction=spread.direction.value,
-                    contracts=quantity,
-                    max_risk=max_risk_per_contract * quantity,
+                    contracts=actual_qty,
+                    max_risk=max_risk_per_contract * actual_qty,
                     is_0dte=True,
                 )
 
@@ -2031,10 +2045,10 @@ class TradingBot:
                     "direction": spread.direction.value,
                     "short_strike": spread.short_leg.strike,
                     "long_strike": spread.long_leg.strike,
-                    "quantity": quantity,
+                    "quantity": actual_qty,
                     "credit_received": spread.credit_received,
                     "theoretical_mid_credit": spread.theoretical_mid_credit,
-                    "max_risk": spread.max_risk * quantity,
+                    "max_risk": spread.max_risk * actual_qty,
                     "underlying_price": current_price,
                     "expiration": spread.expiration.isoformat() if spread.expiration else None,
                     "sizing_method": sizing_method,
@@ -2050,8 +2064,18 @@ class TradingBot:
                         f"Strikes: ${spread.short_leg.strike}/${spread.long_leg.strike}\n"
                         f"Credit: ${spread.credit_received:.2f}\n"
                         f"Max Profit: ${spread.max_profit:.2f}\n"
-                        f"Contracts: {quantity}",
+                        f"Contracts: {actual_qty}",
                         level='info'
+                    )
+
+                # Partial fill notification
+                if actual_qty != quantity and self.notifier:
+                    self.notifier.send(
+                        "Partial Fill Warning",
+                        f"Requested {quantity} contracts, filled {actual_qty}.\n"
+                        f"Strikes: ${spread.short_leg.strike}/${spread.long_leg.strike}\n"
+                        f"Trade {trade.id[:8]} proceeding with {actual_qty} contracts.",
+                        level='warning'
                     )
             else:
                 logger.error("Trade execution failed")

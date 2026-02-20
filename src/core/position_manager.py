@@ -175,16 +175,20 @@ class PositionManager:
                 logger.error(f"Order not filled: {order_status['status']}")
                 return None
 
-            # Reject partial fills - full spread or nothing
+            # Track actual filled quantity
             filled_quantity = order_status.get('filled_quantity', quantity)
-            if filled_quantity and filled_quantity != quantity:
+            if filled_quantity == 0:
                 logger.error(
-                    f"PARTIAL FILL REJECTED: requested {quantity} contracts, "
-                    f"got {filled_quantity}. Full spread required for entry. "
-                    f"Partially filled order {order_id} may need manual review."
+                    f"ZERO FILL: requested {quantity} contracts, "
+                    f"got 0. Order {order_id} did not execute."
                 )
                 return None
             actual_quantity = filled_quantity if filled_quantity else quantity
+            if actual_quantity != quantity:
+                logger.warning(
+                    f"Partial fill: requested {quantity}, filled {actual_quantity}. "
+                    f"Proceeding with {actual_quantity} contracts."
+                )
 
             # Create trade record
             trade = Trade(

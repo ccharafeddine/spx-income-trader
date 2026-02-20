@@ -1575,72 +1575,10 @@ class TestMaxContractsEnforcement:
         assert result == 1, f"min_contracts=1 must be the floor, got {result}"
 
 
-class TestPartialFillRejection:
-    """Trades must not enter if the full spread can't fill."""
+class TestPartialFillAcceptance:
+    """Partial fills are accepted with actual filled quantity; zero fills are rejected."""
 
-    def test_partial_fill_rejected(self):
-        """Position manager rejects partial fills."""
-        from src.core.position_manager import PositionManager
-        from src.models.bar import Bar
-
-        broker = MagicMock()
-        strategy = MagicMock()
-        strategy.classify_credit_quality.return_value = {
-            'quality': 'good', 'credit_received': 2.50,
-            'expected_range': '$2-3', 'moneyness': 'ATM',
-            'is_simulated_concern': False,
-        }
-        broker.place_spread_order.return_value = "ORDER-PARTIAL"
-        broker.get_order_status.return_value = {
-            'status': 'filled',
-            'fill_price': 2.40,
-            'filled_quantity': 2,  # Requested 3, only 2 filled
-        }
-
-        pm = PositionManager(
-            broker=broker,
-            strategy=strategy,
-            db_manager=MagicMock(),
-        )
-
-        spread = MagicMock()
-        spread.credit_received = 2.50
-        spread.max_risk = 250.0
-        spread.direction = TradeDirection.BULLISH
-        bar = Bar(
-            timestamp=datetime(2026, 2, 11, 10, 30),
-            open=6000, high=6010, low=5990, close=6005,
-        )
-
-        result = pm.enter_trade(spread, bar, quantity=3)
-
-        assert result is None, "Partial fill must be rejected"
-
-    def test_full_fill_accepted(self):
-        """Position manager accepts full fills."""
-        from src.core.position_manager import PositionManager
-        from src.models.bar import Bar
-
-        broker = MagicMock()
-        strategy = MagicMock()
-        strategy.classify_credit_quality.return_value = {
-            'quality': 'good', 'credit_received': 2.50,
-            'expected_range': '$2-3', 'moneyness': 'ATM',
-            'is_simulated_concern': False,
-        }
-        broker.place_spread_order.return_value = "ORDER-FULL"
-        broker.get_order_status.return_value = {
-            'status': 'filled',
-            'fill_price': 2.50,
-            'filled_quantity': 3,  # All 3 filled
-        }
-
-        pm = PositionManager(
-            broker=broker,
-            strategy=strategy,
-            db_manager=MagicMock(),
-        )
-
+    def _make_spread(self):
         spread = MagicMock()
         spread.credit_received = 2.50
         spread.max_risk = 250.0
@@ -1652,14 +1590,93 @@ class TestPartialFillRejection:
         spread.long_leg = MagicMock(strike=5995.0)
         spread.expiration = None
         spread.theoretical_mid_credit = 2.50
+        return spread
+
+    def _make_pm(self, broker):
+        from src.core.position_manager import PositionManager
+        strategy = MagicMock()
+        strategy.classify_credit_quality.return_value = {
+            'quality': 'good', 'credit_received': 2.50,
+            'expected_range': '$2-3', 'moneyness': 'ATM',
+            'is_simulated_concern': False,
+        }
+        return PositionManager(
+            broker=broker,
+            strategy=strategy,
+            db_manager=MagicMock(),
+        )
+
+    def test_partial_fill_accepted_with_correct_quantity(self):
+        """Partial fill creates trade with actual filled quantity."""
+        from src.models.bar import Bar
+
+        broker = MagicMock()
+        broker.place_spread_order.return_value = "ORDER-PARTIAL"
+        broker.get_order_status.return_value = {
+            'status': 'filled',
+            'fill_price': 2.40,
+            'filled_quantity': 7,  # Requested 10, only 7 filled
+        }
+
+        pm = self._make_pm(broker)
         bar = Bar(
             timestamp=datetime(2026, 2, 11, 10, 30),
             open=6000, high=6010, low=5990, close=6005,
         )
 
-        result = pm.enter_trade(spread, bar, quantity=3)
+        result = pm.enter_trade(self._make_spread(), bar, quantity=10)
+
+        assert result is not None, "Partial fill should be accepted"
+        assert result.quantity == 7, "Trade quantity must be actual filled amount"
+
+    def test_full_fill_accepted(self):
+        """Full fill creates trade with requested quantity."""
+        from src.models.bar import Bar
+
+        broker = MagicMock()
+        broker.place_spread_order.return_value = "ORDER-FULL"
+        broker.get_order_status.return_value = {
+            'status': 'filled',
+            'fill_price': 2.50,
+            'filled_quantity': 3,
+        }
+
+        pm = self._make_pm(broker)
+        bar = Bar(
+            timestamp=datetime(2026, 2, 11, 10, 30),
+            open=6000, high=6010, low=5990, close=6005,
+        )
+
+        result = pm.enter_trade(self._make_spread(), bar, quantity=3)
 
         assert result is not None, "Full fill should be accepted"
+        assert result.quantity == 3
+
+    def test_zero_fill_rejected(self):
+        """Zero filled contracts must reject the trade."""
+        from src.models.bar import Bar
+
+        broker = MagicMock()
+        broker.place_spread_order.return_value = "ORDER-ZERO"
+        broker.get_order_status.return_value = {
+            'status': 'filled',
+            'fill_price': 0,
+            'filled_quantity': 0,
+        }
+
+        pm = self._make_pm(broker)
+        spread = MagicMock()
+        spread.credit_received = 2.50
+        spread.max_risk = 250.0
+        spread.direction = TradeDirection.BULLISH
+        bar = Bar(
+            timestamp=datetime(2026, 2, 11, 10, 30),
+            open=6000, high=6010, low=5990, close=6005,
+        )
+
+        result = pm.enter_trade(spread, bar, quantity=5)
+
+        assert result is None, "Zero fill must be rejected"
 
 
 class TestBnBCannotEnterTrades:

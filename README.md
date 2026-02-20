@@ -10,11 +10,11 @@ Automated SPX 0DTE options income trading system. Runs four parallel credit spre
 
 1. **Scan** -- Monitors 30-minute SPX bars for pulse bar momentum patterns (price closing in the top or bottom 10% of the bar's range)
 2. **Confirm** -- Waits for price to break the pulse bar's high or low, confirming directional momentum
-3. **Execute** -- Enters an ATM credit spread ($5 wide, same-day expiration) in the confirmed direction
+3. **Execute** -- Enters an ATM credit spread ($5 wide, same-day expiration) in the confirmed direction. Partial fills are accepted and tracked at actual quantity; zero fills are rejected.
 4. **Manage** -- Targets 80% of max profit. At 1:00 PM ET, applies trend-based management rules to decide hold vs. close
 5. **Repeat** -- Resets daily. No overnight exposure on 0DTE positions
 
-The entire pipeline runs autonomously. The bot handles strike selection, order sizing, execution, monitoring, and exit management across all four strategies simultaneously.
+The entire pipeline runs autonomously. The bot handles strike selection, order sizing, execution, monitoring, and exit management across all strategies simultaneously.
 
 ---
 
@@ -26,18 +26,20 @@ The primary strategy. Detects 30-minute pulse bars during the 9:30-11:30 ET setu
 ### Tag 'n Turn (TNT) -- Swing
 Bollinger Band mean reversion strategy with 3-7 DTE. Uses a state machine: detects when price tags a Bollinger Band, waits for a pulse bar confirming reversal, then enters on breakout. Targets the opposite Bollinger Band. Holds up to 7 days. Runs in a separate swing slot alongside the 0DTE strategies.
 
-### Bed & Breakfast (B&B) -- Overnight Signal
-Detects pulse bars in the 3:00-4:00 PM ET window. The signal persists overnight and activates at the next morning's open (9:30-10:00 ET). Two exit modes: "Just Breakfast" (exit after first 30 minutes) or aggressive roll (if the morning bar also qualifies as a pulse, the position rolls into full DI management for the day).
+### Bed & Breakfast (B&B) -- Directional Confluence
+Detects pulse bars in the 3:00-4:00 PM ET window to generate an overnight directional signal. Only the final bar (15:30) creates a definitive signal; if both the 15:00 and 15:30 bars produce pulses in opposite directions, they cancel out. The signal persists overnight and is used the next morning as directional confluence for DI (informational-only in V1, no independent trade entries). If the market gaps more than 0.3% against the signal direction overnight, the signal is automatically invalidated.
 
 ### Opening Range Breakout (ORB)
-Uses the first 30-minute bar of the day to define the opening range. Analyzes where price closes within the range to determine directional bias (top 10% = strong bullish, bottom 10% = strong bearish, with weak zones in between). Enters when price breaks above the range high or below the range low. Managed by DI's exit logic once entered.
+Uses the first 30-minute bar of the day to define the opening range. Strong signals only: price must close in the top or bottom 10% of the range (weak signals are rejected). A minimum range filter (default 8.0 points) skips narrow, choppy days. When price breaks above the range high or below the range low, a confirmation delay (default 3 minutes) ensures the breakout holds before entry. Managed by DI's exit logic once entered.
 
 ### Position Limits
-- 2 total position slots: 1 shared 0DTE (DI, ORB, or B&B) + 1 swing (TNT)
+- 2 total position slots: 1 shared 0DTE (DI or ORB) + 1 swing (TNT)
 - All strategies share a single daily loss circuit breaker
-- DI, ORB, and B&B share the 0DTE slot (max 1 per day)
+- DI and ORB share the 0DTE slot (max 1 per day)
+- B&B provides directional confluence only (no entries, does not consume a slot)
 - TNT uses the swing slot independently (max 1 per day)
-- All strategies go through the same portfolio risk gates before entry
+- All entry strategies go through the same portfolio risk gates before entry
+- Partial fills accepted with actual quantity tracking; zero fills rejected; Slack/Discord notification on partial fills
 
 ---
 
@@ -46,9 +48,11 @@ Uses the first 30-minute bar of the day to define the opening range. Analyzes wh
 ### Risk Management
 - Dynamic position sizing via percent-risk method (scales with account growth)
 - Per-strategy max contract overrides for fine-grained sizing control
+- Global max contracts ceiling that can never be overridden by strategy-level settings
 - 2% daily loss circuit breaker halts all new entries automatically
 - Weekly and monthly drawdown limits with configurable thresholds
 - Consecutive-loss circuit breaker with configurable pause duration
+- Partial fill handling: accepts partial fills at actual quantity, rejects zero fills, sends notification on partial fills
 - Credit quality gates reject low-premium setups
 - Max position limits enforced across all strategies (2 total: 1 0DTE + 1 swing)
 - PDT rule compliance: tracks day trades in a rolling 5-business-day window, blocks entries when slots exhausted (accounts under $25k)
@@ -77,7 +81,9 @@ Uses the first 30-minute bar of the day to define the opening range. Analyzes wh
 - Five tabs: Overview, Trade Journal, Analytics, Backtest, Logs
 
 ### Trade Journal
-- Monthly calendar view showing per-day P&L, trade count, strategy tags, no-trade reasons
+- Two views: monthly calendar and filterable list, toggled with Calendar/List buttons
+- Calendar view shows per-day P&L, trade count, strategy tags, no-trade reasons
+- List view shows per-strategy summary cards (trades, win rate, P&L) and expandable trade rows
 - Entry analysis with pulse bar checklist, strike rationale, market context
 - Exit review with post-trade notes and performance rating
 - Daily journal capturing bars built, pulse bars, signals evaluated, rejections with reasons
@@ -100,9 +106,12 @@ Uses the first 30-minute bar of the day to define the opening range. Analyzes wh
 - Historical replay engine supporting all four strategies (DI, TNT, ORB, B&B)
 - Strategy selection checkboxes: run any combination of the four strategies
 - Automatic SPX and VIX data download from Yahoo Finance
+- VIX-aware slippage model: scales with volatility regime ($0.02/leg base, $0.04/leg in elevated+ VIX)
+- NYSE half-day calendar: early close days (1 PM ET) handled automatically
+- Backtest assumptions panel showing slippage model, pricing model, fill assumptions, and flagged unusual credits
 - Configurable parameters: pulse threshold, spread width, profit target, min credit, max contracts, slippage, max daily loss, initial capital
 - Position sizing scales with simulated account growth over the backtest period
-- Previous runs list with one-click reload
+- Previous runs list with bulk select and delete
 - Results auto-populate in the Analytics tab dropdown on completion
 - Per-strategy trade breakdown and monthly return heatmaps
 
@@ -148,13 +157,33 @@ Uses the first 30-minute bar of the day to define the opening range. Analyzes wh
 
 ![Dashboard Overview](screenshots/overview.png)
 
-**Trade Journal - Calendar View** -- Monthly calendar showing per-day P&L, trade count, strategy tags, no-trade reasons, weekends, and market holidays. Click any day to expand its trades below.
+**Trade Journal - Calendar View** -- Monthly calendar showing per-day P&L, trade count, strategy tags, no-trade reasons, weekends, and market holidays. Click any day to expand its trades with full entry analysis below.
 
 ![Trade Journal Calendar](screenshots/journal_calendar.png)
+
+**Trade Journal - List View** -- Per-strategy summary cards, filterable trade list with expandable entry/exit analysis, CSV export. Filter by strategy, direction, outcome, day type, and date range.
+
+![Trade Journal List](screenshots/journal_list.png)
 
 **Trade Journal - Trade Detail** -- Entry analysis with a checklist of every gate the signal passed through, pulse bar details, strike rationale, market context, trade details (strikes, credit, risk/reward, duration), and exit analysis with post-trade review.
 
 ![Trade Detail](screenshots/trade_detail.png)
+
+**Backtest** -- Parameter configuration, strategy selection, previous runs with bulk delete, equity curve, drawdown chart, monthly returns table, win rate by day of week, and backtest assumptions panel.
+
+![Backtest](screenshots/backtest_example.png)
+
+**Analytics** -- Data source selector (live or backtest), equity curve, drawdown, monthly returns heatmap, P&L distribution, win rate by day/time/VIX regime. Works with both live trades and historical backtest results.
+
+![Analytics](screenshots/backtest_analytics.png)
+
+**Settings - Dry Run** -- Trading mode toggle, broker selection, PDT rule protection status, and notification configuration.
+
+![Settings Dry Run](screenshots/settings_dryrun.png)
+
+**Settings - E*TRADE** -- Broker credential management with masked display, connection testing, OAuth session status with token age and auto-renewal.
+
+![Settings E*TRADE](screenshots/settings_etrade.png)
 
 ---
 
@@ -170,8 +199,8 @@ BarBuilder (30-min aggregation)
 Strategy Engine
     |--- Daily Income (0DTE credit spreads, pulse bar + breakout)
     |--- Tag 'n Turn (BB mean reversion, 3-7 DTE swing)
-    |--- Bed & Breakfast (overnight signal -> morning entry)
-    |--- Opening Range Breakout (first-bar range breakout)
+    |--- Bed & Breakfast (directional confluence signal for DI)
+    |--- Opening Range Breakout (strong-only, range filter, confirmation delay)
     |
     v
 Portfolio Manager (2-slot limits, risk gates, circuit breaker, PDT gate)
@@ -183,7 +212,7 @@ Broker Interface
     |--- Dry-Run Broker (real data, simulated fills via Black-Scholes)
     |
     v
-Position Manager (P&L tracking, exit management, 1pm check)
+Position Manager (P&L tracking, exit management, partial fill tracking, 1pm check)
     |
     +---> SQLite Database (mode-specific: dry-run / live)
     +---> Flask Dashboard (Overview, Journal, Analytics, Backtest, Logs)
@@ -210,6 +239,8 @@ All settings are configured via `config/strategy_params.yaml` and the dashboard 
 - Setup window timing (morning start/end, afternoon window)
 - Bollinger Band filter parameters
 - PDT protection settings
+- ORB range filter and confirmation delay
+- B&B gap invalidation threshold
 
 ### What is hot-reloadable (no restart needed)
 - Notification settings (Slack, Discord, webhooks, email, SMS)
@@ -222,12 +253,15 @@ All settings are configured via `config/strategy_params.yaml` and the dashboard 
 | `strategy.spread_width` | $5 | Width of credit spreads |
 | `strategy.profit_target_pct` | 80% | Exit when this percentage of max profit is reached |
 | `portfolio.max_daily_loss_pct` | 2% | Circuit breaker: halt all entries for the day |
-| `portfolio.position_sizing.max_contracts` | 5 | Global max contracts per trade |
-| `portfolio.position_sizing.risk_per_trade_pct` | 1% | Account percentage risked per trade |
+| `portfolio.position_sizing.max_contracts` | 20 | Global max contracts per trade (set to 1 for small accounts) |
+| `portfolio.position_sizing.risk_per_trade_pct` | 2% | Account percentage risked per trade |
 | `timing.morning_start` | 09:30 | Setup window open |
 | `timing.morning_end` | 11:30 | Setup window close |
 | `tag_n_turn.spread_width` | $10 | TNT spread width (wider for swing trades) |
 | `tag_n_turn.min_dte` / `max_dte` | 3 / 7 | TNT expiration range |
+| `orb.min_range_points` | 8.0 | Minimum opening range size in points (skip narrow days) |
+| `orb.confirmation_minutes` | 3 | Minutes a breakout must hold before entry |
+| `bnb.gap_invalidation_pct` | 0.3% | Overnight gap threshold that invalidates B&B signal |
 
 ---
 
@@ -308,7 +342,7 @@ src/
     core/
         strategy.py          # Daily Income strategy (pulse bar + breakout)
         tag_n_turn.py        # Tag 'n Turn swing strategy (BB reversals)
-        bnb_strategy.py      # B&B overnight signal strategy
+        bnb_strategy.py      # B&B directional confluence signal
         orb_strategy.py      # Opening Range Breakout strategy
         portfolio_manager.py # Multi-strategy coordination and risk gates
         position_manager.py  # Trade lifecycle, P&L, exit management
@@ -384,11 +418,12 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask)
 
 ## Testing
 
-572 tests covering:
-- Strategy logic (pulse detection, breakout confirmation, setup windows)
+610 tests covering:
+- Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
-- Position management (sizing, P&L calculation, exit triggers)
+- Position management (sizing, P&L calculation, exit triggers, partial fill tracking)
 - Risk gates (circuit breaker, position limits, credit quality, drawdown)
+- Catastrophic scenario testing (max_contracts enforcement, B&B entry prevention, circuit breaker all-path coverage)
 - PDT compliance tracking and entry gating
 - Bar building and market state management
 - Consecutive loss tracking and streak counters
@@ -434,8 +469,11 @@ The dashboard Backtest tab provides:
 - All parameters configurable in-UI
 - Progress bar with current date indicator
 - Results display with equity curve, drawdown, and monthly returns
-- Previous runs list with instant reload
+- Backtest assumptions panel (slippage model, pricing model, fill assumptions, flagged unusual credits)
+- Previous runs list with bulk select and delete
 - Completed backtests auto-appear in the Analytics tab dropdown
+- VIX-aware slippage: base $0.02/leg, elevated to $0.04/leg in high-VIX regimes
+- NYSE half-day calendar: early close days handled automatically
 
 SPX and VIX data are downloaded automatically from Yahoo Finance. Pass `--csv` and `--vix-csv` to use existing data files.
 

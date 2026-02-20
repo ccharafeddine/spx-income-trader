@@ -101,7 +101,7 @@ Backtest uses `max_daily_loss_pct` for sizing; live uses `risk_per_trade_pct`. T
 | Scenario | Status | Test Coverage |
 |----------|--------|---------------|
 | Double entry (same strategy twice) | SAFE | Counter increments only after confirmed fill |
-| Partial spread fills | FIXED | Partial fills now rejected; full spread or nothing |
+| Partial spread fills | SAFE | Partial fills accepted with actual qty; zero fills rejected; notification sent |
 | Circuit breaker bypass | SAFE | All entry paths (DI, ORB, TNT) check breaker |
 | Position limit bypass | SAFE | 0DTE limit enforced at portfolio + counter level |
 | B&B accidental trade entry | SAFE | No entry methods exist; 4 tests verify |
@@ -111,14 +111,15 @@ Backtest uses `max_daily_loss_pct` for sizing; live uses `risk_per_trade_pct`. T
 | P&L race condition | SAFE | Single-threaded main loop, atomic updates |
 | ORB stale pending state | SAFE | Cleared on daily reset, rollback, and confirmation |
 
-### Fix Applied: Partial Fill Rejection
+### Partial Fill Handling
 
-**File:** `src/core/position_manager.py:178-185`
+**File:** `src/core/position_manager.py:178-190`
 
-Previously, partial fills were accepted with a warning. Now they are rejected:
-- If `filled_quantity != requested_quantity`, the trade is rejected (returns None)
-- The caller's rollback logic then restores the strategy to a retryable state
-- This prevents entering positions with fewer contracts than risk calculations assumed
+Partial fills are accepted and tracked with the actual filled quantity:
+- If `filled_quantity == 0`, the trade is rejected (returns None)
+- If `filled_quantity < requested_quantity`, the trade proceeds with `quantity = filled_quantity`
+- All downstream tracking (portfolio risk, P&L, exit logic) uses the actual filled quantity
+- A warning is logged and a notification sent via Slack/Discord for partial fills
 
 ---
 
@@ -213,7 +214,7 @@ Run through this checklist before enabling live trading with real money.
 
 | Fix | Severity | Description | Test Coverage |
 |-----|----------|-------------|---------------|
-| Partial fill rejection | HIGH | Reject trades where `filled_quantity != quantity` | `TestPartialFillRejection` (2 tests) |
+| Partial fill acceptance | HIGH | Accept partial fills with actual qty, reject zero fills, notify | `TestPartialFillAcceptance` (3 tests) |
 | max_contracts=1 enforcement | HIGH | Verified global ceiling is never overridden | `TestMaxContractsEnforcement` (4 tests) |
 | B&B entry removal verification | HIGH | Verified no code path can trigger B&B entry | `TestBnBCannotEnterTrades` (4 tests) |
 | Circuit breaker all-path coverage | MEDIUM | Verified all strategies check breaker | `TestCircuitBreakerBlocksAllPaths` (3 tests) |
