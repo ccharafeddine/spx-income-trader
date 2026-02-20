@@ -66,7 +66,7 @@ def _make_mock_bot(dry_run=True, daily_pnl=0.0):
     bot.broker = MagicMock()
     bot.broker.get_options_chain.return_value = _make_options_chain()
     bot.broker.place_spread_order.return_value = "ORDER-123"
-    bot.broker.get_order_status.return_value = {'status': 'filled', 'fill_price': 2.50}
+    bot.broker.get_order_status.return_value = {'status': 'filled', 'fill_price': 2.50, 'filled_quantity': 3}
     bot.broker.get_current_price.return_value = 6000.0
 
     # Mock portfolio (single source of truth for daily P&L)
@@ -1487,3 +1487,260 @@ class TestDryRunChainQuality:
 
             mock_synth.assert_not_called()
             assert broker._last_chain_source == 'real'
+
+
+# ============================================================================
+# TESTS: Catastrophic Scenario Prevention
+# ============================================================================
+
+class TestMaxContractsEnforcement:
+    """Verify max_contracts=1 sticks through all sizing paths."""
+
+    def test_max_contracts_1_sticks_for_orb(self):
+        """If user sets max_contracts=1, ORB override of 3 does NOT override it."""
+        from src.core.portfolio_manager import PortfolioManager, StrategyType
+
+        pm = PortfolioManager(
+            account_size=50000,
+            max_contracts=1,
+            min_contracts=1,
+            risk_per_trade_pct=2.0,
+        )
+
+        result = pm.calculate_position_size(
+            strategy=StrategyType.ORB,
+            max_risk_per_contract=200.0,
+            max_contracts_override=3,
+        )
+
+        assert result == 1, f"max_contracts=1 must stick, got {result}"
+
+    def test_max_contracts_1_sticks_for_di(self):
+        """If user sets max_contracts=1, DI override of 5 does NOT override it."""
+        from src.core.portfolio_manager import PortfolioManager, StrategyType
+
+        pm = PortfolioManager(
+            account_size=50000,
+            max_contracts=1,
+            min_contracts=1,
+            risk_per_trade_pct=2.0,
+        )
+
+        result = pm.calculate_position_size(
+            strategy=StrategyType.DAILY_INCOME,
+            max_risk_per_contract=200.0,
+            max_contracts_override=5,
+        )
+
+        assert result == 1, f"max_contracts=1 must stick, got {result}"
+
+    def test_max_contracts_1_sticks_for_tnt(self):
+        """If user sets max_contracts=1, TNT override of 2 does NOT override it."""
+        from src.core.portfolio_manager import PortfolioManager, StrategyType
+
+        pm = PortfolioManager(
+            account_size=50000,
+            max_contracts=1,
+            min_contracts=1,
+            risk_per_trade_pct=2.0,
+        )
+
+        result = pm.calculate_position_size(
+            strategy=StrategyType.TAG_N_TURN,
+            max_risk_per_contract=200.0,
+            max_contracts_override=2,
+        )
+
+        assert result == 1, f"max_contracts=1 must stick, got {result}"
+
+    def test_small_account_produces_1_contract(self):
+        """Small account with 2% risk should produce 1 contract, not 0."""
+        from src.core.portfolio_manager import PortfolioManager, StrategyType
+
+        pm = PortfolioManager(
+            account_size=5000,
+            max_contracts=20,
+            min_contracts=1,
+            risk_per_trade_pct=2.0,
+        )
+
+        # $5k * 2% = $100 budget / $500 risk = 0.2 -> floor(0.2) = 0
+        # Clamped to min_contracts=1
+        result = pm.calculate_position_size(
+            strategy=StrategyType.DAILY_INCOME,
+            max_risk_per_contract=500.0,
+            max_contracts_override=5,
+        )
+
+        assert result == 1, f"min_contracts=1 must be the floor, got {result}"
+
+
+class TestPartialFillRejection:
+    """Trades must not enter if the full spread can't fill."""
+
+    def test_partial_fill_rejected(self):
+        """Position manager rejects partial fills."""
+        from src.core.position_manager import PositionManager
+        from src.models.bar import Bar
+
+        broker = MagicMock()
+        strategy = MagicMock()
+        strategy.classify_credit_quality.return_value = {
+            'quality': 'good', 'credit_received': 2.50,
+            'expected_range': '$2-3', 'moneyness': 'ATM',
+            'is_simulated_concern': False,
+        }
+        broker.place_spread_order.return_value = "ORDER-PARTIAL"
+        broker.get_order_status.return_value = {
+            'status': 'filled',
+            'fill_price': 2.40,
+            'filled_quantity': 2,  # Requested 3, only 2 filled
+        }
+
+        pm = PositionManager(
+            broker=broker,
+            strategy=strategy,
+            db_manager=MagicMock(),
+        )
+
+        spread = MagicMock()
+        spread.credit_received = 2.50
+        spread.max_risk = 250.0
+        spread.direction = TradeDirection.BULLISH
+        bar = Bar(
+            timestamp=datetime(2026, 2, 11, 10, 30),
+            open=6000, high=6010, low=5990, close=6005,
+        )
+
+        result = pm.enter_trade(spread, bar, quantity=3)
+
+        assert result is None, "Partial fill must be rejected"
+
+    def test_full_fill_accepted(self):
+        """Position manager accepts full fills."""
+        from src.core.position_manager import PositionManager
+        from src.models.bar import Bar
+
+        broker = MagicMock()
+        strategy = MagicMock()
+        strategy.classify_credit_quality.return_value = {
+            'quality': 'good', 'credit_received': 2.50,
+            'expected_range': '$2-3', 'moneyness': 'ATM',
+            'is_simulated_concern': False,
+        }
+        broker.place_spread_order.return_value = "ORDER-FULL"
+        broker.get_order_status.return_value = {
+            'status': 'filled',
+            'fill_price': 2.50,
+            'filled_quantity': 3,  # All 3 filled
+        }
+
+        pm = PositionManager(
+            broker=broker,
+            strategy=strategy,
+            db_manager=MagicMock(),
+        )
+
+        spread = MagicMock()
+        spread.credit_received = 2.50
+        spread.max_risk = 250.0
+        spread.max_profit = 250.0
+        spread.breakeven = 5997.50
+        spread.direction = TradeDirection.BULLISH
+        spread.underlying_price_at_entry = 6000.0
+        spread.short_leg = MagicMock(strike=6000.0)
+        spread.long_leg = MagicMock(strike=5995.0)
+        spread.expiration = None
+        spread.theoretical_mid_credit = 2.50
+        bar = Bar(
+            timestamp=datetime(2026, 2, 11, 10, 30),
+            open=6000, high=6010, low=5990, close=6005,
+        )
+
+        result = pm.enter_trade(spread, bar, quantity=3)
+
+        assert result is not None, "Full fill should be accepted"
+
+
+class TestBnBCannotEnterTrades:
+    """After rework, B&B must never trigger a trade entry."""
+
+    def test_bnb_on_bar_complete_returns_none(self, tmp_path):
+        """on_bar_complete() always returns None (no action dict)."""
+        from src.core.bnb_strategy import BnBStrategy
+        from src.models.bar import Bar
+
+        bnb = BnBStrategy({'enabled': True}, persistence_path=tmp_path / 'bnb.json')
+
+        bar = Bar(
+            timestamp=datetime(2026, 2, 11, 15, 30),
+            open=6000, high=6020, low=6000, close=6019,  # Pulse bar
+        )
+
+        result = bnb.on_bar_complete(bar, 6019)
+        assert result is None, "B&B on_bar_complete must return None (informational only)"
+
+    def test_bnb_has_no_check_entry_signal(self):
+        """BnBStrategy must not have check_entry_signal method."""
+        from src.core.bnb_strategy import BnBStrategy
+
+        assert not hasattr(BnBStrategy, 'check_entry_signal'), \
+            "B&B must not have check_entry_signal (removed in rework)"
+
+    def test_bnb_has_no_rollback_entry(self):
+        """BnBStrategy must not have rollback_entry method."""
+        from src.core.bnb_strategy import BnBStrategy
+
+        assert not hasattr(BnBStrategy, 'rollback_entry'), \
+            "B&B must not have rollback_entry (removed in rework)"
+
+    def test_bnb_not_in_0dte_counter(self):
+        """B&B trades must NOT count toward dte0_trades_today."""
+        from src.main import TradingBot
+
+        bot = _make_mock_bot()
+        bot.db.get_daily_counts_by_strategy.return_value = {
+            'daily_income': 0,
+            'orb': 0,
+            'bnb': 5,  # Even if DB has old B&B trades
+            'tag_n_turn': 0,
+        }
+        bot.db.get_daily_summary.return_value = {'trades_count': 5, 'realized_pnl': 0.0}
+
+        TradingBot._restore_daily_counters(bot, date(2026, 2, 11))
+
+        assert bot.dte0_trades_today == 0, "B&B must not count toward 0DTE slot"
+
+
+class TestCircuitBreakerBlocksAllPaths:
+    """Verify circuit breaker blocks every entry path."""
+
+    def test_circuit_breaker_blocks_orb(self):
+        """ORB entry blocked when circuit breaker is tripped."""
+        from src.main import TradingBot
+
+        bot = _make_mock_bot(daily_pnl=-1500.0)
+        bot.portfolio.circuit_breaker_triggered = True
+
+        result = TradingBot._check_daily_loss_circuit_breaker(bot)
+        assert result is False
+
+    def test_circuit_breaker_blocks_tnt(self):
+        """TNT entry blocked when circuit breaker is tripped."""
+        from src.main import TradingBot
+
+        bot = _make_mock_bot(daily_pnl=-1500.0)
+        bot.portfolio.circuit_breaker_triggered = True
+
+        result = TradingBot._check_daily_loss_circuit_breaker(bot)
+        assert result is False
+
+    def test_circuit_breaker_blocks_di(self):
+        """DI entry blocked when circuit breaker is tripped."""
+        from src.main import TradingBot
+
+        bot = _make_mock_bot(daily_pnl=-1500.0)
+        bot.portfolio.circuit_breaker_triggered = True
+
+        result = TradingBot._check_daily_loss_circuit_breaker(bot)
+        assert result is False
