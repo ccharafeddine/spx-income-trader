@@ -164,8 +164,14 @@ class TradingBot:
         # Daily loss limit is enforced solely by PortfolioManager.daily_realized_pnl
         # to prevent dual-tracker drift. No separate TradingBot.daily_pnl.
 
-        # Afternoon window (Bed & Breakfast system, p.23-26)
+        # Morning setup window (configurable via timing settings)
         timing_cfg = STRATEGY_PARAMS.get('timing', {})
+        morning_start_str = timing_cfg.get('morning_start', '09:30')
+        morning_end_str = timing_cfg.get('morning_end', '11:30')
+        self.morning_start = time(int(morning_start_str.split(':')[0]), int(morning_start_str.split(':')[1]))
+        self.morning_end = time(int(morning_end_str.split(':')[0]), int(morning_end_str.split(':')[1]))
+
+        # Afternoon window (Bed & Breakfast system, p.23-26)
         self.afternoon_enabled = timing_cfg.get('afternoon_enabled', False)
         afternoon_start_str = timing_cfg.get('afternoon_start', '15:00')
         afternoon_end_str = timing_cfg.get('afternoon_end', '15:30')
@@ -738,8 +744,8 @@ class TradingBot:
                         window_end = self.afternoon_end
                         window_label = f"{self.afternoon_start.strftime('%H:%M')}-{self.afternoon_end.strftime('%H:%M')}"
                     else:
-                        window_end = time(11, 30)
-                        window_label = "9:30-11:30"
+                        window_end = self.morning_end
+                        window_label = f"{self.morning_start.strftime('%H:%M')}-{self.morning_end.strftime('%H:%M')}"
                     if current_time.time() > window_end:
                         above_below = 'above' if ps['direction'].value == 'bullish' else 'below'
                         logger.info(
@@ -761,7 +767,7 @@ class TradingBot:
                 # Log outside-window status periodically
                 if not self._is_setup_window(current_time):
                     if loop_count == 1 or loop_count % 20 == 0:
-                        windows_str = "9:30-11:30"
+                        windows_str = f"{self.morning_start.strftime('%H:%M')}-{self.morning_end.strftime('%H:%M')}"
                         if self.afternoon_enabled:
                             windows_str += f", {self.afternoon_start.strftime('%H:%M')}-{self.afternoon_end.strftime('%H:%M')}"
                         logger.info(f"Outside setup windows ({windows_str} ET). Current: {current_time.strftime('%H:%M')} ET. Monitoring only.")
@@ -880,10 +886,8 @@ class TradingBot:
         """Check if we're in any active setup window (morning or afternoon)."""
         current_time = dt.time()
 
-        # Morning window
-        morning_start = time(9, 30)
-        morning_end = time(11, 30)
-        if morning_start <= current_time <= morning_end:
+        # Morning window (from timing config)
+        if self.morning_start <= current_time <= self.morning_end:
             return True
 
         # Afternoon window (Bed & Breakfast)
@@ -897,9 +901,7 @@ class TradingBot:
         """Return which setup window is currently active: 'morning', 'afternoon', or 'none'."""
         current_time = dt.time()
 
-        morning_start = time(9, 30)
-        morning_end = time(11, 30)
-        if morning_start <= current_time <= morning_end:
+        if self.morning_start <= current_time <= self.morning_end:
             return 'morning'
 
         if self.afternoon_enabled:
@@ -1863,9 +1865,7 @@ class TradingBot:
         else:
             ct = bar_time.astimezone(self.tz).time()
 
-        morning_start = time(9, 30)
-        morning_end = time(11, 30)
-        if morning_start <= ct < morning_end:
+        if self.morning_start <= ct < self.morning_end:
             return True
 
         if self.afternoon_enabled:

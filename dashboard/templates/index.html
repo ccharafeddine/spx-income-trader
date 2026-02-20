@@ -5910,13 +5910,15 @@ document.addEventListener('keydown', function(e) {
 // ---------------------------------------------------------------
 let analyticsSourcesLoaded = false;
 
-async function loadAnalyticsSourceOptions() {
-  if (analyticsSourcesLoaded) return;
+async function loadAnalyticsSourceOptions(force, selectRunId) {
+  if (!force && analyticsSourcesLoaded) return;
   analyticsSourcesLoaded = true;
+  const sel = document.getElementById('an-source');
+  // Clear existing backtest options (keep first "Live Trades" option)
+  while (sel.options.length > 1) sel.remove(1);
   try {
     const resp = await fetchJSON('/api/backtest/history');
     if (resp && resp.runs && resp.runs.length) {
-      const sel = document.getElementById('an-source');
       resp.runs.forEach(run => {
         const opt = document.createElement('option');
         opt.value = 'backtest:' + run.id;
@@ -5924,6 +5926,9 @@ async function loadAnalyticsSourceOptions() {
         opt.textContent = 'Backtest: ' + label + ' (' + run.total_trades + ' trades)';
         sel.appendChild(opt);
       });
+    }
+    if (selectRunId) {
+      sel.value = 'backtest:' + selectRunId;
     }
   } catch(e) { /* ignore */ }
 }
@@ -6188,6 +6193,12 @@ async function runBacktest() {
     max_contracts: parseInt(document.getElementById('bt-contracts').value),
     slippage: parseFloat(document.getElementById('bt-slippage').value),
     max_daily_loss: parseFloat(document.getElementById('bt-max-loss').value),
+    strategies: {
+      daily_income: { enabled: document.getElementById('bt-strat-di').checked },
+      tag_n_turn: { enabled: document.getElementById('bt-strat-tnt').checked },
+      bnb: { enabled: document.getElementById('bt-strat-bnb').checked },
+      orb: { enabled: document.getElementById('bt-strat-orb').checked },
+    },
   };
 
   try {
@@ -6234,6 +6245,7 @@ async function pollBacktestStatus() {
       } else if (data.has_results) {
         loadBacktestResults();
         loadBacktestHistory();
+        loadAnalyticsSourceOptions(true, data.job_id);
       }
     }
   } catch(e) {

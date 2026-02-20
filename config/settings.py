@@ -304,9 +304,6 @@ ETRADE_CONFIG = {
 # Trading Configuration
 TRADING_MODE = _get_trading_mode()
 
-# Database Configuration
-DATABASE_PATH = os.getenv('DATABASE_PATH', str(DB_PATH))
-
 # Mode-specific database paths
 _DB_DIR = str(Path(DB_PATH).parent)
 BACKTEST_DB_PATH = os.path.join(_DB_DIR, 'backtest.db')
@@ -323,6 +320,10 @@ def get_database_path(mode: str = None) -> str:
     if mode == 'live':
         return os.path.join(_DB_DIR, 'trades_live.db')
     return os.path.join(_DB_DIR, 'trades_dryrun.db')
+
+
+# Database Configuration - mode-specific (dry-run vs live)
+DATABASE_PATH = os.getenv('DATABASE_PATH') or get_database_path()
 
 # Logging Configuration
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')

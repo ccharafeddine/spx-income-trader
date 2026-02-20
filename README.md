@@ -2,116 +2,157 @@
 
 ![CI](https://github.com/ccharafeddine/spx-income-trader/actions/workflows/ci.yml/badge.svg) ![Python 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Automated SPX 0DTE options income trading system. Executes credit spread strategies on the S&P 500 index using Phil Newton's Production Line methodology. Four parallel strategies run autonomously from market open to close with real-time risk management, a web dashboard, and multi-broker support (E*TRADE, Charles Schwab, dry-run). Ships as a standalone desktop app for Windows, macOS, and Linux.
+Automated SPX 0DTE options income trading system. Runs four parallel credit spread strategies on the S&P 500 index, autonomously from market open to close, with real-time risk management, a web dashboard, full backtesting, and multi-broker support (E*TRADE, Charles Schwab, dry-run simulation). Ships as a standalone desktop app for Windows and macOS.
 
 ---
 
 ## How It Works
 
-1. **Scan** - Monitors 30-minute SPX bars for pulse bar momentum patterns (price closing in the top or bottom 10% of the bar's range)
-2. **Confirm** - Waits for the next bar to break the pulse bar's high or low, confirming directional momentum
-3. **Execute** - Enters an ATM credit spread ($5 wide, same-day expiration) in the direction of the signal
-4. **Manage** - Targets 80% of max profit. At 1:00 PM ET, applies trend-based management rules to decide whether to hold or close early
-5. **Repeat** - Resets daily. No overnight exposure on 0DTE positions
+1. **Scan** -- Monitors 30-minute SPX bars for pulse bar momentum patterns (price closing in the top or bottom 10% of the bar's range)
+2. **Confirm** -- Waits for price to break the pulse bar's high or low, confirming directional momentum
+3. **Execute** -- Enters an ATM credit spread ($5 wide, same-day expiration) in the confirmed direction
+4. **Manage** -- Targets 80% of max profit. At 1:00 PM ET, applies trend-based management rules to decide hold vs. close
+5. **Repeat** -- Resets daily. No overnight exposure on 0DTE positions
 
-The entire pipeline runs autonomously. The bot handles strike selection, order sizing, execution, monitoring, and exit management.
+The entire pipeline runs autonomously. The bot handles strike selection, order sizing, execution, monitoring, and exit management across all four strategies simultaneously.
+
+---
+
+## Strategies
+
+### Daily Income (DI) -- Core 0DTE
+The primary strategy. Detects 30-minute pulse bars during the 9:30-11:30 ET setup window. A pulse bar is one where price closes in the extreme top or bottom 10% of the bar's range, signaling strong directional momentum. After detection, the bot waits for a breakout confirmation (price breaking above the pulse bar high for bullish, below the low for bearish), then enters an ATM credit spread with same-day expiration. Exits at 80% of max profit, via 1 PM management rules, or at expiration.
+
+### Tag 'n Turn (TNT) -- Swing
+Bollinger Band mean reversion strategy with 3-7 DTE. Uses a state machine: detects when price tags a Bollinger Band, waits for a pulse bar confirming reversal, then enters on breakout. Targets the opposite Bollinger Band. Holds up to 7 days. Runs in a separate swing slot alongside the 0DTE strategies.
+
+### Bed & Breakfast (B&B) -- Overnight Signal
+Detects pulse bars in the 3:00-4:00 PM ET window. The signal persists overnight and activates at the next morning's open (9:30-10:00 ET). Two exit modes: "Just Breakfast" (exit after first 30 minutes) or aggressive roll (if the morning bar also qualifies as a pulse, the position rolls into full DI management for the day).
+
+### Opening Range Breakout (ORB)
+Uses the first 30-minute bar of the day to define the opening range. Analyzes where price closes within the range to determine directional bias (top 10% = strong bullish, bottom 10% = strong bearish, with weak zones in between). Enters when price breaks above the range high or below the range low. Managed by DI's exit logic once entered.
+
+### Position Limits
+- 2 total position slots: 1 shared 0DTE (DI, ORB, or B&B) + 1 swing (TNT)
+- All strategies share a single daily loss circuit breaker
+- DI, ORB, and B&B share the 0DTE slot (max 1 per day)
+- TNT uses the swing slot independently (max 1 per day)
+- All strategies go through the same portfolio risk gates before entry
 
 ---
 
 ## Features
 
-**Strategy Engine**
-- Four parallel strategies: Daily Income (core 0DTE), Tag 'n Turn (swing), Bed & Breakfast (overnight signals), Opening Range Breakout
-- 2-slot position system: 1 shared 0DTE slot (DI/ORB/B&B) + 1 swing slot (TNT)
-- Pulse bar detection with configurable thresholds
-- Bollinger Band filtering for trend context (TNT)
-- 1:00 PM automated position management based on trending vs. non-trending conditions
-- All four strategies supported in backtesting
-
-**Risk Management**
+### Risk Management
 - Dynamic position sizing via percent-risk method (scales with account growth)
-- 2% daily loss circuit breaker halts new entries automatically
+- Per-strategy max contract overrides for fine-grained sizing control
+- 2% daily loss circuit breaker halts all new entries automatically
 - Weekly and monthly drawdown limits with configurable thresholds
+- Consecutive-loss circuit breaker with configurable pause duration
 - Credit quality gates reject low-premium setups
 - Max position limits enforced across all strategies (2 total: 1 0DTE + 1 swing)
 - PDT rule compliance: tracks day trades in a rolling 5-business-day window, blocks entries when slots exhausted (accounts under $25k)
-- VIX regime awareness (low/normal/elevated/high/extreme classifications)
-- Win/loss streak tracking with consecutive-loss circuit breaker
+- VIX regime awareness (low / normal / elevated / high / extreme)
+- Win/loss streak tracking with frozen previous-streak display
 
-**Broker Integration**
+### Broker Integration
 - Multi-broker architecture with pluggable broker interface
 - **E*TRADE**: Full API integration with OAuth flow, token auto-renewal (90-min cycle), order preview/place/confirm pipeline
 - **Charles Schwab**: schwab-py integration with OAuth2 authorization, automatic token refresh, and full options order support
-- Broker selection via `strategy_params.yaml` (`broker.active: schwab` or `broker.active: etrade`)
+- **Dry-run mode** (default): Real market data via Yahoo Finance with simulated fills using Black-Scholes pricing. No broker credentials needed.
 - Reactive 401 handling with automatic token refresh and retry on both brokers
 - Proactive token freshness checks before order placement
 - Rate limit (429) protection with exponential backoff
-- Dry-run mode for paper trading with real market data and simulated fills (Black-Scholes pricing)
 
-**Dashboard**
+### Database Separation
+- Dry-run and live trading use separate databases (`trades_dryrun.db` / `trades_live.db`)
+- Switching modes shows only trades from that mode
+- Backtest results stored in a shared database (mode-independent)
+- Schema auto-created on first access for new mode
+
+### Dashboard
 - Real-time web UI with account summary, candlestick charts, and position monitoring
-- Audio alerts via Web Audio API: market open/close bell chimes, trade entry/exit tones, bar completion pings, and danger alerts (all mutable)
+- Audio alerts via Web Audio API: market open/close chimes, trade entry/exit tones, bar completion pings, danger alerts (all mutable)
 - Signal log showing every detected setup with strikes, credit, risk, and SPX price
-- Trade journal with monthly calendar view, entry analysis (pulse bar checklist), market context, and exit review
-- Daily journal capturing bars built, pulse bars, signals, rejections, and no-trade summaries
-- Performance analytics tab with Sharpe ratio, Sortino ratio, max drawdown, equity curve, and monthly returns
-- Risk status panel with drawdown tracking and win/loss streak counters
+- Five tabs: Overview, Trade Journal, Analytics, Backtest, Logs
+
+### Trade Journal
+- Monthly calendar view showing per-day P&L, trade count, strategy tags, no-trade reasons
+- Entry analysis with pulse bar checklist, strike rationale, market context
+- Exit review with post-trade notes and performance rating
+- Daily journal capturing bars built, pulse bars, signals evaluated, rejections with reasons
 - Filterable by strategy, direction, outcome, day type, and date range
-- PDT status badge with real-time slot count and next-frees date display
 - CSV export for offline analysis
 
-**Backtesting**
-- Historical replay engine supporting all four strategies (DI, TNT, ORB, B&B)
-- Automatic SPX and VIX data download from Yahoo Finance
-- Equity curve, Sharpe/Sortino/Calmar ratios, max drawdown, profit factor
-- Per-strategy trade breakdown and monthly return heatmaps
-- Configurable parameters (threshold, spread width, capital, slippage)
+### Analytics
+- Data source selector: view analytics for live trades or any historical backtest run
+- Sharpe ratio, Sortino ratio, max drawdown, profit factor, expectancy
+- Equity curve and drawdown series charts
+- Monthly returns heatmap with yearly totals
+- P&L distribution histogram
+- Win rate breakdowns: by day of week, by time of day, by VIX regime
+- Per-strategy trade breakdown (trades, wins, win rate, total P&L)
+- Per-direction breakdown (bullish vs. bearish)
+- Rolling win rate chart (7-day, 30-day, 90-day moving averages)
+- Auto-loads completed backtest results without requiring app restart
 
-**Notifications**
+### Backtesting
+- Historical replay engine supporting all four strategies (DI, TNT, ORB, B&B)
+- Strategy selection checkboxes: run any combination of the four strategies
+- Automatic SPX and VIX data download from Yahoo Finance
+- Configurable parameters: pulse threshold, spread width, profit target, min credit, max contracts, slippage, max daily loss, initial capital
+- Position sizing scales with simulated account growth over the backtest period
+- Previous runs list with one-click reload
+- Results auto-populate in the Analytics tab dropdown on completion
+- Per-strategy trade breakdown and monthly return heatmaps
+
+### Notifications
 - Slack, Discord, and generic webhook integrations
 - Email and SMS (Twilio) support
 - Configurable notification levels (info, warning, critical)
-- Hot-reloadable: changes take effect without restarting the bot
+- Hot-reloadable: changes take effect without restarting the bot (the only hot-reloadable setting)
 
-**Demo Mode**
+### Demo Mode
 - Record live trading sessions as JSONL event streams
-- Replay recordings at accelerated speed (1x/5x/10x/30x/60x)
+- Replay recordings at accelerated speed (1x / 5x / 10x / 30x / 60x)
 - Pre-built demo scenarios: winning day, losing day, no-setup day
 - Dashboard looks identical during replay (same API routes, same UI)
+- Play/pause, speed control, seek, and jump-to-next-event controls
 
-**Observability**
+### Observability
 - Structured JSON logging with credential masking
 - Prometheus metrics endpoint (`/metrics`) with trade counters, P&L gauges, and latency histograms
 - Health endpoint (`/api/health`) for uptime monitoring
 - Rotating log files with separate error-level log
 
-**Desktop Application**
+### Desktop Application
 - Native window via pywebview (not a browser wrapper)
-- System tray with bot status indicator (green=running, red=stopped) and minimize-to-tray support
-- Available for Windows (PyInstaller), macOS (py2app), and Linux (PyInstaller + optional AppImage)
+- System tray with bot status indicator (green = running, red = stopped) and minimize-to-tray
+- Windows (PyInstaller) and macOS (py2app) builds
 - Headless mode (`--headless`) for running without a UI
 - Dev mode (`--dev`) opens in system browser
 
-**Data & Storage**
+### Data & Storage
 - SQLite database with WAL mode for concurrent read/write access
+- Separate databases for dry-run and live trading modes
 - OS keychain credential storage (Windows Credential Manager / macOS Keychain / Linux Secret Service)
 - Automatic database migrations on startup
-- Signal log rotation at 5,000 entries
-- Atomic writes (tempfile + rename) for crash safety
+- Signal log rotation at 5,000 entries with atomic writes (tempfile + rename)
+- CSRF protection via per-session API token on all state-changing requests
 
 ---
 
 ## Screenshots
 
-**Dashboard Overview** - Bot status, strategy parameters, risk drawdown meters, SPX candlestick chart with pulse bar highlights, account summary, signal log, and trade history.
+**Dashboard Overview** -- Bot status, strategy parameters, risk drawdown meters, SPX candlestick chart with pulse bar highlights, account summary, signal log, and trade history.
 
 ![Dashboard Overview](screenshots/overview.png)
 
-**Trade Journal - Calendar View** - Monthly calendar showing per-day P&L, trade count, strategy tags, no-trade reasons, weekends, and market holidays. Click any day to expand its trades below.
+**Trade Journal - Calendar View** -- Monthly calendar showing per-day P&L, trade count, strategy tags, no-trade reasons, weekends, and market holidays. Click any day to expand its trades below.
 
 ![Trade Journal Calendar](screenshots/journal_calendar.png)
 
-**Trade Journal - Trade Detail** - Entry analysis with a checklist of every gate the signal passed through, pulse bar details, strike rationale, market context, trade details (strikes, credit, risk/reward, duration), and exit analysis with post-trade review.
+**Trade Journal - Trade Detail** -- Entry analysis with a checklist of every gate the signal passed through, pulse bar details, strike rationale, market context, trade details (strikes, credit, risk/reward, duration), and exit analysis with post-trade review.
 
 ![Trade Detail](screenshots/trade_detail.png)
 
@@ -144,13 +185,49 @@ Broker Interface
     v
 Position Manager (P&L tracking, exit management, 1pm check)
     |
-    +---> SQLite Database + Flask Dashboard
+    +---> SQLite Database (mode-specific: dry-run / live)
+    +---> Flask Dashboard (Overview, Journal, Analytics, Backtest, Logs)
     +---> Notification Manager (Slack, Discord, email, SMS, webhooks)
     +---> Prometheus Metrics (/metrics)
     +---> Event Recorder (demo JSONL capture)
 ```
 
-**Tech stack:** Python, Flask, SQLite, Yahoo Finance, E*TRADE API, schwab-py, pywebview, PyInstaller/py2app, Prometheus
+**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E*TRADE API, schwab-py, pywebview, PyInstaller/py2app, Prometheus
+
+---
+
+## Settings
+
+All settings are configured via `config/strategy_params.yaml` and the dashboard Settings page.
+
+### What requires a restart
+- Trading mode (dry-run / live)
+- Active broker (schwab / etrade / dry_run)
+- Strategy enable/disable flags (DI, TNT, B&B, ORB)
+- Pulse threshold, spread width, profit target
+- Position sizing parameters (max contracts, risk per trade)
+- Drawdown limits (daily, weekly, monthly)
+- Setup window timing (morning start/end, afternoon window)
+- Bollinger Band filter parameters
+- PDT protection settings
+
+### What is hot-reloadable (no restart needed)
+- Notification settings (Slack, Discord, webhooks, email, SMS)
+
+### Key parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `strategy.pulse_threshold` | 10% | How extreme the bar close must be (top/bottom N%) |
+| `strategy.spread_width` | $5 | Width of credit spreads |
+| `strategy.profit_target_pct` | 80% | Exit when this percentage of max profit is reached |
+| `portfolio.max_daily_loss_pct` | 2% | Circuit breaker: halt all entries for the day |
+| `portfolio.position_sizing.max_contracts` | 5 | Global max contracts per trade |
+| `portfolio.position_sizing.risk_per_trade_pct` | 1% | Account percentage risked per trade |
+| `timing.morning_start` | 09:30 | Setup window open |
+| `timing.morning_end` | 11:30 | Setup window close |
+| `tag_n_turn.spread_width` | $10 | TNT spread width (wider for swing trades) |
+| `tag_n_turn.min_dte` / `max_dte` | 3 / 7 | TNT expiration range |
 
 ---
 
@@ -170,20 +247,19 @@ python app_desktop.py
 
 # Pre-built desktop app (if available)
 # Windows: dist/The Daily Melt/The Daily Melt.exe
-# Linux:   dist/SPXIncomeTrader/The Daily Melt
 # macOS:   dist/The Daily Melt.app
 ```
 
 **Broker Setup:**
 
-- **Schwab**: Run through the OAuth2 authorization flow via the Settings page. The bot handles token refresh automatically. Set `broker.active: schwab` in `strategy_params.yaml`.
-- **E*TRADE**: Configure your consumer key and secret via the Settings page or OS keychain. OAuth token renewal runs on a 90-minute cycle. Set `broker.active: etrade` in `strategy_params.yaml`.
+- **Schwab**: Launch the app, go to Settings, enter your Schwab API credentials, and complete the OAuth2 flow. The bot handles token refresh automatically. Set `broker.active: schwab` in `strategy_params.yaml`.
+- **E*TRADE**: Configure your consumer key and secret via the Settings page or OS keychain. OAuth token renewal runs on a 90-minute cycle. Set `broker.active: etrade`.
 - **Dry Run** (default): No broker config needed. Uses real market data with simulated fills.
 
 **Configuration:**
 - `config/strategy_params.yaml` for strategy parameters (thresholds, spread width, profit target, timing windows, broker selection)
-- Dashboard Settings page for credentials, trading mode (dry-run/live), and account settings
-- Credentials stored in OS keychain, never in files
+- Dashboard Settings page for credentials, trading mode (dry-run/live), and notifications
+- Credentials stored in OS keychain, never in config files
 
 ---
 
@@ -194,7 +270,6 @@ Requires **Python 3.13** (pythonnet does not support 3.14+).
 **Windows (PyInstaller):**
 
 ```bash
-# Create a Python 3.13 virtual environment
 py -3.13 -m venv .venv313
 .venv313\Scripts\activate
 pip install -r requirements.txt
@@ -206,29 +281,9 @@ python build/build_windows.py --clean
 python build/build_windows.py --clean --debug
 ```
 
-**Linux (PyInstaller):**
-
-```bash
-# Install system dependencies (Ubuntu/Debian)
-sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1
-sudo apt install libayatana-appindicator3-dev
-
-# Create a Python 3.13 virtual environment
-python3.13 -m venv .venv313
-source .venv313/bin/activate
-pip install -r requirements.txt
-
-# Build (output: dist/SPXIncomeTrader/)
-python build/build_linux.py --clean
-
-# Optional: package as AppImage
-python build/build_linux.py --appimage
-```
-
 **macOS (py2app):**
 
 ```bash
-# Create a Python 3.13 virtual environment
 python3.13 -m venv .venv313
 source .venv313/bin/activate
 pip install -r requirements.txt
@@ -239,7 +294,6 @@ python build/build_macos.py --clean
 
 **Packaged app data paths:**
 - Windows: `%LOCALAPPDATA%\SPXIncomeTrader\SPXIncomeTrader\`
-- Linux: `~/.local/share/SPXIncomeTrader/`
 - macOS: `~/Library/Application Support/SPXIncomeTrader/`
 
 The packaged app copies the database and seeds `strategy_params.yaml` on first run.
@@ -261,7 +315,7 @@ src/
         bar_builder.py       # 30-min bar aggregation from tick data
         pulse_detector.py    # Pulse bar pattern detection
         bollinger_filter.py  # Bollinger Band filter and trend bias
-        pdt_tracker.py       # Pattern Day Trader rule tracking and entry gating
+        pdt_tracker.py       # Pattern Day Trader rule tracking
         drawdown_manager.py  # Drawdown tracking and circuit breakers
     data/
         yahoo_finance.py     # Real-time SPX/VIX quotes
@@ -272,7 +326,7 @@ src/
         broker_factory.py    # Broker selection and instantiation
         etrade_broker.py     # E*TRADE live trading (OAuth, orders)
         etrade_auth.py       # E*TRADE OAuth token management
-        schwab_broker.py     # Charles Schwab live trading (schwab-py)
+        schwab_broker.py     # Schwab live trading (schwab-py)
         schwab_auth.py       # Schwab OAuth2 token management
         dry_run_broker.py    # Simulated execution with real data
     backtest/
@@ -280,7 +334,7 @@ src/
         runner.py            # CLI backtest runner
         data_loader.py       # Yahoo Finance data download and CSV parsing
         sim_broker.py        # Simulated broker for backtesting
-        report.py            # Backtest report generation (Markdown + charts)
+        report.py            # Backtest report generation
     demo/
         recorder.py          # JSONL event recorder for live sessions
         replay.py            # Replay engine with threaded playback
@@ -291,25 +345,24 @@ src/
     utils/
         app_paths.py         # Cross-platform path resolution
         logging.py           # Structured logging with credential masking
-        metrics.py           # Prometheus metrics (counters, gauges, histograms)
-        notifications.py     # Slack, Discord, email, SMS, webhook notifications
-        version.py           # Version management and update checks
+        metrics.py           # Prometheus metrics
+        notifications.py     # Slack, Discord, email, SMS, webhooks
+        version.py           # Version management
 
 dashboard/
     app.py                   # Flask REST API and dashboard server
     templates/
-        index.html           # Overview + chart + signal log + analytics
+        index.html           # Main dashboard (5 tabs)
         settings.html        # Configuration UI
         setup.html           # Initial setup wizard
 
 config/
     strategy_params.yaml     # All strategy and risk parameters
-    settings.py              # Environment and path configuration
+    settings.py              # Environment, paths, DB config
 
 database/
     db_manager.py            # SQLite operations (WAL mode, migrations)
-    schema.sql               # Database schema
-    migrations/              # Auto-applied schema migrations
+    schema.sql               # Database schema (53 columns)
     demo_recordings/         # Pre-built demo JSONL files
 
 scripts/
@@ -322,14 +375,7 @@ scripts/
 
 build/
     build_windows.py         # PyInstaller build script (Windows)
-    build_linux.py           # PyInstaller build script (Linux)
     build_macos.py           # py2app build script (macOS)
-
-.github/
-    workflows/
-        ci.yml               # CI pipeline: lint, test (3.11-3.13), security
-
-tests/                       # 557 unit tests
 
 app_desktop.py               # Desktop app entry point (pywebview + Flask)
 ```
@@ -338,7 +384,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask)
 
 ## Testing
 
-557 tests covering:
+572 tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
 - Position management (sizing, P&L calculation, exit triggers)
@@ -353,18 +399,19 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask)
 - Monitoring and observability (Prometheus metrics, health endpoint)
 - Schwab and E*TRADE broker integration
 - Slippage tracking and database migrations
+- Database separation (dry-run vs live mode)
 
 ```bash
 python -m pytest tests/ -v
 ```
 
-CI runs on every push and pull request to `main`, testing Python 3.11, 3.12, and 3.13. See `.github/workflows/ci.yml`.
+CI runs on every push and pull request to `main`, testing Python 3.11, 3.12, and 3.13.
 
 ---
 
 ## Backtesting
 
-Run a historical backtest with automatic data download from Yahoo Finance:
+Run backtests from the dashboard Backtest tab or via CLI:
 
 ```bash
 python -m src.backtest.runner --start 2024-01-01 --end 2025-12-31
@@ -382,13 +429,15 @@ python -m src.backtest.runner \
     --output docs/backtest_report.md
 ```
 
-Produces a Markdown report with:
-- Total return, annualized return, Sharpe ratio, Sortino ratio, Calmar ratio
-- Max drawdown (dollar and percent), profit factor, expectancy per trade
-- Win rate, average win/loss, max consecutive wins/losses
-- Equity curve and monthly return breakdown
+The dashboard Backtest tab provides:
+- Strategy selection checkboxes (any combination of DI, TNT, B&B, ORB)
+- All parameters configurable in-UI
+- Progress bar with current date indicator
+- Results display with equity curve, drawdown, and monthly returns
+- Previous runs list with instant reload
+- Completed backtests auto-appear in the Analytics tab dropdown
 
-SPX and VIX data are downloaded automatically from Yahoo Finance on first run. Pass `--csv` and `--vix-csv` to use existing data files.
+SPX and VIX data are downloaded automatically from Yahoo Finance. Pass `--csv` and `--vix-csv` to use existing data files.
 
 ---
 
@@ -400,43 +449,20 @@ Generate synthetic demo recordings and replay them through the dashboard:
 # Generate all three demo scenarios
 python scripts/generate_demo_recording.py --all
 
-# Launch the desktop app in demo mode (uses latest recording)
-python app_desktop.py --demo
-
-# Or specify a recording file
+# Launch the desktop app in demo mode
 python app_desktop.py --demo database/demo_recordings/demo_winning.jsonl
 ```
 
-Demo mode replays recorded events at accelerated speed through the standard dashboard. The UI is identical to live trading: same charts, signals, trades, and risk displays. Use the on-screen controls to play/pause, change speed (1x-60x), seek, or jump to the next event.
-
-Three pre-built scenarios are included:
-- **Winning day**: Bullish pulse, breakout confirmed, put spread entered, 80% profit target hit (+$340)
-- **Losing day**: Bullish pulse, breakout, reversal, stop loss hit (-$160)
-- **No-setup day**: Narrow range, no pulse detected, all windows expire ($0)
-
----
-
-## Dry-Run Results
-
-Validation over 6 trading days (Feb 3-13, 2026) on a $50,000 simulated account:
-
-| Metric | Value |
-|--------|-------|
-| Trading Days | 6 |
-| Trades | 6 (5W / 1L) |
-| Win Rate | 83.3% |
-| Total P&L | +$3,915 |
-| Return | +7.83% |
-| Avg Win | +$918 |
-| Avg Loss | -$675 |
-
-These are simulated results using real-time SPX market data with Black-Scholes modeled option pricing. Live results will differ based on actual fills, slippage, and market conditions.
+Three pre-built scenarios:
+- **Winning day**: Bullish pulse, breakout confirmed, put spread entered, 80% profit target hit
+- **Losing day**: Bullish pulse, breakout, reversal, stop loss hit
+- **No-setup day**: Narrow range, no pulse detected, all windows expire
 
 ---
 
 ## Disclaimer
 
-This is a personal project built for educational purposes. It is not financial advice.
+This is a personal project. It is not financial advice.
 
 - Options trading involves significant risk of loss, including the possibility of losing more than the initial investment
 - Past performance, whether simulated or live, does not guarantee future results

@@ -25,7 +25,7 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.utils.app_paths import CONFIG_DIR, DATA_DIR
+from src.utils.app_paths import CONFIG_DIR, DATA_DIR, DB_PATH
 
 # Settings files - use writable paths that work in both dev and packaged mode
 SETTINGS_FILE = CONFIG_DIR / 'strategy_params.yaml'
@@ -419,6 +419,18 @@ def get_db_connection():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _ensure_trades_db():
+    """Ensure the mode-specific trades DB has the correct schema."""
+    try:
+        from database.db_manager import DatabaseManager
+        DatabaseManager.ensure_schema(DATABASE_PATH)
+    except Exception as e:
+        logger.warning(f"Could not initialize trades DB schema: {e}")
+
+
+_ensure_trades_db()
 
 
 def _ensure_journal_notes_table(conn):
@@ -2928,7 +2940,7 @@ def api_risk_status():
     # Compute win/loss streaks from trade history
     streaks = {'win_streak': 0, 'loss_streak': 0, 'active': 'none'}
     try:
-        db_path = BASE_DIR / 'database' / 'trades.db'
+        db_path = Path(DATABASE_PATH)
         if db_path.exists():
             import sqlite3
             conn = sqlite3.connect(str(db_path), timeout=10)
@@ -3478,7 +3490,7 @@ def api_analytics():
         if not run_id:
             return jsonify({'success': False, 'error': 'run_id required'}), 400
         try:
-            db_path = str(DATA_DIR / 'database' / 'trades.db')
+            db_path = str(DB_PATH)
             conn = sqlite3.connect(db_path, timeout=10)
             row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
             conn.close()
@@ -3516,7 +3528,7 @@ def api_analytics():
 
     # Live trades
     try:
-        db_path = str(DATA_DIR / 'database' / 'trades.db')
+        db_path = DATABASE_PATH
         conn = sqlite3.connect(db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
@@ -4121,7 +4133,7 @@ _backtest_lock = threading.Lock()
 
 def _init_backtest_table():
     """Create backtest_runs table if it doesn't exist."""
-    db_path = str(DATA_DIR / 'database' / 'trades.db')
+    db_path = str(DB_PATH)
     try:
         conn = sqlite3.connect(db_path, timeout=10)
         conn.execute("PRAGMA journal_mode=WAL")
@@ -4172,6 +4184,7 @@ def api_backtest_run():
     max_contracts = int(data.get('max_contracts', 5))
     slippage = float(data.get('slippage', 0.02))
     max_daily_loss = float(data.get('max_daily_loss', 2.0))
+    strategies = data.get('strategies', None)
 
     import uuid as _uuid
     job_id = str(_uuid.uuid4())[:8]
@@ -4199,6 +4212,7 @@ def api_backtest_run():
         'max_contracts': max_contracts,
         'slippage': slippage,
         'max_daily_loss': max_daily_loss,
+        'strategies': strategies,
     }
 
     def _run_backtest():
@@ -4243,6 +4257,7 @@ def api_backtest_run():
                 slippage=slippage,
                 max_daily_loss_pct=max_daily_loss,
                 progress_callback=progress_cb,
+                strategies=strategies,
             )
 
             results = engine.run()
@@ -4250,7 +4265,7 @@ def api_backtest_run():
 
             # Save to DB
             try:
-                db_path = str(DATA_DIR / 'database' / 'trades.db')
+                db_path = str(DB_PATH)
                 conn = sqlite3.connect(db_path, timeout=10)
                 conn.execute("PRAGMA journal_mode=WAL")
                 core = report.get('core', {})
@@ -4324,7 +4339,7 @@ def api_backtest_results():
     run_id = request.args.get('run_id')
     if run_id:
         try:
-            db_path = str(DATA_DIR / 'database' / 'trades.db')
+            db_path = str(DB_PATH)
             conn = sqlite3.connect(db_path, timeout=10)
             conn.execute("PRAGMA journal_mode=WAL")
             row = conn.execute(
@@ -4353,7 +4368,7 @@ def api_backtest_results():
 def api_backtest_history():
     """List previous backtest runs."""
     try:
-        db_path = str(DATA_DIR / 'database' / 'trades.db')
+        db_path = str(DB_PATH)
         conn = sqlite3.connect(db_path, timeout=10)
         conn.execute("PRAGMA journal_mode=WAL")
         rows = conn.execute("""

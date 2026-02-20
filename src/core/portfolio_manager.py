@@ -587,7 +587,8 @@ class PortfolioManager:
             # Import here to avoid circular imports
             from database.db_manager import DatabaseManager
 
-            db_path = Path(__file__).parent.parent.parent / 'database' / 'trades.db'
+            from config.settings import DATABASE_PATH
+            db_path = Path(DATABASE_PATH)
             db = DatabaseManager(str(db_path))
             stats = db.get_strategy_stats(strategy.value)
 
