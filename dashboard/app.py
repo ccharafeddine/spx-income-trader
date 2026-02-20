@@ -4306,6 +4306,7 @@ def api_backtest_run():
 
             with _backtest_lock:
                 _backtest_job['results'] = report
+                _backtest_job['params'] = params
                 _backtest_job['running'] = False
 
         except Exception as e:
@@ -4352,12 +4353,15 @@ def api_backtest_results():
             conn = sqlite3.connect(db_path, timeout=10)
             conn.execute("PRAGMA journal_mode=WAL")
             row = conn.execute(
-                "SELECT full_results FROM backtest_runs WHERE id = ?",
+                "SELECT full_results, params FROM backtest_runs WHERE id = ?",
                 (run_id,)
             ).fetchone()
             conn.close()
             if row:
-                return jsonify({'success': True, 'report': json.loads(row[0])})
+                resp = {'success': True, 'report': json.loads(row[0])}
+                if row[1]:
+                    resp['params'] = json.loads(row[1])
+                return jsonify(resp)
             return jsonify({'success': False, 'error': 'Run not found'}), 404
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500
@@ -4365,7 +4369,10 @@ def api_backtest_results():
     # Return current job results
     with _backtest_lock:
         if _backtest_job['results']:
-            return jsonify({'success': True, 'report': _backtest_job['results']})
+            resp = {'success': True, 'report': _backtest_job['results']}
+            if _backtest_job.get('params'):
+                resp['params'] = _backtest_job['params']
+            return jsonify(resp)
         if _backtest_job['error']:
             return jsonify({'success': False, 'error': _backtest_job['error']})
         if _backtest_job['running']:

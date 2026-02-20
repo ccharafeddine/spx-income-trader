@@ -2111,7 +2111,7 @@ header::after {
   content: attr(data-tooltip);
   position: absolute;
   bottom: calc(100% + 8px);
-  right: -8px;
+  left: -8px;
   width: 240px;
   padding: 10px 12px;
   background: #1a2332;
@@ -6334,7 +6334,7 @@ async function loadBacktestResults(runId) {
     document.getElementById('bt-results').style.display = 'block';
 
     renderBtMetrics(report);
-    renderBtAssumptions(report);
+    renderBtAssumptions(report, data.params);
     renderBtEquityCurve(report);
     renderBtDrawdown(report);
     renderBtMonthly(report);
@@ -6344,26 +6344,60 @@ async function loadBacktestResults(runId) {
   }
 }
 
-function renderBtAssumptions(report) {
+function renderBtAssumptions(report, params) {
   const panel = document.getElementById('bt-assumptions-panel');
   const container = document.getElementById('bt-assumptions');
   const a = report.assumptions;
-  if (!a) { panel.style.display = 'none'; return; }
+  if (!a && !params) { panel.style.display = 'none'; return; }
 
   panel.style.display = 'block';
-  const slipLabel = a.slippage_model === 'vix_aware'
-    ? 'VIX-aware (per-leg: $0.05-$0.20)'
-    : a.slippage_detail || 'Flat';
-  const flagged = a.flagged_credit_count || 0;
-  const flagColor = flagged > 0 ? '#f59e0b' : '#6b7280';
+  let html = '';
 
-  container.innerHTML = `
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px;">
-      <div><span style="color: #9ca3af;">Slippage Model:</span> <span style="color: #e5e7eb;">${slipLabel}</span></div>
-      <div><span style="color: #9ca3af;">Fill Assumption:</span> <span style="color: #e5e7eb;">${a.fill_model || 'N/A'}</span></div>
-      <div><span style="color: #9ca3af;">Pricing Model:</span> <span style="color: #e5e7eb;">${a.pricing_model || 'N/A'}</span></div>
-      <div><span style="color: #9ca3af;">Unusual Credits:</span> <span style="color: ${flagColor};">${flagged} trade${flagged !== 1 ? 's' : ''} flagged</span></div>
+  // Backtest parameters
+  if (params) {
+    const strats = params.strategies || {};
+    const enabledStrats = Object.entries(strats)
+      .filter(([k, v]) => v)
+      .map(([k]) => ({di: 'Daily Income', tnt: 'Tag N Turn', orb: 'ORB', bnb: 'B&B'}[k] || k))
+      .join(', ') || 'None';
+    html += `
+    <div style="margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border);">
+      <div style="font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">Parameters</div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px 24px;">
+        <div><span style="color: #9ca3af;">Date Range:</span> <span style="color: #e5e7eb;">${params.start_date || '?'} to ${params.end_date || '?'}</span></div>
+        <div><span style="color: #9ca3af;">Capital:</span> <span style="color: #e5e7eb;">$${(params.capital || 0).toLocaleString()}</span></div>
+        <div><span style="color: #9ca3af;">Max Contracts:</span> <span style="color: #e5e7eb;">${params.max_contracts || 'N/A'}</span></div>
+        <div><span style="color: #9ca3af;">Pulse Threshold:</span> <span style="color: #e5e7eb;">${params.pulse_threshold || 'N/A'}%</span></div>
+        <div><span style="color: #9ca3af;">Spread Width:</span> <span style="color: #e5e7eb;">$${params.spread_width || 'N/A'}</span></div>
+        <div><span style="color: #9ca3af;">Profit Target:</span> <span style="color: #e5e7eb;">${params.profit_target || 'N/A'}%</span></div>
+        <div><span style="color: #9ca3af;">Min Credit:</span> <span style="color: #e5e7eb;">$${params.min_credit || 'N/A'}</span></div>
+        <div><span style="color: #9ca3af;">Slippage:</span> <span style="color: #e5e7eb;">$${params.slippage || 'N/A'}</span></div>
+        <div><span style="color: #9ca3af;">Max Daily Loss:</span> <span style="color: #e5e7eb;">${params.max_daily_loss || 'N/A'}%</span></div>
+        <div style="grid-column: span 3;"><span style="color: #9ca3af;">Strategies:</span> <span style="color: #e5e7eb;">${enabledStrats}</span></div>
+      </div>
     </div>`;
+  }
+
+  // Simulation assumptions
+  if (a) {
+    const slipLabel = a.slippage_model === 'vix_aware'
+      ? 'VIX-aware (per-leg: $0.05-$0.20)'
+      : a.slippage_detail || 'Flat';
+    const flagged = a.flagged_credit_count || 0;
+    const flagColor = flagged > 0 ? '#f59e0b' : '#6b7280';
+    html += `
+    <div>
+      <div style="font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">Simulation</div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px;">
+        <div><span style="color: #9ca3af;">Slippage Model:</span> <span style="color: #e5e7eb;">${slipLabel}</span></div>
+        <div><span style="color: #9ca3af;">Fill Assumption:</span> <span style="color: #e5e7eb;">${a.fill_model || 'N/A'}</span></div>
+        <div><span style="color: #9ca3af;">Pricing Model:</span> <span style="color: #e5e7eb;">${a.pricing_model || 'N/A'}</span></div>
+        <div><span style="color: #9ca3af;">Unusual Credits:</span> <span style="color: ${flagColor};">${flagged} trade${flagged !== 1 ? 's' : ''} flagged</span></div>
+      </div>
+    </div>`;
+  }
+
+  container.innerHTML = html;
 }
 
 function renderBtMetrics(report) {

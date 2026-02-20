@@ -108,7 +108,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Automatic SPX and VIX data download from Yahoo Finance
 - VIX-aware slippage model: scales with volatility regime ($0.02/leg base, $0.04/leg in elevated+ VIX)
 - NYSE half-day calendar: early close days (1 PM ET) handled automatically
-- Backtest assumptions panel showing slippage model, pricing model, fill assumptions, and flagged unusual credits
+- Backtest assumptions panel showing input parameters (date range, capital, strategies, thresholds) and simulation details (slippage model, pricing model, fill assumptions, flagged unusual credits)
 - Configurable parameters: pulse threshold, spread width, profit target, min credit, max contracts, slippage, max daily loss, initial capital
 - Position sizing scales with simulated account growth over the backtest period
 - Previous runs list with bulk select and delete
@@ -469,7 +469,7 @@ The dashboard Backtest tab provides:
 - All parameters configurable in-UI
 - Progress bar with current date indicator
 - Results display with equity curve, drawdown, and monthly returns
-- Backtest assumptions panel (slippage model, pricing model, fill assumptions, flagged unusual credits)
+- Backtest assumptions panel with input parameters and simulation details (slippage model, pricing model, fill assumptions, flagged credits)
 - Previous runs list with bulk select and delete
 - Completed backtests auto-appear in the Analytics tab dropdown
 - VIX-aware slippage: base $0.02/leg, elevated to $0.04/leg in high-VIX regimes
