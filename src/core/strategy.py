@@ -61,17 +61,25 @@ class SPXIncomeStrategy:
             "ITM": (2.80, 3.00)
         }
 
-        # 1pm in-trade management settings (fully automated based on market conditions)
+        # 1pm in-trade management settings (PDT-only tool)
+        # Read from new pdt.* config, fallback to legacy monitoring.* for migration
+        pdt_cfg = STRATEGY_PARAMS.get('pdt', {})
         monitoring = STRATEGY_PARAMS.get('monitoring', {})
-        self.enable_1pm_check = monitoring.get('enable_1pm_check', True)
-        self.auto_1pm_close = monitoring.get('auto_1pm_close', True)
-        self.trending_threshold = monitoring.get('trending_threshold', 15.0)
+        self.enable_1pm_check = pdt_cfg.get(
+            'enable_1pm_management', monitoring.get('enable_1pm_check', True))
+        self.auto_1pm_close = True  # Always auto-close when 1pm management is active
+        self.trending_threshold = pdt_cfg.get(
+            'trending_threshold', monitoring.get('trending_threshold', 15.0))
+
+        # PDT mode flag - set externally by main.py or backtest engine
+        # When False, 1pm management is skipped entirely (accounts >= $25k)
+        self.pdt_mode_active = False
 
         logger.info(f"SPXIncomeStrategy initialized: "
                    f"pulse={pulse_threshold}%, spread=${spread_width}, "
                    f"target={profit_target_pct}%, min_credit=${self.min_credit:.2f}")
-        logger.info(f"1pm management: enabled={self.enable_1pm_check}, "
-                   f"auto_close={self.auto_1pm_close}, "
+        logger.info(f"1pm management: config_enabled={self.enable_1pm_check}, "
+                   f"pdt_mode_active={self.pdt_mode_active}, "
                    f"trending_threshold=${self.trending_threshold}")
     
     def evaluate_setup(
@@ -318,7 +326,8 @@ class SPXIncomeStrategy:
         """
         1pm ET in-trade management check per Production Line Trading strategy (p.19-20).
 
-        Fully automated based on market conditions (not trader preference).
+        This is a PDT-only tool: accounts >= $25k skip 1pm management entirely.
+        When active, fully automated based on market conditions.
 
         At 1pm, evaluates:
         1. Is the day trending? (|move| >= threshold, typically $15)
@@ -333,6 +342,10 @@ class SPXIncomeStrategy:
 
         Returns (should_close, reason, assessment_dict)
         """
+        # 1pm management only applies in PDT mode (accounts < $25k)
+        if not self.pdt_mode_active:
+            return False, "", {}
+
         check_start = dt_time(13, 0)
         check_end = dt_time(14, 0)
         current_time_only = current_time.time()
@@ -473,6 +486,17 @@ class SPXIncomeStrategy:
             'pct_of_expected_min': round((credit_received / expected_min) * 100, 1) if expected_min > 0 else 0,
             'is_simulated_concern': credit_received < 1.50,
         }
+
+    @staticmethod
+    def compute_bb_agreement(bb_filter, direction):
+        """Check if BB filter agrees with trade direction (analytics only, never gates entry)."""
+        if bb_filter is None:
+            return None
+        try:
+            allowed, _ = bb_filter.check_alignment(direction)
+            return allowed
+        except Exception:
+            return None
 
     def should_exit(self, trade, current_spread_price: float, current_time) -> Tuple[bool, str]:
         """

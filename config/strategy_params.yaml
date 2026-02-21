@@ -121,21 +121,9 @@ monitoring:
   # Position check interval (seconds)
   check_interval: 60
 
-  # Enable 1pm trend check (Production Line Trading p.19-20)
-  # At 1pm ET, evaluates positions based on market conditions:
-  #   - Trending day (>threshold move): Hold to expiration
-  #   - Non-trending + favorable: Close at 40%+ profit
-  #   - Non-trending + unfavorable: Close if losing >10%
-  enable_1pm_check: true
-
-  # Auto-close based on rules, or just log recommendation
-  auto_1pm_close: true
-
-  # Dollar move threshold to classify as "trending" day
-  trending_threshold: 15.0
-
 filters:
-  # Bollinger Band directional bias filter (Tag 'n Turn, p.30-33)
+  # BB filter is analytics-only for DI strategy (NO-Indicators per Phil Newton)
+  # These settings are used by TNT strategy and for bb_agreement tracking
   bollinger_enabled: true
   bollinger_period: 50
   bollinger_std: 2.0
@@ -223,6 +211,13 @@ pdt:
 
   # Rolling window in business days (excludes weekends and NYSE holidays)
   pdt_window_days: 5
+
+  # 1PM management is a PDT tool - only active when account < pdt_threshold
+  # Accounts >= $25k skip 1pm auto-close entirely (Production Line Trading)
+  enable_1pm_management: true
+  trending_threshold: 15.0
+  # Override: null = auto-detect from equity, true/false = force PDT mode
+  force_pdt_mode: null
 
 # ============================================
 # NOTIFICATIONS

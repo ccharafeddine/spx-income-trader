@@ -29,6 +29,7 @@ from src.models.trade import Trade, TradeStatus
 from src.core.pulse_detector import PulseBarDetector
 from src.core.bar_builder import BarBuilder
 from src.core.strategy import SPXIncomeStrategy
+from src.core.bollinger_filter import BollingerFilter
 from src.core.tag_n_turn import TagNTurnStrategy
 from src.core.bnb_strategy import BnBStrategy
 from src.core.orb_strategy import ORBStrategy
@@ -88,6 +89,38 @@ def _nyse_half_days(year: int) -> set:
     return half_days
 
 
+def _normalize_exit_reason(raw: str) -> tuple:
+    """Normalize a verbose exit reason to (category, detail).
+
+    Returns (normalized_key, original_verbose_string).
+    """
+    if not raw:
+        return 'unknown', ''
+    r = raw.strip()
+    if r.startswith('Profit target reached'):
+        return 'profit_target', r
+    if r.startswith('1PM CHECK: NON-TRENDING'):
+        return '1pm_close_non_trending', r
+    if r.startswith('1PM CHECK: TRENDING'):
+        return '1pm_hold_trending', r
+    if 'Expiration' in r:
+        if '1:00 PM' in r:
+            return 'expiration_1pm', r
+        return 'expiration', r
+    if r.startswith('TNT:') or r.startswith('TNT: '):
+        sub = r.split(':', 1)[1].strip()
+        if sub == 'target_hit':
+            return 'tnt_target_hit', r
+        if sub == 'stop_hit':
+            return 'tnt_stop_hit', r
+        if sub == 'max_hold_exceeded':
+            return 'tnt_max_hold', r
+        return f'tnt_{sub}', r
+    if r.startswith('Expired (resolved at startup'):
+        return 'expired_at_startup', r
+    return r, ''
+
+
 @dataclass
 class BacktestTrade:
     """Lightweight trade record for backtest results."""
@@ -103,6 +136,7 @@ class BacktestTrade:
     pnl: float = 0.0
     pnl_pct: float = 0.0
     exit_reason: str = ''
+    exit_detail: str = ''
     quantity: int = 1
     spx_at_entry: float = 0.0
     spx_at_exit: float = 0.0
@@ -115,6 +149,7 @@ class BacktestTrade:
     slippage: float = 0.0
     slippage_pct: float = 0.0
     entry_time_bucket: str = ''
+    bb_agreement: Optional[bool] = None
 
     def to_dict(self) -> dict:
         return {
@@ -130,6 +165,7 @@ class BacktestTrade:
             'pnl': self.pnl,
             'pnl_pct': self.pnl_pct,
             'exit_reason': self.exit_reason,
+            'exit_detail': self.exit_detail,
             'quantity': self.quantity,
             'spx_at_entry': self.spx_at_entry,
             'spx_at_exit': self.spx_at_exit,
@@ -142,6 +178,7 @@ class BacktestTrade:
             'slippage': self.slippage,
             'slippage_pct': self.slippage_pct,
             'entry_time_bucket': self.entry_time_bucket,
+            'bb_agreement': self.bb_agreement,
         }
 
 
@@ -217,6 +254,20 @@ class BacktestEngine:
         self.pulse_detector = PulseBarDetector(pulse_threshold)
         self._di_spread_width = spread_width
         self._di_min_credit = min_credit
+
+        # PDT mode detection for 1pm management (based on initial capital)
+        pdt_threshold = strat_cfg.get('pdt', {}).get('pdt_threshold', 25000)
+        self.strategy.pdt_mode_active = initial_capital < pdt_threshold
+
+        # BB filter for analytics tracking (never gates DI entry)
+        filters_cfg = strat_cfg.get('filters', {})
+        if filters_cfg.get('bollinger_enabled', True):
+            self.bollinger_filter = BollingerFilter(
+                period=filters_cfg.get('bollinger_period', 50),
+                num_std=filters_cfg.get('bollinger_std', 2.0),
+            )
+        else:
+            self.bollinger_filter = None
 
         # Initialize parallel strategies (TNT, B&B, ORB)
         self._init_strategies(strat_cfg)
@@ -702,6 +753,14 @@ class BacktestEngine:
         trade._bt_entry_time_bucket = _classify_bt_time_bucket(bar_dt)
         trade._bt_vix_at_entry = self.broker._current_vix
 
+        # BB agreement analytics (never gates entry)
+        if self.bollinger_filter:
+            trade._bt_bb_agreement = SPXIncomeStrategy.compute_bb_agreement(
+                self.bollinger_filter, direction
+            )
+        else:
+            trade._bt_bb_agreement = None
+
         self._0dte_trade = trade
         self._0dte_strategy_type = strategy_type
         self._pending_setup = None
@@ -995,10 +1054,11 @@ class BacktestEngine:
         expire_dt = ET.localize(datetime.combine(trading_day, close_time))
         final_pnl = trade.spread.profit_at_price(settlement_price) * trade.quantity
         expire_label = f"Expiration ({close_time.strftime('%I:%M %p').lstrip('0')})"
+        norm_reason, detail = _normalize_exit_reason(expire_label)
 
         trade.exit_price = 0.0
         trade.exit_time = expire_dt
-        trade.exit_reason = expire_label
+        trade.exit_reason = norm_reason
         trade.status = TradeStatus.CLOSED
         trade.pnl = final_pnl
         max_profit = trade.spread.max_profit * trade.quantity
@@ -1025,7 +1085,8 @@ class BacktestEngine:
             exit_price=0.0,
             pnl=final_pnl,
             pnl_pct=trade.pnl_percent or 0,
-            exit_reason=expire_label,
+            exit_reason=norm_reason,
+            exit_detail=detail,
             quantity=trade.quantity,
             spx_at_entry=trade.spread.underlying_price_at_entry or 0,
             spx_at_exit=settlement_price,
@@ -1039,6 +1100,7 @@ class BacktestEngine:
             slippage=getattr(trade, '_bt_slippage', 0.0),
             slippage_pct=round(getattr(trade, '_bt_slippage', 0) / trade.spread.credit_received * 100, 2) if trade.spread.credit_received else 0.0,
             entry_time_bucket=getattr(trade, '_bt_entry_time_bucket', ''),
+            bb_agreement=getattr(trade, '_bt_bb_agreement', None),
         )
         self.trades.append(bt_trade)
 
@@ -1061,6 +1123,8 @@ class BacktestEngine:
 
     def _record_trade(self, trade: Trade, bar: Bar, strategy_type: str):
         """Record a closed trade to the results list."""
+        raw_reason = trade.exit_reason or ''
+        norm_reason, detail = _normalize_exit_reason(raw_reason)
         bt_trade = BacktestTrade(
             trade_id=trade.id,
             entry_time=trade.entry_time,
@@ -1073,7 +1137,8 @@ class BacktestEngine:
             exit_price=trade.exit_price or 0,
             pnl=trade.pnl or 0,
             pnl_pct=trade.pnl_percent or 0,
-            exit_reason=trade.exit_reason or '',
+            exit_reason=norm_reason,
+            exit_detail=detail,
             quantity=trade.quantity,
             spx_at_entry=trade.spread.underlying_price_at_entry or 0,
             spx_at_exit=bar.close,
@@ -1087,5 +1152,6 @@ class BacktestEngine:
             slippage=getattr(trade, '_bt_slippage', 0.0),
             slippage_pct=round(getattr(trade, '_bt_slippage', 0) / trade.spread.credit_received * 100, 2) if trade.spread.credit_received else 0.0,
             entry_time_bucket=getattr(trade, '_bt_entry_time_bucket', ''),
+            bb_agreement=getattr(trade, '_bt_bb_agreement', None),
         )
         self.trades.append(bt_trade)

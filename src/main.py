@@ -36,6 +36,7 @@ from src.brokers.broker_factory import get_broker
 from src.core.strategy import SPXIncomeStrategy
 from src.core.position_manager import PositionManager
 from src.core.bar_builder import BarBuilder
+from src.core.bar_aggregator_5min import BarAggregator5Min
 from src.core.bollinger_filter import BollingerFilter
 from src.core.tag_n_turn import TagNTurnStrategy
 from src.core.bnb_strategy import BnBStrategy
@@ -104,12 +105,30 @@ class TradingBot:
             get_account_equity=get_account_equity,
         )
 
+        # PDT mode detection for 1pm management
+        pdt_threshold = pdt_cfg.get('pdt_threshold', 25000)
+        force_pdt = pdt_cfg.get('force_pdt_mode', None)
+
+        if force_pdt is not None:
+            strategy.pdt_mode_active = bool(force_pdt)
+        elif dry_run:
+            starting_capital = STRATEGY_PARAMS.get('portfolio', {}).get('starting_capital',
+                               STRATEGY_PARAMS.get('portfolio', {}).get('account_size', 50000))
+            strategy.pdt_mode_active = starting_capital < pdt_threshold
+        else:
+            equity = get_account_equity()
+            strategy.pdt_mode_active = (equity or 0) < pdt_threshold
+
+        logger.info(f"PDT mode for 1pm management: {'ACTIVE' if strategy.pdt_mode_active else 'INACTIVE'} "
+                    f"(threshold=${pdt_threshold:,})")
+
         # Initialize components
         self.position_manager = PositionManager(
             broker, strategy, db_manager,
             pdt_tracker=self.pdt_tracker
         )
         self.bar_builder = BarBuilder(interval_minutes=30)
+        self.bar_aggregator_5min = BarAggregator5Min()
         filters_cfg = STRATEGY_PARAMS.get('filters', {})
         self.bollinger_enabled = filters_cfg.get('bollinger_enabled', True)
         self.extreme_move_override_pct = filters_cfg.get('extreme_move_override_pct', 1.5)
@@ -559,6 +578,7 @@ class TradingBot:
                     self._restore_daily_counters(today)
                     self.pending_setup = None
                     self.bar_builder.reset()
+                    self.bar_aggregator_5min.reset()
                     self._last_completed_bar = None
                     self.bollinger.day_open = None  # Reset for new day, will set at market open
                     self.position_manager._day_open = None
@@ -1224,6 +1244,7 @@ class TradingBot:
 
             # Update bar builder (runs every cycle so bars build continuously)
             self._last_completed_bar = self.bar_builder.add_price(current_time, current_price)
+            self.bar_aggregator_5min.add_price(current_time, current_price)
 
             # Log current bar building status periodically (with pending setup info)
             if self.bar_builder.current_bar_start and self.bar_builder.tick_count % 5 == 0:
@@ -2031,6 +2052,10 @@ class TradingBot:
             )
 
             if trade:
+                # BB agreement analytics (never gates entry)
+                trade.bb_agreement = SPXIncomeStrategy.compute_bb_agreement(
+                    self.bollinger, spread.direction
+                )
                 actual_qty = trade.quantity
                 logger.info(f"Trade executed: {trade.id}")
                 self._journal_trades_entered += 1

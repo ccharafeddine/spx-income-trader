@@ -1264,6 +1264,7 @@ def api_pdt_status():
             'account_value': None,
             'threshold': 25000,
             'next_slot_frees_on': None,
+            '1pm_management_active': False,
         })
 
     # Try to load PDT status from tracker
@@ -1279,6 +1280,12 @@ def api_pdt_status():
         )
 
         status = tracker.get_pdt_status()
+        # Add 1pm management status based on PDT mode
+        threshold = pdt_cfg.get('pdt_threshold', 25000)
+        account_value = status.get('account_value')
+        is_pdt_mode = account_value is not None and account_value < threshold
+        enable_1pm = pdt_cfg.get('enable_1pm_management', True)
+        status['1pm_management_active'] = is_pdt_mode and enable_1pm
         return jsonify(status)
 
     except Exception as e:
@@ -1637,6 +1644,40 @@ def api_today():
         'open_positions': open_positions,
         'prev_close': prev_close,
     })
+
+
+@app.route('/api/chart/bars5min')
+def api_chart_bars5min():
+    """Return 5-minute bars from the bot's in-memory aggregator."""
+    get_bars_5min = getattr(app, '_desktop_get_bot_bars_5min', None)
+    bars = get_bars_5min() if get_bars_5min else None
+
+    if not bars:
+        # Fallback: Yahoo Finance 5-min intraday bars
+        try:
+            intraday = yahoo.get_intraday_bars('5m', '1d') or []
+            bars = []
+            for b in intraday:
+                ts = b['timestamp']
+                if hasattr(ts, 'strftime'):
+                    ts = ts.strftime('%H:%M')
+                else:
+                    ts = str(ts)
+                    m = __import__('re').search(r'(\d{2}:\d{2})', ts)
+                    if m:
+                        ts = m.group(1)
+                bars.append({
+                    'time': ts,
+                    'open': b['open'],
+                    'high': b['high'],
+                    'low': b['low'],
+                    'close': b['close'],
+                })
+        except Exception as e:
+            logger.debug(f"Yahoo 5-min bars unavailable: {e}")
+            bars = []
+
+    return jsonify({'success': True, 'bars': bars})
 
 
 @app.route('/api/signals')
@@ -3425,6 +3466,68 @@ def _analytics_by_direction(trades):
     ]
 
 
+def _normalize_exit_reason(raw):
+    """Normalize verbose exit reason strings into canonical categories.
+
+    Handles both legacy (verbose) and future (already normalized) formats.
+    """
+    if not raw:
+        return 'unknown'
+    r = raw.strip()
+    if r.startswith('Profit target reached') or r == 'profit_target':
+        return 'profit_target'
+    if r.startswith('1PM CHECK: NON-TRENDING') or r == '1pm_close_non_trending':
+        return '1pm_close_non_trending'
+    if r.startswith('1PM CHECK: TRENDING') or r == '1pm_hold_trending':
+        return '1pm_hold_trending'
+    if r in ('Expiration (4:00 PM)', 'Expiration reached (4:00 PM EST)', 'expiration'):
+        return 'expiration'
+    if r in ('Expiration (1:00 PM)', 'expiration_1pm'):
+        return 'expiration_1pm'
+    if r.startswith('Expiration'):
+        return 'expiration'
+    if r in ('TNT: target_hit', 'TNT:target_hit', 'tnt_target_hit'):
+        return 'tnt_target_hit'
+    if r in ('TNT: stop_hit', 'TNT:stop_hit', 'tnt_stop_hit'):
+        return 'tnt_stop_hit'
+    if r in ('TNT: max_hold_exceeded', 'TNT:max_hold_exceeded', 'tnt_max_hold'):
+        return 'tnt_max_hold'
+    if r.startswith('Expired (resolved at startup'):
+        return 'expired_at_startup'
+    return r
+
+
+# Display labels for normalized exit reasons
+_EXIT_REASON_LABELS = {
+    'profit_target': 'Profit Target (80%)',
+    '1pm_close_non_trending': '1PM Close (Non-Trending)',
+    '1pm_hold_trending': '1PM Hold \u2192 Expiration',
+    'expiration': 'Held to Expiration',
+    'expiration_1pm': 'Expiration (1PM)',
+    'tnt_target_hit': 'TNT Target Hit',
+    'tnt_stop_hit': 'TNT Stop Loss',
+    'tnt_max_hold': 'TNT Max Hold (7 days)',
+    'expired_at_startup': 'Expired (Startup Recovery)',
+    'unknown': 'Unknown',
+}
+
+
+def _exit_reason_label(normalized_key):
+    """Return human-readable label for a normalized exit reason."""
+    return _EXIT_REASON_LABELS.get(normalized_key, normalized_key)
+
+
+def _exit_reason_date_range(trade_list):
+    """Return date range string from a list of trade dicts with 'date' key."""
+    dates = [t['date'] for t in trade_list if t.get('date')]
+    if not dates:
+        return ''
+    dates.sort()
+    if dates[0] == dates[-1]:
+        return dates[0]
+    return f"{dates[0]} to {dates[-1]}"
+
+
 def _analytics_execution(trades):
     """Compute execution quality analytics from trade dicts."""
     total_trades = len(trades)
@@ -3513,22 +3616,34 @@ def _analytics_execution(trades):
                 'avg_slippage': round(v['total_slippage'] / v['count'], 4) if v['count'] else 0,
             })
 
-    # --- Exit reason breakdown ---
-    reason_data = defaultdict(lambda: {'count': 0, 'wins': 0, 'total_pnl': 0})
+    # --- Exit reason breakdown (normalized) ---
+    reason_data = defaultdict(lambda: {'count': 0, 'wins': 0, 'total_pnl': 0, 'trades': []})
     for t in trades:
-        reason = t.get('exit_reason') or 'unknown'
+        raw_reason = t.get('exit_reason') or 'unknown'
+        reason = _normalize_exit_reason(raw_reason)
         pnl = t.get('pnl', 0)
         reason_data[reason]['count'] += 1
         reason_data[reason]['total_pnl'] += pnl
         if pnl > 0:
             reason_data[reason]['wins'] += 1
+        reason_data[reason]['trades'].append({
+            'date': (t.get('entry_time') or '')[:10],
+            'direction': t.get('direction', ''),
+            'credit': t.get('credit_received', 0),
+            'pnl': round(pnl, 2),
+            'spx_entry': t.get('spx_at_entry', 0),
+            'spx_exit': t.get('spx_at_exit', 0),
+        })
 
     exit_reasons = sorted([
         {
             'reason': k,
+            'label': _exit_reason_label(k),
             'count': v['count'],
             'win_rate': round(v['wins'] / v['count'] * 100, 1) if v['count'] else 0,
             'avg_pnl': round(v['total_pnl'] / v['count'], 2) if v['count'] else 0,
+            'date_range': _exit_reason_date_range(v['trades']),
+            'trades': sorted(v['trades'], key=lambda x: x['date'], reverse=True),
         }
         for k, v in reason_data.items()
     ], key=lambda x: x['count'], reverse=True)
@@ -4453,9 +4568,6 @@ ALLOWED_SETTINGS_PATHS = {
     'portfolio.position_sizing.max_contracts',
     'portfolio.drawdown_limits.weekly.max_loss_pct',
     'portfolio.drawdown_limits.monthly.max_loss_pct',
-    'monitoring.enable_1pm_check',
-    'monitoring.auto_1pm_close',
-    'monitoring.trending_threshold',
     'tag_n_turn.enabled',
     'tag_n_turn.bb_period',
     'tag_n_turn.bb_std',
