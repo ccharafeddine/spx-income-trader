@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS trades (
     exit_order_id TEXT,
     exit_reason TEXT,
     spx_at_exit REAL,
+    vix_at_exit REAL,
     profit_captured_pct REAL,
     time_in_trade_minutes INTEGER,
 

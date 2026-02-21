@@ -3907,6 +3907,51 @@ def api_analytics_risk():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/analytics/attribution')
+def api_analytics_attribution():
+    """P&L decomposition into theta, delta, vega, and residual components."""
+    from src.analytics.greeks import GreeksCalculator
+    from src.analytics.pnl_attribution import PnLAttributor
+
+    source = request.args.get('source', 'live')
+    attributor = PnLAttributor(GreeksCalculator())
+
+    if source == 'backtest':
+        run_id = request.args.get('run_id')
+        if not run_id:
+            return jsonify({'success': False, 'error': 'run_id required'}), 400
+        try:
+            db_path = str(DB_PATH)
+            conn = sqlite3.connect(db_path, timeout=10)
+            row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
+            conn.close()
+            if not row:
+                return jsonify({'success': False, 'error': 'Run not found'}), 404
+            report = json.loads(row[0])
+            trades = report.get('_trades', report.get('trades', []))
+            result = attributor.attribute_batch(trades)
+            return jsonify({'success': True, **result})
+        except Exception as e:
+            logger.error(f"Attribution backtest error: {e}", exc_info=True)
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    # Live trades
+    try:
+        db_path = DATABASE_PATH
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        spx_quote = yahoo.get_spx_quote() or {}
+        spx_price = spx_quote.get('price')
+        _, closed_trades = classify_trades(conn, spx_price)
+        conn.close()
+        result = attributor.attribute_batch(closed_trades)
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        logger.error(f"Attribution error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/economic-events')
 def api_economic_events():
     """Today's and upcoming economic calendar events."""

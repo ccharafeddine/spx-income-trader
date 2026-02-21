@@ -3068,6 +3068,20 @@ header::after {
         </div>
       </div>
 
+      <!-- P&L Attribution -->
+      <div id="an-attribution-section" style="margin-bottom: 16px;">
+        <div class="panel" style="padding: 12px; border-left: 3px solid var(--amber);">
+          <div class="panel-title" style="margin-bottom: 12px;">P&L Attribution</div>
+          <div id="an-attr-empty" style="display:none; color: var(--text-dim); font-size: 12px; padding: 16px 0; text-align: center;">No attribution data available</div>
+          <div id="an-attr-content" style="display:none;">
+            <div id="an-attr-bar" style="height: 32px; border-radius: 6px; overflow: hidden; display: flex; margin-bottom: 14px;"></div>
+            <div id="an-attr-table" style="font-size: 12px; margin-bottom: 10px;"></div>
+            <div id="an-attr-interp" style="font-size: 11px; color: var(--text-dim); font-style: italic; margin-bottom: 6px;"></div>
+            <div style="font-size: 10px; color: var(--text-dim); opacity: 0.7;">Approximation using entry Greeks. Does not account for gamma or intraday Greek changes.</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Equity curve -->
       <div class="panel" style="padding: 12px; margin-bottom: 16px;">
         <div class="panel-title" style="margin-bottom: 8px;">Equity Curve</div>
@@ -6192,6 +6206,7 @@ async function loadAnalytics() {
   renderAnRolling(data.rolling || {});
   renderAnExecution(sourceVal);
   renderAnRiskMetrics(sourceVal);
+  renderAnAttribution(sourceVal);
 }
 
 function renderAnMetrics(data) {
@@ -6536,6 +6551,69 @@ async function renderAnRiskMetrics(sourceVal) {
   row2 += riskCard('Best Streak', data.longest_win_streak != null ? data.longest_win_streak + ' days' : 'N/A', 'Longest consecutive winning days', 'var(--green)');
   row2 += riskCard('Worst Streak', data.longest_loss_streak != null ? data.longest_loss_streak + ' days' : 'N/A', 'Longest consecutive losing days', 'var(--red)');
   document.getElementById('an-risk-row2').innerHTML = row2;
+}
+
+async function renderAnAttribution(sourceVal) {
+  const emptyEl = document.getElementById('an-attr-empty');
+  const contentEl = document.getElementById('an-attr-content');
+  emptyEl.style.display = 'none';
+  contentEl.style.display = 'none';
+
+  let url = '/api/analytics/attribution?source=live';
+  if (sourceVal && sourceVal.startsWith('backtest:')) {
+    const runId = sourceVal.split(':')[1];
+    url = '/api/analytics/attribution?source=backtest&run_id=' + runId;
+  }
+
+  const data = await fetchJSON(url);
+  if (!data || !data.success || data.attributed_count === 0) {
+    emptyEl.style.display = 'block';
+    return;
+  }
+
+  contentEl.style.display = 'block';
+
+  // Stacked bar showing component breakdown
+  const total = Math.abs(data.total_theta) + Math.abs(data.total_delta) + Math.abs(data.total_vega) + Math.abs(data.total_residual);
+  if (total > 0) {
+    const thetaW = (Math.abs(data.total_theta) / total * 100).toFixed(1);
+    const deltaW = (Math.abs(data.total_delta) / total * 100).toFixed(1);
+    const vegaW = (Math.abs(data.total_vega) / total * 100).toFixed(1);
+    const residW = (Math.abs(data.total_residual) / total * 100).toFixed(1);
+    document.getElementById('an-attr-bar').innerHTML =
+      '<div style="width:' + thetaW + '%;background:#10b981;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:#000;" title="Theta: ' + thetaW + '%">' + (parseFloat(thetaW) > 8 ? '\u03B8' : '') + '</div>' +
+      '<div style="width:' + deltaW + '%;background:#3b82f6;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:#000;" title="Delta: ' + deltaW + '%">' + (parseFloat(deltaW) > 8 ? '\u0394' : '') + '</div>' +
+      '<div style="width:' + vegaW + '%;background:#f59e0b;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:#000;" title="Vega: ' + vegaW + '%">' + (parseFloat(vegaW) > 8 ? '\u03BD' : '') + '</div>' +
+      '<div style="width:' + residW + '%;background:#6b7280;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:#fff;" title="Residual: ' + residW + '%">' + (parseFloat(residW) > 8 ? '?' : '') + '</div>';
+  } else {
+    document.getElementById('an-attr-bar').innerHTML = '';
+  }
+
+  // Attribution table
+  const fmt = (v) => (v >= 0 ? '+' : '-') + '$' + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  const rows = [
+    {name: 'Theta (\u03B8)', total: data.total_theta, avg: data.avg_theta, pct: data.theta_pct, color: '#10b981', dot: '\u25CF'},
+    {name: 'Delta (\u0394)', total: data.total_delta, avg: data.avg_delta, pct: data.delta_pct, color: '#3b82f6', dot: '\u25CF'},
+    {name: 'Vega (\u03BD)', total: data.total_vega, avg: data.avg_vega, pct: data.vega_pct, color: '#f59e0b', dot: '\u25CF'},
+    {name: 'Residual', total: data.total_residual, avg: data.avg_residual, pct: data.residual_pct, color: '#6b7280', dot: '\u25CF'},
+  ];
+  let tHtml = '<table style="width:100%;border-collapse:collapse;">';
+  tHtml += '<tr style="border-bottom:1px solid var(--border);"><th style="text-align:left;padding:4px;">Component</th><th style="text-align:right;padding:4px;">Total P&L</th><th style="text-align:right;padding:4px;">Avg/Trade</th><th style="text-align:right;padding:4px;">% of Total</th></tr>';
+  for (const r of rows) {
+    const pnlColor = r.total >= 0 ? 'var(--green)' : 'var(--red)';
+    tHtml += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
+    tHtml += '<td style="padding:4px;"><span style="color:' + r.color + ';">' + r.dot + '</span> ' + r.name + '</td>';
+    tHtml += '<td style="text-align:right;padding:4px;font-family:var(--font-mono);color:' + pnlColor + ';">' + fmt(r.total) + '</td>';
+    tHtml += '<td style="text-align:right;padding:4px;font-family:var(--font-mono);color:var(--text-dim);">' + fmt(r.avg) + '</td>';
+    tHtml += '<td style="text-align:right;padding:4px;font-family:var(--font-mono);">' + r.pct.toFixed(1) + '%</td>';
+    tHtml += '</tr>';
+  }
+  tHtml += '</table>';
+  tHtml += '<div style="font-size:10px;color:var(--text-dim);margin-top:4px;">' + data.attributed_count + ' of ' + data.total_count + ' trades attributed</div>';
+  document.getElementById('an-attr-table').innerHTML = tHtml;
+
+  // Interpretation
+  document.getElementById('an-attr-interp').textContent = data.interpretation || '';
 }
 
 // ---------------------------------------------------------------

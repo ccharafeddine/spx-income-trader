@@ -519,6 +519,11 @@ class PositionManager:
                 spx_at_exit = self.broker.get_current_price("SPX")
                 exit_context['spx_at_exit'] = round(spx_at_exit, 2)
 
+                # VIX at exit for P&L attribution
+                vix_at_exit = self._get_vix_price()
+                if vix_at_exit is not None:
+                    exit_context['vix_at_exit'] = round(vix_at_exit, 2)
+
                 # Profit captured as percentage of max profit
                 max_profit = trade.spread.max_profit * trade.quantity
                 if max_profit > 0 and trade.pnl is not None:

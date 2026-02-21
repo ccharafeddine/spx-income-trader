@@ -110,6 +110,7 @@ class DatabaseManager:
                 ('time_in_trade_minutes', 'INTEGER'),
                 ('day_type', 'TEXT'),
                 ('daily_move_pct', 'REAL'),
+                ('vix_at_exit', 'REAL'),
             ]
 
             for col_name, col_type in new_columns:
@@ -226,7 +227,8 @@ class DatabaseManager:
                     profit_captured_pct = ?,
                     time_in_trade_minutes = ?,
                     day_type = ?,
-                    daily_move_pct = ?
+                    daily_move_pct = ?,
+                    vix_at_exit = ?
                 WHERE id = ?
             """, (
                 exit_context.get('spx_at_exit'),
@@ -234,6 +236,7 @@ class DatabaseManager:
                 exit_context.get('time_in_trade_minutes'),
                 exit_context.get('day_type'),
                 exit_context.get('daily_move_pct'),
+                exit_context.get('vix_at_exit'),
                 trade_id,
             ))
             conn.commit()

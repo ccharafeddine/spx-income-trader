@@ -107,6 +107,7 @@ class BacktestTrade:
     spx_at_entry: float = 0.0
     spx_at_exit: float = 0.0
     vix_at_entry: float = 0.0
+    vix_at_exit: float = 0.0
     duration_minutes: int = 0
     strategy_type: str = 'daily_income'
     theoretical_credit: float = 0.0
@@ -133,6 +134,7 @@ class BacktestTrade:
             'spx_at_entry': self.spx_at_entry,
             'spx_at_exit': self.spx_at_exit,
             'vix_at_entry': self.vix_at_entry,
+            'vix_at_exit': self.vix_at_exit,
             'duration_minutes': self.duration_minutes,
             'strategy_type': self.strategy_type,
             'theoretical_credit': self.theoretical_credit,
@@ -698,6 +700,7 @@ class BacktestEngine:
         trade._bt_actual_credit = order_status['fill_price']
         trade._bt_slippage = round(order_status['fill_price'] - spread.credit_received, 4)
         trade._bt_entry_time_bucket = _classify_bt_time_bucket(bar_dt)
+        trade._bt_vix_at_entry = self.broker._current_vix
 
         self._0dte_trade = trade
         self._0dte_strategy_type = strategy_type
@@ -797,6 +800,7 @@ class BacktestEngine:
         trade._bt_actual_credit = order_status['fill_price']
         trade._bt_slippage = round(order_status['fill_price'] - spread.credit_received, 4)
         trade._bt_entry_time_bucket = _classify_bt_time_bucket(bar_dt)
+        trade._bt_vix_at_entry = self.broker._current_vix
 
         self._tnt_trade = trade
         self._tnt_entry_date = bar_dt.date()
@@ -1025,7 +1029,8 @@ class BacktestEngine:
             quantity=trade.quantity,
             spx_at_entry=trade.spread.underlying_price_at_entry or 0,
             spx_at_exit=settlement_price,
-            vix_at_entry=self.broker._current_vix,
+            vix_at_entry=getattr(trade, '_bt_vix_at_entry', self.broker._current_vix),
+            vix_at_exit=self.broker._current_vix,
             duration_minutes=int((expire_dt - trade.entry_time).total_seconds() / 60)
             if trade.entry_time else 0,
             strategy_type=strategy_type,
@@ -1072,7 +1077,8 @@ class BacktestEngine:
             quantity=trade.quantity,
             spx_at_entry=trade.spread.underlying_price_at_entry or 0,
             spx_at_exit=bar.close,
-            vix_at_entry=self.broker._current_vix,
+            vix_at_entry=getattr(trade, '_bt_vix_at_entry', self.broker._current_vix),
+            vix_at_exit=self.broker._current_vix,
             duration_minutes=int((trade.exit_time - trade.entry_time).total_seconds() / 60)
             if trade.exit_time else 0,
             strategy_type=strategy_type,
