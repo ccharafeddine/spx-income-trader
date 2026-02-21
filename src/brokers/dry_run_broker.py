@@ -14,6 +14,7 @@ before going live.
 import logging
 import json
 import math
+import os
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional
 from pathlib import Path
@@ -106,8 +107,18 @@ class DryRunBroker(BrokerInterface):
                 log_data["signals"] = log_data["signals"][-1000:]
                 logger.info(f"Signal log rotated, archived to {archive_path}")
 
-            with open(self.log_file, 'w') as f:
-                json.dump(log_data, f, indent=2, default=str)
+            # Atomic write: write to temp file, then replace
+            import tempfile
+            dir_name = str(Path(self.log_file).parent)
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
+            try:
+                with os.fdopen(tmp_fd, 'w') as f:
+                    json.dump(log_data, f, indent=2, default=str)
+                os.replace(tmp_path, self.log_file)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
 
             # Also log to console
             logger.info(f"[DRY RUN SIGNAL] {signal_type}: {data}")

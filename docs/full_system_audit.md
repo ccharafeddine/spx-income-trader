@@ -197,7 +197,7 @@ PASS - All strategies have complete signal lifecycle: detection -> confirmation 
 | Open position reconciliation | PASS | _reconcile_positions at src/main.py:511 |
 | New fields nullable migration | PASS | vix_at_exit, bb_agreement, exit_detail, spx_at_entry/exit, entry_vix |
 | Signal log rotation at 5000 | PASS | src/main.py:2188 MAX_SIGNALS=5000, retains 1000 |
-| Atomic writes | PASS | tempfile.mkstemp + os.replace pattern |
+| Atomic writes | PASS | tempfile.mkstemp + os.replace in main.py and dry_run_broker.py (FIXED) |
 | Exit reason normalization | PASS | _normalize_exit_reason in dashboard/app.py and engine.py |
 | Exit detail stored separately | PASS | exit_detail field in backtest trades |
 | Streaks: active vs previous | PASS | win_streak/loss_streak (active), prev_win_streak/prev_loss_streak |
@@ -414,6 +414,7 @@ The hot-reload limitation (H-1 through H-4) is a design choice, not a bug. Strat
 
 **Fixes implemented:**
 - Greeks calculator: Added MIN_IV=0.01 floor to prevent ZeroDivisionError on zero/negative IV (greeks.py)
+- DryRunBroker: Replaced non-atomic `open(..., 'w')` with `tempfile.mkstemp` + `os.replace` for signal log writes (dry_run_broker.py)
 
 **Known limitations (documented, not bugs):**
 - Strategy parameters require bot restart to take effect (by design)
