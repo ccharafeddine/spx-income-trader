@@ -3424,6 +3424,122 @@ def _analytics_by_direction(trades):
     ]
 
 
+def _analytics_execution(trades):
+    """Compute execution quality analytics from trade dicts."""
+    total_trades = len(trades)
+
+    # --- Slippage summary ---
+    slippage_trades = [t for t in trades if t.get('slippage') is not None and t.get('slippage') != 0]
+    if slippage_trades:
+        avg_slippage = round(sum(t['slippage'] for t in slippage_trades) / len(slippage_trades), 4)
+        slippage_pcts = [t.get('slippage_pct', 0) for t in slippage_trades]
+        avg_slippage_pct = round(sum(slippage_pcts) / len(slippage_pcts), 2)
+        total_slippage_cost = round(sum(t['slippage'] * t.get('quantity', 1) * 100 for t in slippage_trades), 2)
+    else:
+        avg_slippage = 0
+        avg_slippage_pct = 0
+        total_slippage_cost = 0
+
+    slippage_summary = {
+        'avg_slippage': avg_slippage,
+        'avg_slippage_pct': avg_slippage_pct,
+        'total_slippage_cost': total_slippage_cost,
+        'trades_with_data': len(slippage_trades),
+        'total_trades': total_trades,
+    }
+
+    # --- Slippage by time bucket ---
+    bucket_data = defaultdict(lambda: {'count': 0, 'total_slippage': 0})
+    for t in trades:
+        bucket = t.get('entry_time_bucket')
+        if not bucket:
+            entry = t.get('entry_time', '')
+            if entry and len(entry) >= 16:
+                try:
+                    h = int(entry[11:13])
+                    if h < 10:
+                        bucket = 'Open (9:30-10)'
+                    elif h < 11:
+                        bucket = 'Mid-Morning (10-11)'
+                    elif h < 13:
+                        bucket = 'Midday (11-1)'
+                    elif h < 15:
+                        bucket = 'Afternoon (1-3)'
+                    else:
+                        bucket = 'Close (3-4)'
+                except (ValueError, IndexError):
+                    continue
+            else:
+                continue
+        slip = t.get('slippage')
+        if slip is not None:
+            bucket_data[bucket]['count'] += 1
+            bucket_data[bucket]['total_slippage'] += slip
+
+    bucket_order = ['Open (9:30-10)', 'Mid-Morning (10-11)', 'Midday (11-1)', 'Afternoon (1-3)', 'Close (3-4)']
+    slippage_by_bucket = []
+    for b in bucket_order:
+        if b in bucket_data:
+            v = bucket_data[b]
+            slippage_by_bucket.append({
+                'bucket': b,
+                'count': v['count'],
+                'avg_slippage': round(v['total_slippage'] / v['count'], 4) if v['count'] else 0,
+            })
+
+    # --- Slippage by VIX regime ---
+    vix_data = defaultdict(lambda: {'count': 0, 'total_slippage': 0})
+    vix_labels = [(15, 'Low (<15)'), (20, 'Normal (15-20)'), (30, 'Elevated (20-30)'), (float('inf'), 'High (>30)')]
+    for t in trades:
+        vix = t.get('vix_at_entry')
+        if vix is None or vix == 0:
+            continue
+        for threshold, label in vix_labels:
+            if vix < threshold:
+                break
+        slip = t.get('slippage')
+        if slip is not None:
+            vix_data[label]['count'] += 1
+            vix_data[label]['total_slippage'] += slip
+
+    slippage_by_vix = []
+    for _, label in vix_labels:
+        if label in vix_data:
+            v = vix_data[label]
+            slippage_by_vix.append({
+                'regime': label,
+                'count': v['count'],
+                'avg_slippage': round(v['total_slippage'] / v['count'], 4) if v['count'] else 0,
+            })
+
+    # --- Exit reason breakdown ---
+    reason_data = defaultdict(lambda: {'count': 0, 'wins': 0, 'total_pnl': 0})
+    for t in trades:
+        reason = t.get('exit_reason') or 'unknown'
+        pnl = t.get('pnl', 0)
+        reason_data[reason]['count'] += 1
+        reason_data[reason]['total_pnl'] += pnl
+        if pnl > 0:
+            reason_data[reason]['wins'] += 1
+
+    exit_reasons = sorted([
+        {
+            'reason': k,
+            'count': v['count'],
+            'win_rate': round(v['wins'] / v['count'] * 100, 1) if v['count'] else 0,
+            'avg_pnl': round(v['total_pnl'] / v['count'], 2) if v['count'] else 0,
+        }
+        for k, v in reason_data.items()
+    ], key=lambda x: x['count'], reverse=True)
+
+    return {
+        'slippage_summary': slippage_summary,
+        'slippage_by_bucket': slippage_by_bucket,
+        'slippage_by_vix': slippage_by_vix,
+        'exit_reasons': exit_reasons,
+    }
+
+
 def _analytics_monthly(daily_pnl, starting_capital):
     """Monthly returns grid from daily P&L map.
 
@@ -3603,6 +3719,47 @@ def api_analytics():
         return jsonify({'success': True, **result})
     except Exception as e:
         logger.error(f"Analytics error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/analytics/execution')
+def api_analytics_execution():
+    """Execution quality analytics (slippage, exit reasons) from live or backtest trades."""
+    source = request.args.get('source', 'live')
+
+    if source == 'backtest':
+        run_id = request.args.get('run_id')
+        if not run_id:
+            return jsonify({'success': False, 'error': 'run_id required'}), 400
+        try:
+            db_path = str(DB_PATH)
+            conn = sqlite3.connect(db_path, timeout=10)
+            row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
+            conn.close()
+            if not row:
+                return jsonify({'success': False, 'error': 'Run not found'}), 404
+            report = json.loads(row[0])
+            trades = report.get('_trades', report.get('trades', []))
+            result = _analytics_execution(trades)
+            return jsonify({'success': True, **result})
+        except Exception as e:
+            logger.error(f"Execution analytics backtest error: {e}", exc_info=True)
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    # Live trades
+    try:
+        db_path = DATABASE_PATH
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        spx_quote = yahoo.get_spx_quote() or {}
+        spx_price = spx_quote.get('price')
+        _, closed_trades = classify_trades(conn, spx_price)
+        conn.close()
+        result = _analytics_execution(closed_trades)
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        logger.error(f"Execution analytics error: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

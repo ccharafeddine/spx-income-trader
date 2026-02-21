@@ -3113,6 +3113,35 @@ header::after {
         <div class="panel-title" style="margin-bottom: 8px;">Rolling Win Rate</div>
         <div id="an-rolling-chart" style="height: 250px;"></div>
       </div>
+
+      <!-- Execution Quality -->
+      <div id="an-execution-section">
+        <div class="panel" style="padding: 12px; margin-bottom: 16px; border-left: 3px solid var(--amber);">
+          <div class="panel-title" style="margin-bottom: 12px;">Execution Quality</div>
+          <div id="an-exec-empty" style="display: none; color: var(--text-dim); font-size: 12px; padding: 16px 0; text-align: center;">No execution data available</div>
+          <div id="an-exec-content" style="display: none;">
+            <!-- Summary cards -->
+            <div id="an-exec-cards" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px;"></div>
+            <!-- Two-column: bucket + VIX -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 14px;">
+              <div>
+                <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Slippage by Time</div>
+                <div id="an-exec-bucket-table" style="font-size: 12px;"></div>
+              </div>
+              <div>
+                <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Slippage by VIX</div>
+                <div id="an-exec-vix-table" style="font-size: 12px;"></div>
+              </div>
+            </div>
+            <!-- Exit Reason Breakdown -->
+            <div>
+              <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Exit Reason Breakdown</div>
+              <div id="an-exec-exit-table" style="font-size: 12px;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
 
   </div><!-- /tab-analytics -->
@@ -6149,6 +6178,7 @@ async function loadAnalytics() {
   renderAnBreakdownTable('an-strategy-table', data.by_strategy || [], 'strategy');
   renderAnBreakdownTable('an-direction-table', data.by_direction || [], 'direction');
   renderAnRolling(data.rolling || {});
+  renderAnExecution(sourceVal);
 }
 
 function renderAnMetrics(data) {
@@ -6339,6 +6369,109 @@ function renderAnRolling(rolling) {
     showlegend: true,
     legend: {font: {size: 10, color: '#6b7280'}, orientation: 'h', x: 0.5, xanchor: 'center', y: 1.12},
   }), AN_CFG);
+}
+
+async function renderAnExecution(sourceVal) {
+  const emptyEl = document.getElementById('an-exec-empty');
+  const contentEl = document.getElementById('an-exec-content');
+  emptyEl.style.display = 'none';
+  contentEl.style.display = 'none';
+
+  let url = '/api/analytics/execution?source=live';
+  if (sourceVal && sourceVal.startsWith('backtest:')) {
+    const runId = sourceVal.split(':')[1];
+    url = '/api/analytics/execution?source=backtest&run_id=' + runId;
+  }
+
+  const data = await fetchJSON(url);
+  if (!data || !data.success || !data.slippage_summary) {
+    emptyEl.style.display = 'block';
+    return;
+  }
+
+  contentEl.style.display = 'block';
+  const ss = data.slippage_summary;
+
+  // Summary cards
+  const slipColor = ss.avg_slippage < 0 ? 'var(--red)' : ss.avg_slippage > 0 ? 'var(--green)' : 'var(--text-dim)';
+  const costColor = ss.total_slippage_cost < 0 ? 'var(--red)' : ss.total_slippage_cost > 0 ? 'var(--green)' : 'var(--text-dim)';
+  const pctColor = ss.avg_slippage_pct < 0 ? 'var(--red)' : ss.avg_slippage_pct > 0 ? 'var(--green)' : 'var(--text-dim)';
+  const cards = [
+    {label: 'Avg Slippage', value: '$' + ss.avg_slippage.toFixed(4), color: slipColor},
+    {label: 'Total Cost', value: '$' + ss.total_slippage_cost.toLocaleString(undefined,{minimumFractionDigits:2}), color: costColor},
+    {label: 'Slippage %', value: ss.avg_slippage_pct.toFixed(2) + '%', color: pctColor},
+    {label: 'Data Coverage', value: ss.trades_with_data + '/' + ss.total_trades, color: 'var(--text)'},
+  ];
+  let cardsHtml = '';
+  for (const c of cards) {
+    cardsHtml += '<div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;text-align:center;">';
+    cardsHtml += '<div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">' + c.label + '</div>';
+    cardsHtml += '<div style="font-size:16px;font-weight:700;font-family:var(--font-mono);color:' + c.color + ';">' + c.value + '</div>';
+    cardsHtml += '</div>';
+  }
+  document.getElementById('an-exec-cards').innerHTML = cardsHtml;
+
+  // Slippage by bucket table
+  const buckets = data.slippage_by_bucket || [];
+  let bHtml = '';
+  if (buckets.length) {
+    bHtml = '<table style="width:100%;border-collapse:collapse;">';
+    bHtml += '<tr style="border-bottom:1px solid var(--border);"><th style="text-align:left;padding:3px;">Bucket</th><th style="text-align:center;">Trades</th><th style="text-align:right;padding-right:4px;">Avg Slip</th></tr>';
+    for (const b of buckets) {
+      const sc = b.avg_slippage < 0 ? 'var(--red)' : b.avg_slippage > 0 ? 'var(--green)' : 'var(--text-dim)';
+      bHtml += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
+      bHtml += '<td style="padding:3px;">' + b.bucket + '</td>';
+      bHtml += '<td style="text-align:center;">' + b.count + '</td>';
+      bHtml += '<td style="text-align:right;padding-right:4px;font-family:var(--font-mono);color:' + sc + ';">$' + b.avg_slippage.toFixed(4) + '</td>';
+      bHtml += '</tr>';
+    }
+    bHtml += '</table>';
+  } else {
+    bHtml = '<span style="color:var(--text-dim);">No data</span>';
+  }
+  document.getElementById('an-exec-bucket-table').innerHTML = bHtml;
+
+  // Slippage by VIX table
+  const vix = data.slippage_by_vix || [];
+  let vHtml = '';
+  if (vix.length) {
+    vHtml = '<table style="width:100%;border-collapse:collapse;">';
+    vHtml += '<tr style="border-bottom:1px solid var(--border);"><th style="text-align:left;padding:3px;">VIX Regime</th><th style="text-align:center;">Trades</th><th style="text-align:right;padding-right:4px;">Avg Slip</th></tr>';
+    for (const v of vix) {
+      const sc = v.avg_slippage < 0 ? 'var(--red)' : v.avg_slippage > 0 ? 'var(--green)' : 'var(--text-dim)';
+      vHtml += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
+      vHtml += '<td style="padding:3px;">' + v.regime + '</td>';
+      vHtml += '<td style="text-align:center;">' + v.count + '</td>';
+      vHtml += '<td style="text-align:right;padding-right:4px;font-family:var(--font-mono);color:' + sc + ';">$' + v.avg_slippage.toFixed(4) + '</td>';
+      vHtml += '</tr>';
+    }
+    vHtml += '</table>';
+  } else {
+    vHtml = '<span style="color:var(--text-dim);">No data</span>';
+  }
+  document.getElementById('an-exec-vix-table').innerHTML = vHtml;
+
+  // Exit reason table
+  const exits = data.exit_reasons || [];
+  let eHtml = '';
+  if (exits.length) {
+    eHtml = '<table style="width:100%;border-collapse:collapse;">';
+    eHtml += '<tr style="border-bottom:1px solid var(--border);"><th style="text-align:left;padding:3px;">Reason</th><th style="text-align:center;">Count</th><th style="text-align:center;">Win Rate</th><th style="text-align:right;padding-right:4px;">Avg P&L</th></tr>';
+    for (const e of exits) {
+      const wrColor = e.win_rate >= 50 ? 'var(--green)' : 'var(--amber)';
+      const pnlColor = e.avg_pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      eHtml += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
+      eHtml += '<td style="padding:3px;">' + e.reason + '</td>';
+      eHtml += '<td style="text-align:center;">' + e.count + '</td>';
+      eHtml += '<td style="text-align:center;font-family:var(--font-mono);color:' + wrColor + ';">' + e.win_rate.toFixed(1) + '%</td>';
+      eHtml += '<td style="text-align:right;padding-right:4px;font-family:var(--font-mono);color:' + pnlColor + ';">$' + e.avg_pnl.toFixed(2) + '</td>';
+      eHtml += '</tr>';
+    }
+    eHtml += '</table>';
+  } else {
+    eHtml = '<span style="color:var(--text-dim);">No data</span>';
+  }
+  document.getElementById('an-exec-exit-table').innerHTML = eHtml;
 }
 
 // ---------------------------------------------------------------

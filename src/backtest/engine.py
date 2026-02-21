@@ -40,6 +40,21 @@ logger = logging.getLogger(__name__)
 ET = pytz.timezone('America/New_York')
 
 
+def _classify_bt_time_bucket(dt):
+    """Classify a datetime into a time-of-day bucket (same labels as dashboard)."""
+    h = dt.hour
+    if h < 10:
+        return 'Open (9:30-10)'
+    elif h < 11:
+        return 'Mid-Morning (10-11)'
+    elif h < 13:
+        return 'Midday (11-1)'
+    elif h < 15:
+        return 'Afternoon (1-3)'
+    else:
+        return 'Close (3-4)'
+
+
 def _nyse_half_days(year: int) -> set:
     """Return set of NYSE half-day dates (1:00 PM close) for a given year.
 
@@ -94,6 +109,11 @@ class BacktestTrade:
     vix_at_entry: float = 0.0
     duration_minutes: int = 0
     strategy_type: str = 'daily_income'
+    theoretical_credit: float = 0.0
+    actual_credit: float = 0.0
+    slippage: float = 0.0
+    slippage_pct: float = 0.0
+    entry_time_bucket: str = ''
 
     def to_dict(self) -> dict:
         return {
@@ -115,6 +135,11 @@ class BacktestTrade:
             'vix_at_entry': self.vix_at_entry,
             'duration_minutes': self.duration_minutes,
             'strategy_type': self.strategy_type,
+            'theoretical_credit': self.theoretical_credit,
+            'actual_credit': self.actual_credit,
+            'slippage': self.slippage,
+            'slippage_pct': self.slippage_pct,
+            'entry_time_bucket': self.entry_time_bucket,
         }
 
 
@@ -668,6 +693,12 @@ class BacktestEngine:
             quantity=qty,
         )
 
+        # Attach backtest slippage metadata for later BacktestTrade construction
+        trade._bt_theoretical_credit = spread.credit_received
+        trade._bt_actual_credit = order_status['fill_price']
+        trade._bt_slippage = round(order_status['fill_price'] - spread.credit_received, 4)
+        trade._bt_entry_time_bucket = _classify_bt_time_bucket(bar_dt)
+
         self._0dte_trade = trade
         self._0dte_strategy_type = strategy_type
         self._pending_setup = None
@@ -760,6 +791,12 @@ class BacktestEngine:
             entry_order_id=order_id,
             quantity=tnt_qty,
         )
+
+        # Attach backtest slippage metadata for later BacktestTrade construction
+        trade._bt_theoretical_credit = spread.credit_received
+        trade._bt_actual_credit = order_status['fill_price']
+        trade._bt_slippage = round(order_status['fill_price'] - spread.credit_received, 4)
+        trade._bt_entry_time_bucket = _classify_bt_time_bucket(bar_dt)
 
         self._tnt_trade = trade
         self._tnt_entry_date = bar_dt.date()
@@ -992,6 +1029,11 @@ class BacktestEngine:
             duration_minutes=int((expire_dt - trade.entry_time).total_seconds() / 60)
             if trade.entry_time else 0,
             strategy_type=strategy_type,
+            theoretical_credit=getattr(trade, '_bt_theoretical_credit', trade.entry_price),
+            actual_credit=getattr(trade, '_bt_actual_credit', trade.entry_price),
+            slippage=getattr(trade, '_bt_slippage', 0.0),
+            slippage_pct=round(getattr(trade, '_bt_slippage', 0) / trade.spread.credit_received * 100, 2) if trade.spread.credit_received else 0.0,
+            entry_time_bucket=getattr(trade, '_bt_entry_time_bucket', ''),
         )
         self.trades.append(bt_trade)
 
@@ -1034,5 +1076,10 @@ class BacktestEngine:
             duration_minutes=int((trade.exit_time - trade.entry_time).total_seconds() / 60)
             if trade.exit_time else 0,
             strategy_type=strategy_type,
+            theoretical_credit=getattr(trade, '_bt_theoretical_credit', trade.entry_price),
+            actual_credit=getattr(trade, '_bt_actual_credit', trade.entry_price),
+            slippage=getattr(trade, '_bt_slippage', 0.0),
+            slippage_pct=round(getattr(trade, '_bt_slippage', 0) / trade.spread.credit_received * 100, 2) if trade.spread.credit_received else 0.0,
+            entry_time_bucket=getattr(trade, '_bt_entry_time_bucket', ''),
         )
         self.trades.append(bt_trade)
