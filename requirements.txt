@@ -18,3 +18,5 @@ yfinance>=1.2.0
 schwab-py==1.5.1
 keyring>=24.0.0
 platformdirs>=4.0.0
+reportlab>=4.0.0
+matplotlib>=3.8.0

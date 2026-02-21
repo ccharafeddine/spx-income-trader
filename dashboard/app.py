@@ -8,6 +8,7 @@ trades, and market data. Runs as a separate process from the trading bot.
 import sys
 import os
 import re
+import io
 import json
 import logging
 import math
@@ -3949,6 +3950,106 @@ def api_analytics_attribution():
         return jsonify({'success': True, **result})
     except Exception as e:
         logger.error(f"Attribution error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/export/tearsheet')
+def api_export_tearsheet():
+    """Generate and download a strategy tear sheet PDF."""
+    from src.analytics.tear_sheet import TearSheetGenerator
+    from src.analytics.greeks import GreeksCalculator
+    from src.analytics.pnl_attribution import PnLAttributor
+
+    period = request.args.get('period', 'monthly')
+    source = request.args.get('source', 'live')
+
+    try:
+        # Load trades
+        if source.startswith('backtest:') or source == 'backtest':
+            run_id = request.args.get('run_id')
+            if source.startswith('backtest:'):
+                run_id = source.split(':')[1]
+            if not run_id:
+                return jsonify({'success': False, 'error': 'run_id required'}), 400
+            db_path = str(DB_PATH)
+            conn = sqlite3.connect(db_path, timeout=10)
+            row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
+            conn.close()
+            if not row:
+                return jsonify({'success': False, 'error': 'Run not found'}), 404
+            report = json.loads(row[0])
+            trades = report.get('_trades', report.get('trades', []))
+            analytics = report
+            risk_metrics = _analytics_risk_metrics(
+                report.get('equity_curve', []),
+                report.get('core', {}).get('calmar_ratio', 0))
+        else:
+            db_path = DATABASE_PATH
+            conn = sqlite3.connect(db_path, timeout=10)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            spx_quote = yahoo.get_spx_quote() or {}
+            spx_price = spx_quote.get('price')
+            _, trades = classify_trades(conn, spx_price)
+            conn.close()
+            starting_capital = _get_starting_capital()
+            analytics = _analytics_compute(trades, starting_capital)
+            risk_metrics = _analytics_risk_metrics(
+                analytics.get('equity_curve', []),
+                analytics.get('core', {}).get('calmar_ratio', 0))
+
+        # Attribution
+        attributor = PnLAttributor(GreeksCalculator())
+        attribution = attributor.attribute_batch(trades)
+
+        # Execution
+        execution = _analytics_execution(trades)
+
+        # Determine date range
+        generator = TearSheetGenerator()
+
+        if period == 'monthly':
+            year = int(request.args.get('year', datetime.now().year))
+            month = int(request.args.get('month', datetime.now().month))
+            pdf_bytes = generator.generate_monthly(
+                year, month, trades, analytics, risk_metrics,
+                attribution, execution)
+            filename = f'tearsheet_{year}_{month:02d}.pdf'
+
+        elif period == 'weekly':
+            start_str = request.args.get('start')
+            end_str = request.args.get('end')
+            if not start_str or not end_str:
+                return jsonify({'success': False, 'error': 'start and end required'}), 400
+            start_date = date.fromisoformat(start_str)
+            end_date = date.fromisoformat(end_str)
+            pdf_bytes = generator.generate_weekly(
+                start_date, end_date, trades, analytics, risk_metrics,
+                attribution, execution)
+            filename = f'tearsheet_{start_str}_{end_str}.pdf'
+
+        else:  # custom
+            start_str = request.args.get('start')
+            end_str = request.args.get('end')
+            if not start_str or not end_str:
+                return jsonify({'success': False, 'error': 'start and end required'}), 400
+            start_date = date.fromisoformat(start_str)
+            end_date = date.fromisoformat(end_str)
+            pdf_bytes = generator.generate_custom(
+                start_date, end_date, trades, analytics, risk_metrics,
+                attribution, execution)
+            filename = f'tearsheet_{start_str}_{end_str}.pdf'
+
+        from flask import send_file
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=filename,
+        )
+
+    except Exception as e:
+        logger.error(f"Tear sheet generation error: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
