@@ -9,8 +9,6 @@ import math
 import logging
 from datetime import datetime
 
-from scipy.stats import norm
-
 import pytz
 
 logger = logging.getLogger(__name__)
@@ -19,6 +17,19 @@ ET = pytz.timezone('America/New_York')
 
 # Floor for DTE to prevent division by zero in Black-Scholes
 MIN_DTE_YEARS = 1e-6
+
+_SQRT_2 = math.sqrt(2)
+_SQRT_2PI = math.sqrt(2 * math.pi)
+
+
+def _norm_cdf(x):
+    """Standard normal CDF using math.erf (identical precision to scipy.stats._norm_cdf)."""
+    return 0.5 * (1.0 + math.erf(x / _SQRT_2))
+
+
+def _norm_pdf(x):
+    """Standard normal PDF."""
+    return math.exp(-0.5 * x * x) / _SQRT_2PI
 
 
 class GreeksCalculator:
@@ -55,24 +66,24 @@ class GreeksCalculator:
         discount = math.exp(-self.risk_free_rate * t)
 
         # Gamma and Vega are the same for calls and puts
-        gamma = norm.pdf(d1) / (spot * iv * sqrt_t)
+        gamma = _norm_pdf(d1) / (spot * iv * sqrt_t)
         # Vega per 1% IV change (divide standard vega by 100)
-        vega = spot * norm.pdf(d1) * sqrt_t / 100.0
+        vega = spot * _norm_pdf(d1) * sqrt_t / 100.0
 
         if option_type == 'call':
-            delta = norm.cdf(d1)
+            delta = _norm_cdf(d1)
             theta = (
-                (-spot * norm.pdf(d1) * iv / (2 * sqrt_t))
-                - self.risk_free_rate * strike * discount * norm.cdf(d2)
+                (-spot * _norm_pdf(d1) * iv / (2 * sqrt_t))
+                - self.risk_free_rate * strike * discount * _norm_cdf(d2)
             ) / 365.0  # per calendar day
-            rho = strike * t * discount * norm.cdf(d2) / 100.0
+            rho = strike * t * discount * _norm_cdf(d2) / 100.0
         else:  # put
-            delta = norm.cdf(d1) - 1.0
+            delta = _norm_cdf(d1) - 1.0
             theta = (
-                (-spot * norm.pdf(d1) * iv / (2 * sqrt_t))
-                + self.risk_free_rate * strike * discount * norm.cdf(-d2)
+                (-spot * _norm_pdf(d1) * iv / (2 * sqrt_t))
+                + self.risk_free_rate * strike * discount * _norm_cdf(-d2)
             ) / 365.0  # per calendar day
-            rho = -strike * t * discount * norm.cdf(-d2) / 100.0
+            rho = -strike * t * discount * _norm_cdf(-d2) / 100.0
 
         return {
             'delta': delta,
