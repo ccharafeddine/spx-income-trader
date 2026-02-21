@@ -3131,6 +3131,36 @@ header::after {
         </div>
       </div>
 
+      <!-- Regime Analysis -->
+      <div id="an-regime-section" style="margin-bottom: 16px;">
+        <div class="panel" style="padding: 12px; border-left: 3px solid var(--amber);">
+          <div class="panel-title" style="margin-bottom: 12px;">Regime Analysis</div>
+          <div id="an-regime-empty" style="display:none; color: var(--text-dim); font-size: 12px; padding: 16px 0; text-align: center;">No regime data available</div>
+          <div id="an-regime-content" style="display:none;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:14px;">
+              <div>
+                <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">VIX Regime Performance</div>
+                <div id="an-regime-vix"></div>
+              </div>
+              <div>
+                <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Market Direction Performance</div>
+                <div id="an-regime-dir"></div>
+              </div>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+              <div>
+                <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">VIX Transitions</div>
+                <div id="an-regime-trans"></div>
+              </div>
+              <div>
+                <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Market Neutrality</div>
+                <div id="an-regime-neutral"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Equity curve -->
       <div class="panel" style="padding: 12px; margin-bottom: 16px;">
         <div class="panel-title" style="margin-bottom: 8px;">Equity Curve</div>
@@ -6256,6 +6286,7 @@ async function loadAnalytics() {
   renderAnExecution(sourceVal);
   renderAnRiskMetrics(sourceVal);
   renderAnAttribution(sourceVal);
+  renderAnRegime(sourceVal);
 }
 
 function renderAnMetrics(data) {
@@ -6663,6 +6694,93 @@ async function renderAnAttribution(sourceVal) {
 
   // Interpretation
   document.getElementById('an-attr-interp').textContent = data.interpretation || '';
+}
+
+async function renderAnRegime(sourceVal) {
+  const emptyEl = document.getElementById('an-regime-empty');
+  const contentEl = document.getElementById('an-regime-content');
+  emptyEl.style.display = 'none';
+  contentEl.style.display = 'none';
+
+  let url = '/api/analytics/regime?source=live';
+  if (sourceVal && sourceVal.startsWith('backtest:')) {
+    const runId = sourceVal.split(':')[1];
+    url = '/api/analytics/regime?source=backtest&run_id=' + runId;
+  }
+
+  const data = await fetchJSON(url);
+  if (!data || !data.success || !data.trade_count) {
+    emptyEl.style.display = 'block';
+    return;
+  }
+  contentEl.style.display = 'block';
+
+  function regimeBar(regimes) {
+    if (!regimes || !regimes.length) return '<span style="color:var(--text-dim);">No data</span>';
+    let html = '';
+    for (const r of regimes) {
+      const wr = r.win_rate || 0;
+      const barW = Math.max(wr, 2);
+      const wrColor = wr >= 50 ? 'var(--green)' : 'var(--amber)';
+      const pnlColor = (r.avg_pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+      html += '<div style="display:flex; align-items:center; gap:8px; margin-bottom:4px; font-size:11px;">';
+      html += '<div style="width:75px; color:var(--text-dim); flex-shrink:0;">' + r.regime + '</div>';
+      html += '<div style="flex:1; background:var(--bg); border-radius:3px; height:16px; position:relative;">';
+      html += '<div style="width:' + barW + '%; background:' + wrColor + '; height:100%; border-radius:3px; opacity:0.7;"></div>';
+      html += '</div>';
+      html += '<div style="width:35px; text-align:right; font-family:var(--font-mono); color:' + wrColor + ';">' + wr.toFixed(0) + '%</div>';
+      html += '<div style="width:28px; text-align:right; color:var(--text-dim);">' + r.count + '</div>';
+      html += '<div style="width:60px; text-align:right; font-family:var(--font-mono); color:' + pnlColor + ';">' + (r.avg_pnl >= 0 ? '+' : '') + '$' + Math.abs(r.avg_pnl).toFixed(0) + '</div>';
+      html += '</div>';
+    }
+    // Legend
+    html += '<div style="font-size:9px; color:var(--text-dim); margin-top:4px; display:flex; gap:12px;">';
+    html += '<span>Bar = Win Rate</span><span>Count</span><span>Avg P&L</span></div>';
+    return html;
+  }
+
+  document.getElementById('an-regime-vix').innerHTML = regimeBar(data.vix_regimes);
+  document.getElementById('an-regime-dir').innerHTML = regimeBar(data.direction_regimes);
+
+  // Transitions
+  const tr = data.transitions || {};
+  let tHtml = '';
+  const transLabels = [['Rising VIX', tr.rising_vix], ['Falling VIX', tr.falling_vix], ['Stable VIX', tr.stable_vix]];
+  for (const [label, stats] of transLabels) {
+    if (!stats || stats.count === 0) continue;
+    const pnlColor = (stats.avg_pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+    const wrColor = (stats.win_rate || 0) >= 50 ? 'var(--green)' : 'var(--amber)';
+    tHtml += '<div style="display:flex; justify-content:space-between; font-size:11px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03);">';
+    tHtml += '<span style="color:var(--text);">' + label + '</span>';
+    tHtml += '<span style="color:var(--text-dim);">' + stats.count + ' trades</span>';
+    tHtml += '<span style="font-family:var(--font-mono); color:' + wrColor + ';">' + (stats.win_rate || 0).toFixed(0) + '% WR</span>';
+    tHtml += '<span style="font-family:var(--font-mono); color:' + pnlColor + ';">' + (stats.avg_pnl >= 0 ? '+' : '') + '$' + Math.abs(stats.avg_pnl || 0).toFixed(0) + '</span>';
+    tHtml += '</div>';
+  }
+  if (!tHtml) tHtml = '<span style="color:var(--text-dim); font-size:11px;">No VIX transition data</span>';
+  document.getElementById('an-regime-trans').innerHTML = tHtml;
+
+  // Neutrality
+  const neut = data.neutrality || {};
+  let nHtml = '';
+  if (neut.sufficient_data) {
+    const absCorr = Math.abs(neut.correlation || 0);
+    const corrColor = absCorr < 0.2 ? 'var(--green)' : absCorr < 0.5 ? 'var(--amber)' : 'var(--red)';
+    nHtml += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">';
+    nHtml += '<div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px; text-align:center;">';
+    nHtml += '<div style="font-size:10px; color:var(--text-dim); margin-bottom:2px;">SPX Correlation</div>';
+    nHtml += '<div style="font-size:16px; font-weight:700; font-family:var(--font-mono); color:' + corrColor + ';">' + (neut.correlation || 0).toFixed(3) + '</div>';
+    nHtml += '</div>';
+    nHtml += '<div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px; text-align:center;">';
+    nHtml += '<div style="font-size:10px; color:var(--text-dim); margin-bottom:2px;">SPX Beta</div>';
+    nHtml += '<div style="font-size:16px; font-weight:700; font-family:var(--font-mono); color:var(--text);">' + (neut.beta || 0).toFixed(3) + '</div>';
+    nHtml += '</div>';
+    nHtml += '</div>';
+    nHtml += '<div style="font-size:11px; color:var(--text-dim); font-style:italic;">' + (neut.interpretation || '') + '</div>';
+  } else {
+    nHtml = '<span style="color:var(--text-dim); font-size:11px;">' + (neut.interpretation || 'Insufficient data') + '</span>';
+  }
+  document.getElementById('an-regime-neutral').innerHTML = nHtml;
 }
 
 // ---------------------------------------------------------------
