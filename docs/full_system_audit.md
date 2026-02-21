@@ -249,7 +249,7 @@ PASS - All strategies have complete signal lifecycle: detection -> confirmation 
 
 | Component | Math Correct | Edge Cases | Dashboard Renders | Tests Pass |
 |-----------|-------------|------------|-------------------|------------|
-| Greeks | PASS | PASS (1e-6 DTE floor, empty=zeroes) | PASS | PASS |
+| Greeks | PASS | PASS (1e-6 DTE floor, 0.01 IV floor, empty=zeroes) | PASS | PASS |
 | Risk Metrics (VaR/CVaR/Calmar) | PASS | PASS (5th/1st percentile correct) | PASS | PASS |
 | P&L Attribution | PASS | PASS (null inputs handled) | PASS | PASS |
 | Execution Quality | PASS | PASS | PASS | PASS |
@@ -262,7 +262,7 @@ PASS - All strategies have complete signal lifecycle: detection -> confirmation 
 ### 7A. Greeks Calculator
 
 - Zero DTE: Uses `MIN_DTE_YEARS = 1e-6` floor (greeks.py:19) - PASS
-- Negative IV: Not explicitly validated but math works. Semantically invalid but won't crash - PASS (minor)
+- Negative/zero IV: `MIN_IV = 0.01` floor added in `_d1_d2()` and `calculate_greeks()` to prevent ZeroDivisionError - PASS (FIXED)
 - Empty positions: Returns `_empty_result()` with all zeroes (greeks.py:276-287) - PASS
 
 ### 7B. Risk Metrics
@@ -358,7 +358,7 @@ All strategies are wired correctly, orders flow through proper lifecycle, 5-min 
 | ID | Finding | Status |
 |----|---------|--------|
 | M-1 | Stale HTML files (prod_page.html, packaged_page.html) in project root reference old monitoring.* settings | DOCUMENTED - These are not active templates |
-| M-2 | Greeks calculator doesn't validate negative IV input | DOCUMENTED - Math works, semantically invalid |
+| M-2 | Greeks calculator didn't validate negative IV input | FIXED - Added MIN_IV=0.01 floor in greeks.py |
 | M-3 | Tearsheet download_name uses date strings in Content-Disposition header | DOCUMENTED - No filesystem impact (BytesIO serving) |
 
 ### LOW
@@ -412,8 +412,10 @@ The hot-reload limitation (H-1 through H-4) is a design choice, not a bug. Strat
 - PDT-aware backtesting correctly activates 1pm management below threshold
 - 911 tests all passing across Python 3.11, 3.12, 3.13
 
+**Fixes implemented:**
+- Greeks calculator: Added MIN_IV=0.01 floor to prevent ZeroDivisionError on zero/negative IV (greeks.py)
+
 **Known limitations (documented, not bugs):**
 - Strategy parameters require bot restart to take effect (by design)
-- Greeks calculator accepts negative IV without validation (math still works)
 - Backtest pricing uses Black-Scholes with no skew/smile modeling
 - No liquidity or partial fill modeling in backtest

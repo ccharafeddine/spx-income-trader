@@ -17,6 +17,8 @@ ET = pytz.timezone('America/New_York')
 
 # Floor for DTE to prevent division by zero in Black-Scholes
 MIN_DTE_YEARS = 1e-6
+# Floor for IV to prevent division by zero (VIX=0 would cause ZeroDivisionError)
+MIN_IV = 0.01
 
 _SQRT_2 = math.sqrt(2)
 _SQRT_2PI = math.sqrt(2 * math.pi)
@@ -41,6 +43,7 @@ class GreeksCalculator:
     def _d1_d2(self, spot, strike, dte_years, iv):
         """Compute d1 and d2 for Black-Scholes formula."""
         t = max(dte_years, MIN_DTE_YEARS)
+        iv = max(iv, MIN_IV)
         sqrt_t = math.sqrt(t)
         d1 = (math.log(spot / strike) + (self.risk_free_rate + 0.5 * iv ** 2) * t) / (iv * sqrt_t)
         d2 = d1 - iv * sqrt_t
@@ -61,6 +64,7 @@ class GreeksCalculator:
             dict with delta, gamma, theta, vega, rho
         """
         t = max(dte_years, MIN_DTE_YEARS)
+        iv = max(iv, MIN_IV)
         d1, d2 = self._d1_d2(spot, strike, t, iv)
         sqrt_t = math.sqrt(t)
         discount = math.exp(-self.risk_free_rate * t)
