@@ -134,6 +134,10 @@ filters:
   # Set to 0 to disable this override.
   extreme_move_override_pct: 1.5
 
+  # Morning bias filter: block bearish DI entries on Up/Strong Up days
+  # Uses same direction regime classification as analytics (±0.25% flat, ±1.0% strong)
+  di_morning_bias_filter: true
+
 # Tag 'n Turn - Weekly Swing Strategy (Production Line Trading p.30-33)
 # Separate from daily income strategy - can run in parallel
 tag_n_turn:

@@ -3140,19 +3140,34 @@ header::after {
         </select>
       </div>
       <div id="ts-monthly-fields" style="margin-bottom:12px;">
-        <div style="display:flex; gap:8px;">
+        <div style="display:flex; gap:8px; margin-bottom:6px;">
           <div style="flex:1;">
-            <label style="font-size:11px; color:var(--text-dim); display:block; margin-bottom:4px;">Year</label>
-            <input id="ts-year" type="number" value="2026" style="width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; font-size:12px;">
-          </div>
-          <div style="flex:1;">
-            <label style="font-size:11px; color:var(--text-dim); display:block; margin-bottom:4px;">Month</label>
-            <select id="ts-month" style="width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; font-size:12px;">
+            <label style="font-size:11px; color:var(--text-dim); display:block; margin-bottom:4px;">Start Month</label>
+            <select id="ts-start-month" style="width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; font-size:12px;">
               <option value="1">January</option><option value="2">February</option><option value="3">March</option>
               <option value="4">April</option><option value="5">May</option><option value="6">June</option>
               <option value="7">July</option><option value="8">August</option><option value="9">September</option>
               <option value="10">October</option><option value="11">November</option><option value="12">December</option>
             </select>
+          </div>
+          <div style="flex:1;">
+            <label style="font-size:11px; color:var(--text-dim); display:block; margin-bottom:4px;">Start Year</label>
+            <input id="ts-start-year" type="number" value="2026" style="width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; font-size:12px;">
+          </div>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <div style="flex:1;">
+            <label style="font-size:11px; color:var(--text-dim); display:block; margin-bottom:4px;">End Month</label>
+            <select id="ts-end-month" style="width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; font-size:12px;">
+              <option value="1">January</option><option value="2">February</option><option value="3">March</option>
+              <option value="4">April</option><option value="5">May</option><option value="6">June</option>
+              <option value="7">July</option><option value="8">August</option><option value="9">September</option>
+              <option value="10">October</option><option value="11">November</option><option value="12">December</option>
+            </select>
+          </div>
+          <div style="flex:1;">
+            <label style="font-size:11px; color:var(--text-dim); display:block; margin-bottom:4px;">End Year</label>
+            <input id="ts-end-year" type="number" value="2026" style="width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; font-size:12px;">
           </div>
         </div>
       </div>
@@ -7342,6 +7357,17 @@ async function renderAnRegime(sourceVal) {
 
     // Interpretation
     document.getElementById('an-dir-interp').textContent = dd.interpretation || '';
+
+    // Morning bias filter note
+    const existingNote = document.getElementById('an-dir-bias-note');
+    if (existingNote) existingNote.remove();
+    if (data.morning_bias_filter_active) {
+      const noteEl = document.createElement('div');
+      noteEl.id = 'an-dir-bias-note';
+      noteEl.style.cssText = 'font-size:10px; color:#06b6d4; margin-top:6px; font-style:italic;';
+      noteEl.textContent = 'Morning bias filter active \u2014 bearish DI entries blocked on Up/Strong Up days';
+      document.getElementById('an-dir-interp').after(noteEl);
+    }
   } else {
     ddEl.style.display = 'none';
   }
@@ -7526,14 +7552,23 @@ async function renderAnDuration(sourceVal) {
 // ---------------------------------------------------------------
 function openTearSheetModal() {
   const now = new Date();
-  document.getElementById('ts-year').value = now.getFullYear();
-  document.getElementById('ts-month').value = now.getMonth() + 1;
+  // Default monthly range: last full calendar month
+  let defMonth = now.getMonth(); // 0-indexed, so this is previous month
+  let defYear = now.getFullYear();
+  if (defMonth === 0) { defMonth = 12; defYear--; } // January -> December of prev year
+  document.getElementById('ts-start-year').value = defYear;
+  document.getElementById('ts-start-month').value = defMonth;
+  document.getElementById('ts-end-year').value = defYear;
+  document.getElementById('ts-end-month').value = defMonth;
+
+  // Default weekly/custom range: this week
   const monday = new Date(now);
   monday.setDate(now.getDate() - now.getDay() + 1);
   const friday = new Date(monday);
   friday.setDate(monday.getDate() + 4);
   document.getElementById('ts-start').value = monday.toISOString().slice(0,10);
   document.getElementById('ts-end').value = friday.toISOString().slice(0,10);
+
   document.getElementById('ts-error').style.display = 'none';
   document.getElementById('ts-generate-btn').textContent = 'Generate PDF';
   document.getElementById('ts-generate-btn').disabled = false;
@@ -7565,13 +7600,40 @@ async function generateTearSheet() {
   let url = '/api/export/tearsheet?period=' + period + '&source=' + encodeURIComponent(sourceVal);
 
   if (period === 'monthly') {
-    url += '&year=' + document.getElementById('ts-year').value;
-    url += '&month=' + document.getElementById('ts-month').value;
+    const startYear = document.getElementById('ts-start-year').value;
+    const startMonth = document.getElementById('ts-start-month').value;
+    const endYear = document.getElementById('ts-end-year').value;
+    const endMonth = document.getElementById('ts-end-month').value;
+    if (!startYear || !startMonth || !endYear || !endMonth) {
+      errEl.textContent = 'All month/year fields are required.';
+      errEl.style.display = 'block';
+      btn.textContent = 'Generate PDF';
+      btn.disabled = false;
+      return;
+    }
+    // Validate: end must be >= start
+    if (parseInt(endYear) < parseInt(startYear) ||
+        (parseInt(endYear) === parseInt(startYear) && parseInt(endMonth) < parseInt(startMonth))) {
+      errEl.textContent = 'End month must be on or after start month.';
+      errEl.style.display = 'block';
+      btn.textContent = 'Generate PDF';
+      btn.disabled = false;
+      return;
+    }
+    url += '&start_year=' + startYear + '&start_month=' + startMonth;
+    url += '&end_year=' + endYear + '&end_month=' + endMonth;
   } else {
     const start = document.getElementById('ts-start').value;
     const end = document.getElementById('ts-end').value;
     if (!start || !end) {
       errEl.textContent = 'Start and end dates are required.';
+      errEl.style.display = 'block';
+      btn.textContent = 'Generate PDF';
+      btn.disabled = false;
+      return;
+    }
+    if (start > end) {
+      errEl.textContent = 'End date must be on or after start date.';
       errEl.style.display = 'block';
       btn.textContent = 'Generate PDF';
       btn.disabled = false;
@@ -7583,20 +7645,38 @@ async function generateTearSheet() {
   try {
     const res = await fetch(url);
     if (!res.ok) {
-      const err = await res.json().catch(() => ({error: 'Generation failed'}));
-      throw new Error(err.error || 'Generation failed');
+      let errMsg = 'PDF generation failed (HTTP ' + res.status + ')';
+      try {
+        const errJson = await res.json();
+        if (errJson.error) errMsg = errJson.error;
+      } catch (_) {}
+      throw new Error(errMsg);
+    }
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/pdf')) {
+      throw new Error('Server returned unexpected content type: ' + contentType);
     }
     const blob = await res.blob();
+    if (blob.size === 0) {
+      throw new Error('Server returned empty PDF');
+    }
+    const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
+    a.href = blobUrl;
     const cd = res.headers.get('content-disposition') || '';
-    const match = cd.match(/filename=(.+)/);
+    const match = cd.match(/filename[*]?=(?:UTF-8'')?["']?([^"';\s]+)/);
     a.download = match ? match[1] : 'tearsheet.pdf';
+    a.style.display = 'none';
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(a.href);
+    // Delay cleanup so the download can start
+    setTimeout(function() {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    }, 5000);
     closeTearSheetModal();
   } catch (e) {
-    errEl.textContent = e.message;
+    errEl.textContent = e.message || 'An unexpected error occurred during PDF generation.';
     errEl.style.display = 'block';
   }
   btn.textContent = 'Generate PDF';

@@ -14,7 +14,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
 from reportlab.lib.colors import HexColor, white, black
 from reportlab.platypus import SimpleDocTemplate, Spacer, Table, TableStyle, Image
-from reportlab.platypus import Paragraph
+from reportlab.platypus import Paragraph, KeepTogether
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 
@@ -34,8 +34,14 @@ GREEN = HexColor('#10b981')
 RED = HexColor('#ef4444')
 AMBER = HexColor('#f59e0b')
 BLUE = HexColor('#3b82f6')
+CYAN = HexColor('#06b6d4')
 
 VERSION = "The Daily Melt v1.0.0"
+
+DISCLAIMER = (
+    "Simulated Results \u2014 Uses synthetic pricing, instant fills at "
+    "theoretical mid. Results reflect backtested performance, not live execution."
+)
 
 
 def _pnl_color(value):
@@ -81,34 +87,58 @@ class TearSheetGenerator:
         }
 
     def generate_monthly(self, year, month, trades, analytics, risk_metrics,
-                         attribution, execution):
-        """Generate monthly tear sheet PDF. Returns PDF bytes."""
-        month_name = date(year, month, 1).strftime('%B %Y')
-        period_label = month_name
+                         attribution, execution, data_source='live',
+                         end_year=None, end_month=None):
+        """Generate monthly tear sheet PDF. Returns PDF bytes.
+
+        Supports single month (year/month only) or multi-month range
+        when end_year/end_month are provided.
+        """
         start = date(year, month, 1)
-        if month == 12:
-            end = date(year + 1, 1, 1) - timedelta(days=1)
+        if end_year is not None and end_month is not None:
+            # Multi-month range
+            if end_month == 12:
+                end = date(end_year + 1, 1, 1) - timedelta(days=1)
+            else:
+                end = date(end_year, end_month + 1, 1) - timedelta(days=1)
+            start_label = start.strftime('%B %Y')
+            end_label = date(end_year, end_month, 1).strftime('%B %Y')
+            if start_label == end_label:
+                period_label = start_label
+            else:
+                period_label = f'{start_label} \u2013 {end_label}'
         else:
-            end = date(year, month + 1, 1) - timedelta(days=1)
+            # Single month
+            period_label = date(year, month, 1).strftime('%B %Y')
+            if month == 12:
+                end = date(year + 1, 1, 1) - timedelta(days=1)
+            else:
+                end = date(year, month + 1, 1) - timedelta(days=1)
+
         period_trades = self._filter_trades(trades, start, end)
         return self._build_pdf(period_label, period_trades, analytics,
-                               risk_metrics, attribution, execution)
+                               risk_metrics, attribution, execution,
+                               data_source=data_source)
 
     def generate_weekly(self, start_date, end_date, trades, analytics,
-                        risk_metrics, attribution, execution):
+                        risk_metrics, attribution, execution,
+                        data_source='live'):
         """Generate weekly tear sheet PDF. Returns PDF bytes."""
-        period_label = f'Week of {start_date.strftime("%b %d")}–{end_date.strftime("%b %d, %Y")}'
+        period_label = f'Week of {start_date.strftime("%b %d")}\u2013{end_date.strftime("%b %d, %Y")}'
         period_trades = self._filter_trades(trades, start_date, end_date)
         return self._build_pdf(period_label, period_trades, analytics,
-                               risk_metrics, attribution, execution)
+                               risk_metrics, attribution, execution,
+                               data_source=data_source)
 
     def generate_custom(self, start_date, end_date, trades, analytics,
-                        risk_metrics, attribution, execution):
+                        risk_metrics, attribution, execution,
+                        data_source='live'):
         """Generate tear sheet for custom date range. Returns PDF bytes."""
-        period_label = f'{start_date.strftime("%b %d, %Y")} – {end_date.strftime("%b %d, %Y")}'
+        period_label = f'{start_date.strftime("%b %d, %Y")} \u2013 {end_date.strftime("%b %d, %Y")}'
         period_trades = self._filter_trades(trades, start_date, end_date)
         return self._build_pdf(period_label, period_trades, analytics,
-                               risk_metrics, attribution, execution)
+                               risk_metrics, attribution, execution,
+                               data_source=data_source)
 
     def _filter_trades(self, trades, start, end):
         """Filter trades to those within the date range."""
@@ -125,7 +155,7 @@ class TearSheetGenerator:
         return filtered
 
     def _build_pdf(self, period_label, trades, analytics, risk_metrics,
-                   attribution, execution):
+                   attribution, execution, data_source='live'):
         """Build the complete tear sheet PDF."""
         buf = io.BytesIO()
         doc = SimpleDocTemplate(
@@ -136,11 +166,18 @@ class TearSheetGenerator:
 
         elements = []
 
+        # Data source label
+        if data_source and data_source != 'live':
+            source_label = f'Data: Backtest'
+        else:
+            source_label = 'Data: Live Trades'
+
         # Header
-        elements.append(Paragraph('The Daily Melt — Strategy Tear Sheet',
+        elements.append(Paragraph('The Daily Melt \u2014 Performance Report',
                                   self.styles['title']))
         elements.append(Paragraph(
             f'Period: {period_label} &nbsp;|&nbsp; '
+            f'{source_label} &nbsp;|&nbsp; '
             f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}',
             self.styles['subtitle']))
         elements.append(Spacer(1, 8))
@@ -152,7 +189,11 @@ class TearSheetGenerator:
 
         # Section 2: Equity Curve
         elements.append(Paragraph('EQUITY CURVE', self.styles['section']))
-        chart_img = self._build_equity_chart(analytics)
+        try:
+            chart_img = self._build_equity_chart(analytics)
+        except Exception as e:
+            logger.warning(f"Equity chart generation failed: {e}")
+            chart_img = None
         if chart_img:
             elements.append(chart_img)
         else:
@@ -160,30 +201,43 @@ class TearSheetGenerator:
                                       self.styles['body']))
         elements.append(Spacer(1, 10))
 
-        # Section 3: Risk Metrics
+        # Section 3: Monthly Returns (if multi-day data available)
+        monthly_table = self._build_monthly_returns(analytics)
+        if monthly_table:
+            elements.append(Paragraph('MONTHLY RETURNS', self.styles['section']))
+            elements.append(monthly_table)
+            elements.append(Spacer(1, 10))
+
+        # Section 4: Risk Metrics
         elements.append(Paragraph('RISK METRICS', self.styles['section']))
         elements.append(self._build_risk_table(risk_metrics))
         elements.append(Spacer(1, 10))
 
-        # Section 4: P&L Attribution
+        # Section 5: Top Exit Reasons
+        exit_reasons_table = self._build_exit_reasons(execution)
+        if exit_reasons_table:
+            elements.append(Paragraph('TOP EXIT REASONS', self.styles['section']))
+            elements.append(exit_reasons_table)
+            elements.append(Spacer(1, 10))
+
+        # Section 6: P&L Attribution
         elements.append(Paragraph('P&L ATTRIBUTION', self.styles['section']))
         elements.append(self._build_attribution_table(attribution))
         elements.append(Spacer(1, 10))
 
-        # Section 5: Execution Quality
+        # Section 7: Execution Quality
         elements.append(Paragraph('EXECUTION QUALITY', self.styles['section']))
         elements.append(self._build_execution_summary(execution))
         elements.append(Spacer(1, 10))
 
-        # Section 6: Trade Log
+        # Section 8: Trade Log
         elements.append(Paragraph('TRADE LOG', self.styles['section']))
         elements.append(self._build_trade_log(trades))
         elements.append(Spacer(1, 12))
 
         # Footer
-        elements.append(Paragraph(
-            'Past performance does not guarantee future results. Not financial advice.',
-            self.styles['footer']))
+        elements.append(Paragraph(DISCLAIMER, self.styles['footer']))
+        elements.append(Spacer(1, 4))
         elements.append(Paragraph(VERSION, self.styles['footer']))
 
         doc.build(elements, onFirstPage=self._page_bg, onLaterPages=self._page_bg)
@@ -202,6 +256,8 @@ class TearSheetGenerator:
         core = analytics.get('core', {}) if analytics else {}
         tm = analytics.get('trade_metrics', {}) if analytics else {}
 
+        sortino = core.get('sortino_ratio', 0) or 0
+
         cards = [
             ('Total P&L', _fmt_dollar(core.get('total_return_dollar')),
              _pnl_color(core.get('total_return_dollar'))),
@@ -211,6 +267,8 @@ class TearSheetGenerator:
              GREEN if (tm.get('profit_factor') or 0) >= 1 else RED),
             ('Sharpe', f'{core.get("sharpe_ratio", 0):.2f}',
              GREEN if (core.get('sharpe_ratio') or 0) >= 1 else TEXT_COLOR),
+            ('Sortino', f'{sortino:.2f}',
+             GREEN if sortino >= 1.5 else TEXT_COLOR),
             ('Max DD', _fmt_pct(core.get('max_drawdown_pct')), RED),
             ('Trades', str(len(trades)), TEXT_COLOR),
         ]
@@ -279,6 +337,49 @@ class TearSheetGenerator:
 
         return Image(buf, width=7.5 * inch, height=2.2 * inch)
 
+    def _build_monthly_returns(self, analytics):
+        """Monthly returns grid table. Returns None if insufficient data."""
+        monthly = analytics.get('monthly_returns') if analytics else None
+        if not monthly:
+            return None
+
+        # monthly_returns is a list of {year, month, pnl, return_pct}
+        if not isinstance(monthly, list) or len(monthly) < 2:
+            return None
+
+        header_style = _make_style('mr_h', 'Helvetica-Bold', 8, TEXT_DIM, TA_LEFT, 0)
+        header = ['Month', 'P&L', 'Return %']
+        data = [[Paragraph(h, header_style) for h in header]]
+
+        for m in monthly:
+            if isinstance(m, dict):
+                label = m.get('label', f'{m.get("year", "")}-{m.get("month", "")}')
+                pnl = m.get('pnl', 0)
+                ret = m.get('return_pct', 0)
+            else:
+                continue
+            pnl_color = _pnl_color(pnl)
+            data.append([
+                Paragraph(str(label), _make_style(f'ml_{len(data)}', 'Helvetica', 8, TEXT_COLOR, TA_LEFT, 0)),
+                Paragraph(_fmt_dollar(pnl), _make_style(f'mp_{len(data)}', 'Courier', 8, pnl_color, TA_LEFT, 0)),
+                Paragraph(_fmt_pct(ret), _make_style(f'mr_{len(data)}', 'Courier', 8, pnl_color, TA_LEFT, 0)),
+            ])
+
+        if len(data) <= 1:
+            return None
+
+        t = Table(data, colWidths=[2.5 * inch, 2.5 * inch, 2.5 * inch])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#1e2a3a')),
+            ('BACKGROUND', (0, 1), (-1, -1), BG_PANEL),
+            ('BOX', (0, 0), (-1, -1), 0.5, HexColor('#1e2a3a')),
+            ('INNERGRID', (0, 0), (-1, -1), 0.5, HexColor('#1e2a3a')),
+            ('TOPPADDING', (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        return t
+
     def _build_risk_table(self, risk_metrics):
         """Risk metrics as a compact table."""
         rm = risk_metrics or {}
@@ -313,6 +414,45 @@ class TearSheetGenerator:
             ('INNERGRID', (0, 0), (-1, -1), 0.5, HexColor('#1e2a3a')),
             ('TOPPADDING', (0, 0), (-1, -1), 4),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        return t
+
+    def _build_exit_reasons(self, execution):
+        """Top 5 exit reasons with trade counts and win rates."""
+        ex = execution or {}
+        reasons = ex.get('exit_reasons', [])
+        if not reasons:
+            return None
+
+        header_style = _make_style('er_h', 'Helvetica-Bold', 8, TEXT_DIM, TA_LEFT, 0)
+        header = ['Exit Reason', 'Trades', 'Win Rate', 'Avg P&L']
+        data = [[Paragraph(h, header_style) for h in header]]
+
+        for r in reasons[:5]:
+            label = r.get('label', r.get('reason', ''))
+            count = r.get('count', 0)
+            wr = r.get('win_rate', 0)
+            avg_pnl = r.get('avg_pnl', 0)
+            wr_color = GREEN if wr >= 50 else RED
+            data.append([
+                Paragraph(str(label)[:25], _make_style(f'erl_{len(data)}', 'Helvetica', 8, TEXT_COLOR, TA_LEFT, 0)),
+                Paragraph(str(count), _make_style(f'erc_{len(data)}', 'Courier', 8, TEXT_COLOR, TA_LEFT, 0)),
+                Paragraph(_fmt_pct(wr), _make_style(f'erw_{len(data)}', 'Courier', 8, wr_color, TA_LEFT, 0)),
+                Paragraph(_fmt_dollar(avg_pnl), _make_style(f'erp_{len(data)}', 'Courier', 8, _pnl_color(avg_pnl), TA_LEFT, 0)),
+            ])
+
+        if len(data) <= 1:
+            return None
+
+        t = Table(data, colWidths=[2.5 * inch, 1.0 * inch, 1.5 * inch, 2.5 * inch])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#1e2a3a')),
+            ('BACKGROUND', (0, 1), (-1, -1), BG_PANEL),
+            ('BOX', (0, 0), (-1, -1), 0.5, HexColor('#1e2a3a')),
+            ('INNERGRID', (0, 0), (-1, -1), 0.5, HexColor('#1e2a3a')),
+            ('TOPPADDING', (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
             ('LEFTPADDING', (0, 0), (-1, -1), 6),
         ]))
         return t
@@ -387,34 +527,33 @@ class TearSheetGenerator:
 
         data = [[Paragraph(h, header_style) for h in header]]
 
-        for t in trades[:50]:  # Cap at 50 rows to fit
+        for idx, t in enumerate(trades[:50]):  # Cap at 50 rows to fit
             exit_t = t.get('exit_time') or t.get('entry_time') or ''
             trade_date = exit_t[:10] if len(exit_t) >= 10 else ''
             pnl = t.get('pnl')
             pnl_style = _make_style(
-                f'pnl_{id(t)}', 'Courier', 7, _pnl_color(pnl), TA_LEFT, 0)
+                f'pnl_{idx}', 'Courier', 7, _pnl_color(pnl), TA_LEFT, 0)
 
             row = [
-                Paragraph(trade_date, _make_style(f'd_{id(t)}', 'Courier', 7, TEXT_COLOR, TA_LEFT, 0)),
+                Paragraph(trade_date, _make_style(f'd_{idx}', 'Courier', 7, TEXT_COLOR, TA_LEFT, 0)),
                 Paragraph(str(t.get('strategy_type', ''))[:12],
-                          _make_style(f's_{id(t)}', 'Helvetica', 7, TEXT_COLOR, TA_LEFT, 0)),
+                          _make_style(f's_{idx}', 'Helvetica', 7, TEXT_COLOR, TA_LEFT, 0)),
                 Paragraph(str(t.get('direction', ''))[:4],
-                          _make_style(f'dir_{id(t)}', 'Helvetica', 7, TEXT_COLOR, TA_LEFT, 0)),
+                          _make_style(f'dir_{idx}', 'Helvetica', 7, TEXT_COLOR, TA_LEFT, 0)),
                 Paragraph(f'${t.get("entry_price", 0):.2f}',
-                          _make_style(f'en_{id(t)}', 'Courier', 7, TEXT_COLOR, TA_LEFT, 0)),
+                          _make_style(f'en_{idx}', 'Courier', 7, TEXT_COLOR, TA_LEFT, 0)),
                 Paragraph(f'${t.get("exit_price", 0):.2f}',
-                          _make_style(f'ex_{id(t)}', 'Courier', 7, TEXT_COLOR, TA_LEFT, 0)),
+                          _make_style(f'ex_{idx}', 'Courier', 7, TEXT_COLOR, TA_LEFT, 0)),
                 Paragraph(f'${t.get("credit_received", 0):.2f}',
-                          _make_style(f'cr_{id(t)}', 'Courier', 7, TEXT_COLOR, TA_LEFT, 0)),
+                          _make_style(f'cr_{idx}', 'Courier', 7, TEXT_COLOR, TA_LEFT, 0)),
                 Paragraph(_fmt_dollar(pnl) if pnl is not None else 'N/A', pnl_style),
                 Paragraph(str(t.get('exit_reason', ''))[:15],
-                          _make_style(f'r_{id(t)}', 'Helvetica', 7, TEXT_DIM, TA_LEFT, 0)),
+                          _make_style(f'r_{idx}', 'Helvetica', 7, TEXT_DIM, TA_LEFT, 0)),
             ]
             data.append(row)
 
         col_widths = [0.8*inch, 0.9*inch, 0.5*inch, 0.7*inch, 0.7*inch,
                       0.7*inch, 1.0*inch, 1.0*inch]
-        # Pad/trim to 8 columns
         t = Table(data, colWidths=col_widths)
 
         style_cmds = [

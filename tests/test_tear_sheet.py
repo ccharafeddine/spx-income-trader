@@ -3,11 +3,15 @@ Tests for strategy tear sheet PDF generation.
 
 Covers:
 - Monthly PDF generation returns valid PDF bytes
+- Monthly range (multi-month) PDF generation
 - Weekly PDF generation works
 - Custom date range works
 - Empty period (no trades) generates PDF with "No trades" message
 - Chart generation doesn't crash with < 2 data points
-- Endpoint returns downloadable PDF
+- Endpoint returns downloadable PDF for all period types
+- Empty date range returns graceful error
+- PDF contains expected section headers (smoke test)
+- Data source label appears in PDF
 """
 
 import sys
@@ -87,6 +91,10 @@ def _make_analytics(trades):
             'expectancy': 83.3,
         },
         'equity_curve': equity_curve,
+        'monthly_returns': [
+            {'label': 'Jan 2026', 'year': 2026, 'month': 1, 'pnl': 500.0, 'return_pct': 5.0},
+            {'label': 'Feb 2026', 'year': 2026, 'month': 2, 'pnl': 300.0, 'return_pct': 2.8},
+        ],
     }
 
 
@@ -142,7 +150,12 @@ def _make_execution():
             {'regime': 'Low (<15)', 'count': 5, 'avg_slippage': -0.02},
             {'regime': 'Normal (15-20)', 'count': 5, 'avg_slippage': -0.04},
         ],
-        'exit_reasons': [],
+        'exit_reasons': [
+            {'reason': 'profit_target', 'label': 'Profit Target', 'count': 7,
+             'win_rate': 100.0, 'avg_pnl': 170.0},
+            {'reason': 'stop_loss', 'label': 'Stop Loss', 'count': 3,
+             'win_rate': 0.0, 'avg_pnl': -80.0},
+        ],
     }
 
 
@@ -180,6 +193,21 @@ class TestMonthlyPDF:
             result = generator.generate_monthly(
                 2026, month, **sample_data)
             assert result[:5] == b'%PDF-'
+
+    def test_monthly_range_multi_month(self, generator, sample_data):
+        """Monthly range spanning multiple months returns valid PDF."""
+        result = generator.generate_monthly(
+            2026, 1, **sample_data, end_year=2026, end_month=3)
+        assert isinstance(result, bytes)
+        assert result[:5] == b'%PDF-'
+        assert len(result) > 100
+
+    def test_monthly_range_same_month(self, generator, sample_data):
+        """Monthly range with same start/end month works as single month."""
+        result = generator.generate_monthly(
+            2026, 2, **sample_data, end_year=2026, end_month=2)
+        assert isinstance(result, bytes)
+        assert result[:5] == b'%PDF-'
 
 
 class TestWeeklyPDF:
@@ -272,11 +300,75 @@ class TestChartEdgeCases:
         assert result[:5] == b'%PDF-'
 
 
+class TestPDFContent:
+    """Verify PDF generates with all sections (smoke tests).
+
+    reportlab compresses text in PDF streams, so raw byte searches don't work.
+    Instead we verify: PDF generates successfully, is large enough to contain
+    all sections, and different data_source args produce different output.
+    """
+
+    def test_full_pdf_generates_with_all_sections(self, generator, sample_data):
+        """PDF with all data should be substantial (contains all sections)."""
+        result = generator.generate_monthly(2026, 2, **sample_data)
+        assert isinstance(result, bytes)
+        assert result[:5] == b'%PDF-'
+        # A full PDF with chart, tables, and trade log should be well over 5KB
+        assert len(result) > 5000
+
+    def test_backtest_source_produces_pdf(self, generator, sample_data):
+        """Backtest data source produces a valid PDF."""
+        result = generator.generate_monthly(
+            2026, 2, **sample_data, data_source='backtest:123')
+        assert isinstance(result, bytes)
+        assert result[:5] == b'%PDF-'
+
+    def test_live_source_produces_pdf(self, generator, sample_data):
+        """Live data source produces a valid PDF."""
+        result = generator.generate_monthly(
+            2026, 2, **sample_data, data_source='live')
+        assert isinstance(result, bytes)
+        assert result[:5] == b'%PDF-'
+
+    def test_different_sources_produce_different_pdfs(self, generator, sample_data):
+        """Different data sources should produce different PDF bytes."""
+        live = generator.generate_monthly(
+            2026, 2, **sample_data, data_source='live')
+        bt = generator.generate_monthly(
+            2026, 2, **sample_data, data_source='backtest:1')
+        # PDFs differ because header embeds the data source label
+        assert live != bt
+
+    def test_sortino_in_summary_cards(self, generator, sample_data):
+        """Summary cards should include Sortino (7 cards, not 6)."""
+        # Verify generator builds 7 summary cards by checking the method directly
+        analytics = sample_data['analytics']
+        trades = sample_data['trades']
+        table = generator._build_summary_cards(analytics, trades)
+        # Table should have 7 columns (one per card)
+        assert len(table._argW) == 7
+
+    def test_exit_reasons_section_built(self, generator, sample_data):
+        """Exit reasons table should be built when execution data has reasons."""
+        execution = sample_data['execution']
+        result = generator._build_exit_reasons(execution)
+        assert result is not None  # Should return a Table, not None
+
+
 class TestTearSheetEndpoint:
     """/api/export/tearsheet endpoint."""
 
-    def test_endpoint_returns_pdf(self):
-        """Endpoint should return a downloadable PDF."""
+    def _make_client_mocks(self, fake_trades):
+        """Set up common mocks for endpoint testing."""
+        return {
+            'yahoo': patch('dashboard.app.yahoo'),
+            'classify': patch('dashboard.app.classify_trades'),
+            'capital': patch('dashboard.app._get_starting_capital', return_value=10000),
+            'sqlite': patch('dashboard.app.sqlite3'),
+        }
+
+    def test_monthly_endpoint_returns_pdf(self):
+        """Monthly endpoint should return a downloadable PDF."""
         from dashboard.app import app
 
         fake_trades = _make_trades(5)
@@ -293,7 +385,103 @@ class TestTearSheetEndpoint:
             mock_conn.__exit__ = MagicMock(return_value=False)
 
             with app.test_client() as c:
-                resp = c.get('/api/export/tearsheet?period=monthly&year=2026&month=2&source=live')
+                resp = c.get('/api/export/tearsheet?period=monthly'
+                             '&start_year=2026&start_month=2'
+                             '&end_year=2026&end_month=2&source=live')
                 assert resp.status_code == 200
                 assert resp.content_type == 'application/pdf'
                 assert resp.data[:5] == b'%PDF-'
+
+    def test_weekly_endpoint_returns_pdf(self):
+        """Weekly endpoint should return a downloadable PDF."""
+        from dashboard.app import app
+
+        fake_trades = _make_trades(5)
+        with patch('dashboard.app.yahoo') as mock_yahoo, \
+             patch('dashboard.app.classify_trades') as mock_classify, \
+             patch('dashboard.app._get_starting_capital', return_value=10000), \
+             patch('dashboard.app.sqlite3') as mock_sql:
+            mock_yahoo.get_spx_quote.return_value = {'price': 5800}
+            mock_classify.return_value = ([], fake_trades)
+            mock_conn = MagicMock()
+            mock_sql.connect.return_value = mock_conn
+            mock_conn.execute.return_value = None
+            mock_conn.__enter__ = lambda s: s
+            mock_conn.__exit__ = MagicMock(return_value=False)
+
+            with app.test_client() as c:
+                resp = c.get('/api/export/tearsheet?period=weekly'
+                             '&start=2026-02-17&end=2026-02-21&source=live')
+                assert resp.status_code == 200
+                assert resp.content_type == 'application/pdf'
+                assert resp.data[:5] == b'%PDF-'
+
+    def test_custom_endpoint_returns_pdf(self):
+        """Custom endpoint should return a downloadable PDF."""
+        from dashboard.app import app
+
+        fake_trades = _make_trades(5)
+        with patch('dashboard.app.yahoo') as mock_yahoo, \
+             patch('dashboard.app.classify_trades') as mock_classify, \
+             patch('dashboard.app._get_starting_capital', return_value=10000), \
+             patch('dashboard.app.sqlite3') as mock_sql:
+            mock_yahoo.get_spx_quote.return_value = {'price': 5800}
+            mock_classify.return_value = ([], fake_trades)
+            mock_conn = MagicMock()
+            mock_sql.connect.return_value = mock_conn
+            mock_conn.execute.return_value = None
+            mock_conn.__enter__ = lambda s: s
+            mock_conn.__exit__ = MagicMock(return_value=False)
+
+            with app.test_client() as c:
+                resp = c.get('/api/export/tearsheet?period=custom'
+                             '&start=2026-01-01&end=2026-12-31&source=live')
+                assert resp.status_code == 200
+                assert resp.content_type == 'application/pdf'
+                assert resp.data[:5] == b'%PDF-'
+
+    def test_weekly_missing_dates_returns_error(self):
+        """Weekly export without dates should return 400 with error message."""
+        from dashboard.app import app
+
+        with patch('dashboard.app.yahoo') as mock_yahoo, \
+             patch('dashboard.app.classify_trades') as mock_classify, \
+             patch('dashboard.app._get_starting_capital', return_value=10000), \
+             patch('dashboard.app.sqlite3') as mock_sql:
+            mock_yahoo.get_spx_quote.return_value = {'price': 5800}
+            mock_classify.return_value = ([], [])
+            mock_conn = MagicMock()
+            mock_sql.connect.return_value = mock_conn
+            mock_conn.execute.return_value = None
+            mock_conn.__enter__ = lambda s: s
+            mock_conn.__exit__ = MagicMock(return_value=False)
+
+            with app.test_client() as c:
+                resp = c.get('/api/export/tearsheet?period=weekly&source=live')
+                assert resp.status_code == 400
+                data = resp.get_json()
+                assert data['success'] is False
+                assert 'required' in data['error'].lower()
+
+    def test_custom_missing_dates_returns_error(self):
+        """Custom export without dates should return 400 with error message."""
+        from dashboard.app import app
+
+        with patch('dashboard.app.yahoo') as mock_yahoo, \
+             patch('dashboard.app.classify_trades') as mock_classify, \
+             patch('dashboard.app._get_starting_capital', return_value=10000), \
+             patch('dashboard.app.sqlite3') as mock_sql:
+            mock_yahoo.get_spx_quote.return_value = {'price': 5800}
+            mock_classify.return_value = ([], [])
+            mock_conn = MagicMock()
+            mock_sql.connect.return_value = mock_conn
+            mock_conn.execute.return_value = None
+            mock_conn.__enter__ = lambda s: s
+            mock_conn.__exit__ = MagicMock(return_value=False)
+
+            with app.test_client() as c:
+                resp = c.get('/api/export/tearsheet?period=custom&source=live')
+                assert resp.status_code == 400
+                data = resp.get_json()
+                assert data['success'] is False
+                assert 'required' in data['error'].lower()

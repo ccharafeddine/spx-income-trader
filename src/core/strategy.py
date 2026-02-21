@@ -71,6 +71,10 @@ class SPXIncomeStrategy:
         self.trending_threshold = pdt_cfg.get(
             'trending_threshold', monitoring.get('trending_threshold', 15.0))
 
+        # Morning bias filter: block bearish DI entries on Up/Strong Up days
+        filters = STRATEGY_PARAMS.get('filters', {})
+        self.di_morning_bias_filter = filters.get('di_morning_bias_filter', True)
+
         # PDT mode flag - set externally by main.py or backtest engine
         # When False, 1pm management is skipped entirely (accounts >= $25k)
         self.pdt_mode_active = False
@@ -497,6 +501,27 @@ class SPXIncomeStrategy:
             return allowed
         except Exception:
             return None
+
+    @staticmethod
+    def check_morning_bias_filter(direction, spx_open, current_price):
+        """Check if DI setup direction is allowed given morning bias.
+
+        Returns (allowed: bool, regime: str, move_pct: float).
+        Only blocks bearish entries on Up/Strong Up days.
+        Bullish entries always pass.
+        """
+        from src.analytics.regime_analysis import _classify_direction_regime
+
+        if spx_open is None or spx_open <= 0:
+            return True, 'Unknown', 0.0
+
+        move_pct = ((current_price - spx_open) / spx_open) * 100
+        regime = _classify_direction_regime(move_pct) or 'Unknown'
+
+        if direction == TradeDirection.BEARISH and regime in ('Up', 'Strong Up'):
+            return False, regime, move_pct
+
+        return True, regime, move_pct
 
     def should_exit(self, trade, current_spread_price: float, current_time) -> Tuple[bool, str]:
         """

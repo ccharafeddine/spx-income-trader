@@ -4090,6 +4090,7 @@ def api_analytics_regime():
             report = json.loads(row[0])
             trades = report.get('_trades', report.get('trades', []))
             result = analyzer.analyze(trades)
+            result['morning_bias_filter_active'] = STRATEGY_PARAMS.get('filters', {}).get('di_morning_bias_filter', True)
             return jsonify({'success': True, **result})
         except Exception as e:
             logger.error(f"Regime analysis backtest error: {e}", exc_info=True)
@@ -4106,6 +4107,7 @@ def api_analytics_regime():
         _, closed_trades = classify_trades(conn, spx_price)
         conn.close()
         result = analyzer.analyze(closed_trades)
+        result['morning_bias_filter_active'] = STRATEGY_PARAMS.get('filters', {}).get('di_morning_bias_filter', True)
         return jsonify({'success': True, **result})
     except Exception as e:
         logger.error(f"Regime analysis error: {e}", exc_info=True)
@@ -4353,37 +4355,50 @@ def api_export_tearsheet():
 
         # Determine date range
         generator = TearSheetGenerator()
+        data_source = source  # Pass through for PDF header labeling
 
         if period == 'monthly':
-            year = int(request.args.get('year', datetime.now().year))
-            month = int(request.args.get('month', datetime.now().month))
+            year = int(request.args.get('start_year') or request.args.get('year', datetime.now().year))
+            month = int(request.args.get('start_month') or request.args.get('month', datetime.now().month))
+            end_year = request.args.get('end_year')
+            end_month = request.args.get('end_month')
+            if end_year and end_month:
+                end_year = int(end_year)
+                end_month = int(end_month)
+            else:
+                end_year = None
+                end_month = None
             pdf_bytes = generator.generate_monthly(
                 year, month, trades, analytics, risk_metrics,
-                attribution, execution)
-            filename = f'tearsheet_{year}_{month:02d}.pdf'
+                attribution, execution, data_source=data_source,
+                end_year=end_year, end_month=end_month)
+            if end_year and end_month:
+                filename = f'tearsheet_{year}_{month:02d}_to_{end_year}_{end_month:02d}.pdf'
+            else:
+                filename = f'tearsheet_{year}_{month:02d}.pdf'
 
         elif period == 'weekly':
             start_str = request.args.get('start')
             end_str = request.args.get('end')
             if not start_str or not end_str:
-                return jsonify({'success': False, 'error': 'start and end required'}), 400
+                return jsonify({'success': False, 'error': 'Start and end dates are required for weekly export.'}), 400
             start_date = date.fromisoformat(start_str)
             end_date = date.fromisoformat(end_str)
             pdf_bytes = generator.generate_weekly(
                 start_date, end_date, trades, analytics, risk_metrics,
-                attribution, execution)
+                attribution, execution, data_source=data_source)
             filename = f'tearsheet_{start_str}_{end_str}.pdf'
 
         else:  # custom
             start_str = request.args.get('start')
             end_str = request.args.get('end')
             if not start_str or not end_str:
-                return jsonify({'success': False, 'error': 'start and end required'}), 400
+                return jsonify({'success': False, 'error': 'Start and end dates are required for custom export.'}), 400
             start_date = date.fromisoformat(start_str)
             end_date = date.fromisoformat(end_str)
             pdf_bytes = generator.generate_custom(
                 start_date, end_date, trades, analytics, risk_metrics,
-                attribution, execution)
+                attribution, execution, data_source=data_source)
             filename = f'tearsheet_{start_str}_{end_str}.pdf'
 
         from flask import send_file

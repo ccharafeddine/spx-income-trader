@@ -287,6 +287,9 @@ class BacktestEngine:
         self._tnt_position: Optional[Dict] = None  # For TNT exit checks
         self._tnt_entry_date: Optional[date] = None
 
+        # SPX open for morning bias filter
+        self._spx_open: float = 0.0
+
         # Daily counters
         self._daily_pnl: float = 0.0
         self._daily_trades: int = 0
@@ -490,6 +493,7 @@ class BacktestEngine:
 
         bars_for_day: List[Bar] = []
         spx_open = float(day_bars.iloc[0]['open'])
+        self._spx_open = spx_open  # For morning bias filter access
         spx_close = float(day_bars.iloc[-1]['close'])
         max_daily_loss = self.broker.balance * (self.max_daily_loss_pct / 100.0)
 
@@ -634,6 +638,18 @@ class BacktestEngine:
         direction = self.strategy.evaluate_setup(bar, bar.close)
         if direction is None:
             return
+
+        # Morning bias filter: block bearish DI on Up/Strong Up days
+        if self.strategy.di_morning_bias_filter and direction == TradeDirection.BEARISH:
+            allowed, regime, move_pct = SPXIncomeStrategy.check_morning_bias_filter(
+                direction, self._spx_open, bar.close
+            )
+            if not allowed:
+                logger.debug(
+                    f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} DI bearish setup skipped — "
+                    f"morning bias is {regime} (SPX {'+' if move_pct >= 0 else ''}{move_pct:.2f}%)"
+                )
+                return
 
         if direction == TradeDirection.BULLISH:
             trigger_price = bar.high
