@@ -3540,6 +3540,103 @@ def _analytics_execution(trades):
     }
 
 
+def _analytics_risk_metrics(equity_curve, calmar_ratio):
+    """Risk-adjusted performance metrics from daily P&L series.
+
+    Returns VaR, CVaR, Tail Ratio, Calmar, and streak stats.
+    All metrics are None when fewer than 20 trading days available.
+    """
+    import math
+
+    trading_days = len(equity_curve)
+    if trading_days < 20:
+        return {
+            'var_95': None, 'var_99': None,
+            'cvar_95': None, 'cvar_99': None,
+            'tail_ratio': None,
+            'calmar_ratio': None,
+            'longest_win_streak': None, 'longest_loss_streak': None,
+            'avg_win_streak': None, 'avg_loss_streak': None,
+            'sufficient_data': False,
+            'trading_days': trading_days,
+        }
+
+    daily_pnls = [ec['daily_pnl'] for ec in equity_curve]
+    sorted_pnls = sorted(daily_pnls)
+    n = len(sorted_pnls)
+
+    # VaR 95/99 - historical percentile method
+    var_95_idx = math.floor(n * 0.05)
+    var_99_idx = math.floor(n * 0.01)
+    var_95 = sorted_pnls[var_95_idx]
+    var_99 = sorted_pnls[var_99_idx]
+
+    # CVaR 95/99 (Expected Shortfall) - mean of tail values
+    cvar_95_vals = [v for v in sorted_pnls if v <= var_95]
+    cvar_99_vals = [v for v in sorted_pnls if v <= var_99]
+    cvar_95 = sum(cvar_95_vals) / len(cvar_95_vals) if cvar_95_vals else var_95
+    cvar_99 = sum(cvar_99_vals) / len(cvar_99_vals) if cvar_99_vals else var_99
+
+    # Tail Ratio - mean of top 5% / abs(mean of bottom 5%)
+    top_cutoff = math.floor(n * 0.95)
+    top_5pct = sorted_pnls[top_cutoff:]
+    bottom_5pct = sorted_pnls[:var_95_idx + 1] if var_95_idx + 1 > 0 else sorted_pnls[:1]
+    mean_top = sum(top_5pct) / len(top_5pct)
+    mean_bottom = sum(bottom_5pct) / len(bottom_5pct)
+    tail_ratio = round(mean_top / abs(mean_bottom), 3) if mean_bottom != 0 else None
+
+    # Streak stats from daily P&L
+    win_streaks = []
+    loss_streaks = []
+    current_streak = 0
+    current_type = None  # 'win' or 'loss'
+
+    for pnl in daily_pnls:
+        if pnl > 0:
+            if current_type == 'win':
+                current_streak += 1
+            else:
+                if current_type == 'loss' and current_streak > 0:
+                    loss_streaks.append(current_streak)
+                current_streak = 1
+                current_type = 'win'
+        elif pnl < 0:
+            if current_type == 'loss':
+                current_streak += 1
+            else:
+                if current_type == 'win' and current_streak > 0:
+                    win_streaks.append(current_streak)
+                current_streak = 1
+                current_type = 'loss'
+        # pnl == 0 doesn't break or extend streaks
+
+    # Flush final streak
+    if current_type == 'win' and current_streak > 0:
+        win_streaks.append(current_streak)
+    elif current_type == 'loss' and current_streak > 0:
+        loss_streaks.append(current_streak)
+
+    longest_win = max(win_streaks) if win_streaks else 0
+    longest_loss = max(loss_streaks) if loss_streaks else 0
+    avg_win = round(sum(win_streaks) / len(win_streaks), 1) if win_streaks else 0
+    avg_loss = round(sum(loss_streaks) / len(loss_streaks), 1) if loss_streaks else 0
+
+    return {
+        'var_95': round(var_95, 2),
+        'var_99': round(var_99, 2),
+        'cvar_95': round(cvar_95, 2),
+        'cvar_99': round(cvar_99, 2),
+        'tail_ratio': tail_ratio,
+        'calmar_ratio': round(calmar_ratio, 3) if calmar_ratio is not None else None,
+        'longest_win_streak': longest_win,
+        'longest_loss_streak': longest_loss,
+        'avg_win_streak': avg_win,
+        'avg_loss_streak': avg_loss,
+        'sufficient_data': True,
+        'trading_days': trading_days,
+    }
+
+
 def _analytics_monthly(daily_pnl, starting_capital):
     """Monthly returns grid from daily P&L map.
 
@@ -3760,6 +3857,53 @@ def api_analytics_execution():
         return jsonify({'success': True, **result})
     except Exception as e:
         logger.error(f"Execution analytics error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/analytics/risk')
+def api_analytics_risk():
+    """Risk-adjusted performance metrics (VaR, CVaR, Tail Ratio, streaks)."""
+    source = request.args.get('source', 'live')
+
+    if source == 'backtest':
+        run_id = request.args.get('run_id')
+        if not run_id:
+            return jsonify({'success': False, 'error': 'run_id required'}), 400
+        try:
+            db_path = str(DB_PATH)
+            conn = sqlite3.connect(db_path, timeout=10)
+            row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
+            conn.close()
+            if not row:
+                return jsonify({'success': False, 'error': 'Run not found'}), 404
+            report = json.loads(row[0])
+            equity_curve = report.get('equity_curve', [])
+            calmar = report.get('core', {}).get('calmar_ratio', 0)
+            result = _analytics_risk_metrics(equity_curve, calmar)
+            return jsonify({'success': True, **result})
+        except Exception as e:
+            logger.error(f"Risk metrics backtest error: {e}", exc_info=True)
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    # Live trades
+    try:
+        db_path = DATABASE_PATH
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        spx_quote = yahoo.get_spx_quote() or {}
+        spx_price = spx_quote.get('price')
+        _, closed_trades = classify_trades(conn, spx_price)
+        conn.close()
+
+        starting_capital = _get_starting_capital()
+        analytics = _analytics_compute(closed_trades, starting_capital)
+        equity_curve = analytics.get('equity_curve', [])
+        calmar = analytics.get('core', {}).get('calmar_ratio', 0)
+        result = _analytics_risk_metrics(equity_curve, calmar)
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        logger.error(f"Risk metrics error: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
