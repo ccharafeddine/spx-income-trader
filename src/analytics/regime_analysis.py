@@ -229,6 +229,88 @@ class RegimeAnalyzer:
             'interpretation': interpretation,
         }
 
+    def analyze_direction_drilldown(self, trades):
+        """Cross-tabulate market direction regime x trade direction.
+
+        Returns a list of rows (one per direction regime) with bullish/bearish
+        sub-stats, plus up-day detail cards and interpretation text.
+        """
+        # Group trades by (market_direction, trade_direction)
+        cross = {}  # {regime_name: {'bullish': [...], 'bearish': [...]}}
+        for name, _, _ in DIRECTION_REGIMES:
+            cross[name] = {'bullish': [], 'bearish': []}
+
+        for t in trades:
+            daily_ret = _get_daily_return_pct(t)
+            regime = _classify_direction_regime(daily_ret)
+            if not regime:
+                continue
+            trade_dir = (t.get('direction') or '').lower()
+            if trade_dir in ('bullish', 'bearish'):
+                cross[regime][trade_dir].append(t)
+
+        # Build table rows
+        rows = []
+        for name, _, _ in DIRECTION_REGIMES:
+            bull = cross[name]['bullish']
+            bear = cross[name]['bearish']
+            bull_pnls = [t.get('pnl', 0) for t in bull]
+            bear_pnls = [t.get('pnl', 0) for t in bear]
+            bull_wins = sum(1 for p in bull_pnls if p > 0)
+            bear_wins = sum(1 for p in bear_pnls if p > 0)
+            rows.append({
+                'regime': name,
+                'bull_count': len(bull),
+                'bull_win_rate': round(bull_wins / len(bull) * 100, 1) if bull else 0,
+                'bull_avg_pnl': round(sum(bull_pnls) / len(bull_pnls), 2) if bull_pnls else 0,
+                'bear_count': len(bear),
+                'bear_win_rate': round(bear_wins / len(bear) * 100, 1) if bear else 0,
+                'bear_avg_pnl': round(sum(bear_pnls) / len(bear_pnls), 2) if bear_pnls else 0,
+            })
+
+        # Up-day detail
+        up_row = next((r for r in rows if r['regime'] == 'Up'), None)
+        up_detail = None
+        if up_row and (up_row['bull_count'] + up_row['bear_count']) > 0:
+            up_detail = {
+                'bull_count': up_row['bull_count'],
+                'bull_win_rate': up_row['bull_win_rate'],
+                'bull_avg_pnl': up_row['bull_avg_pnl'],
+                'bear_count': up_row['bear_count'],
+                'bear_win_rate': up_row['bear_win_rate'],
+                'bear_avg_pnl': up_row['bear_avg_pnl'],
+            }
+
+        # Interpretation
+        interpretation = self._direction_drilldown_interpretation(up_row)
+
+        return {
+            'rows': rows,
+            'up_detail': up_detail,
+            'interpretation': interpretation,
+        }
+
+    @staticmethod
+    def _direction_drilldown_interpretation(up_row):
+        """Generate interpretation text from the Up-day row."""
+        if not up_row or (up_row['bull_count'] + up_row['bear_count']) == 0:
+            return 'No trades on moderate up days to analyze.'
+
+        LOW_WR = 50
+        bull_low = up_row['bull_count'] >= 2 and up_row['bull_win_rate'] < LOW_WR
+        bear_low = up_row['bear_count'] >= 2 and up_row['bear_win_rate'] < LOW_WR
+
+        if bull_low and bear_low:
+            return ('Both directions struggle on moderate up days. '
+                    'This regime may have characteristics that undermine the pulse bar signal.')
+        if bear_low:
+            return ('Bearish setups (call spreads) on moderate up days are the primary source of losses. '
+                    'Consider filtering bearish signals when morning bias is moderately bullish.')
+        if bull_low:
+            return ('Bullish setups (put spreads) on moderate up days are underperforming. '
+                    'Investigate if these are late-morning reversals.')
+        return 'No significant underperformance detected on moderate up days.'
+
     def analyze(self, trades):
         """Run full regime analysis. Returns combined result dict."""
         return {
@@ -236,5 +318,6 @@ class RegimeAnalyzer:
             'direction_regimes': self.analyze_by_direction_regime(trades),
             'transitions': self.analyze_regime_transitions(trades),
             'neutrality': self.market_neutrality_score(trades),
+            'direction_drilldown': self.analyze_direction_drilldown(trades),
             'trade_count': len(trades),
         }

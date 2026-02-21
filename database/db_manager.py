@@ -111,6 +111,7 @@ class DatabaseManager:
                 ('day_type', 'TEXT'),
                 ('daily_move_pct', 'REAL'),
                 ('vix_at_exit', 'REAL'),
+                ('bb_agreement', 'INTEGER'),
             ]
 
             for col_name, col_type in new_columns:
@@ -157,8 +158,9 @@ class DatabaseManager:
                     spx_at_exit, profit_captured_pct, time_in_trade_minutes,
                     day_type, daily_move_pct,
                     pnl, pnl_percent, max_profit, max_risk,
-                    quantity, expiration, notes, setup_bar_time
-                ) VALUES ({','.join(['?'] * 52)})
+                    quantity, expiration, notes, setup_bar_time,
+                    bb_agreement
+                ) VALUES ({','.join(['?'] * 53)})
             """, (
                 trade.id,
                 trade.entry_time,
@@ -212,6 +214,7 @@ class DatabaseManager:
                 trade.spread.expiration,
                 trade.notes,
                 trade.setup_bar.timestamp if hasattr(trade, 'setup_bar') and trade.setup_bar else None,
+                1 if getattr(trade, 'bb_agreement', None) is True else (0 if getattr(trade, 'bb_agreement', None) is False else None),
             ))
 
             conn.commit()

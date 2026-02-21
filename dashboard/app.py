@@ -4112,6 +4112,193 @@ def api_analytics_regime():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/analytics/bb')
+def api_analytics_bb():
+    """BB agreement analytics - compares DI trade outcomes when BB agreed vs disagreed."""
+    source = request.args.get('source', 'live')
+
+    def _compute_bb_analysis(trades):
+        """Compute BB agreement breakdown from trade list (dicts)."""
+        agreed = [t for t in trades if t.get('bb_agreement') == 1 or t.get('bb_agreement') is True]
+        disagreed = [t for t in trades if t.get('bb_agreement') == 0 or t.get('bb_agreement') is False]
+        total_with_data = len(agreed) + len(disagreed)
+
+        def _group_stats(group):
+            if not group:
+                return {'count': 0, 'wins': 0, 'losses': 0, 'win_rate': 0, 'avg_pnl': 0, 'total_pnl': 0}
+            wins = [t for t in group if (t.get('pnl') or 0) > 0]
+            losses = [t for t in group if (t.get('pnl') or 0) <= 0]
+            pnls = [t.get('pnl') or 0 for t in group]
+            return {
+                'count': len(group),
+                'wins': len(wins),
+                'losses': len(losses),
+                'win_rate': round(len(wins) / len(group) * 100, 1) if group else 0,
+                'avg_pnl': round(sum(pnls) / len(pnls), 2) if pnls else 0,
+                'total_pnl': round(sum(pnls), 2),
+            }
+
+        return {
+            'total_trades_with_bb': total_with_data,
+            'agreed': _group_stats(agreed),
+            'disagreed': _group_stats(disagreed),
+        }
+
+    if source == 'backtest':
+        run_id = request.args.get('run_id')
+        if not run_id:
+            return jsonify({'success': False, 'error': 'run_id required'}), 400
+        try:
+            db_path = str(DB_PATH)
+            conn = sqlite3.connect(db_path, timeout=10)
+            row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
+            conn.close()
+            if not row:
+                return jsonify({'success': False, 'error': 'Run not found'}), 404
+            report = json.loads(row[0])
+            trades = report.get('_trades', report.get('trades', []))
+            di_trades = [t for t in trades if t.get('strategy_type', 'daily_income') == 'daily_income']
+            result = _compute_bb_analysis(di_trades)
+            return jsonify({'success': True, **result})
+        except Exception as e:
+            logger.error(f"BB analytics backtest error: {e}", exc_info=True)
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    # Live trades
+    try:
+        db_path = DATABASE_PATH
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        spx_quote = yahoo.get_spx_quote() or {}
+        spx_price = spx_quote.get('price')
+        _, closed_trades = classify_trades(conn, spx_price)
+        conn.close()
+        di_trades = [t for t in closed_trades if t.get('strategy_type', 'daily_income') == 'daily_income']
+        result = _compute_bb_analysis(di_trades)
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        logger.error(f"BB analytics error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/analytics/duration')
+def api_analytics_duration():
+    """Trade duration analysis - compares duration of winners vs losers."""
+    source = request.args.get('source', 'live')
+
+    def _compute_duration_analysis(trades):
+        """Compute duration breakdown from trade list (dicts)."""
+        BUCKETS = [
+            ('0-1h', 0, 60),
+            ('1-2h', 60, 120),
+            ('2-3h', 120, 180),
+            ('3-4h', 180, 240),
+            ('4-5h', 240, 300),
+            ('5-6h', 300, 360),
+            ('6h+', 360, float('inf')),
+        ]
+
+        valid = []
+        for t in trades:
+            mins = t.get('duration_minutes')
+            if mins is None:
+                mins = t.get('time_in_trade_minutes')
+            if mins is None:
+                continue
+            mins = int(mins)
+            pnl = t.get('pnl') or 0
+            valid.append({'minutes': mins, 'pnl': float(pnl), 'win': float(pnl) > 0})
+
+        if not valid:
+            return {'total_trades': 0}
+
+        winners = [t for t in valid if t['win']]
+        losers = [t for t in valid if not t['win']]
+
+        def _avg_mins(group):
+            return round(sum(t['minutes'] for t in group) / len(group), 1) if group else 0
+
+        # Summary stats
+        avg_winner_mins = _avg_mins(winners)
+        avg_loser_mins = _avg_mins(losers)
+        fastest_winner = min((t['minutes'] for t in winners), default=0)
+        longest_loser = max((t['minutes'] for t in losers), default=0)
+
+        # Bucket breakdown
+        bucket_data = []
+        for label, lo, hi in BUCKETS:
+            in_bucket = [t for t in valid if lo <= t['minutes'] < hi]
+            w = [t for t in in_bucket if t['win']]
+            l = [t for t in in_bucket if not t['win']]
+            pnls = [t['pnl'] for t in in_bucket]
+            bucket_data.append({
+                'bucket': label,
+                'total': len(in_bucket),
+                'winners': len(w),
+                'losers': len(l),
+                'win_rate': round(len(w) / len(in_bucket) * 100, 1) if in_bucket else 0,
+                'avg_pnl': round(sum(pnls) / len(pnls), 2) if pnls else 0,
+            })
+
+        # Interpretation
+        if len(winners) < 3 or len(losers) < 3:
+            interpretation = 'Not enough data for meaningful comparison (need 3+ winners and 3+ losers).'
+        elif avg_winner_mins < avg_loser_mins * 0.7:
+            interpretation = 'Winners exit quickly via profit target. Losers tend to be held longer.'
+        elif avg_loser_mins < avg_winner_mins * 0.7:
+            interpretation = 'Losers exit quickly (stop loss). Winners tend to be held longer.'
+        else:
+            interpretation = 'No significant duration difference between winners and losers.'
+
+        return {
+            'total_trades': len(valid),
+            'total_winners': len(winners),
+            'total_losers': len(losers),
+            'avg_winner_minutes': avg_winner_mins,
+            'avg_loser_minutes': avg_loser_mins,
+            'fastest_winner_minutes': fastest_winner,
+            'longest_loser_minutes': longest_loser,
+            'buckets': bucket_data,
+            'interpretation': interpretation,
+        }
+
+    if source == 'backtest':
+        run_id = request.args.get('run_id')
+        if not run_id:
+            return jsonify({'success': False, 'error': 'run_id required'}), 400
+        try:
+            db_path = str(DB_PATH)
+            conn = sqlite3.connect(db_path, timeout=10)
+            row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
+            conn.close()
+            if not row:
+                return jsonify({'success': False, 'error': 'Run not found'}), 404
+            report = json.loads(row[0])
+            trades = report.get('_trades', report.get('trades', []))
+            result = _compute_duration_analysis(trades)
+            return jsonify({'success': True, **result})
+        except Exception as e:
+            logger.error(f"Duration analytics backtest error: {e}", exc_info=True)
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    # Live trades
+    try:
+        db_path = DATABASE_PATH
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        spx_quote = yahoo.get_spx_quote() or {}
+        spx_price = spx_quote.get('price')
+        _, closed_trades = classify_trades(conn, spx_price)
+        conn.close()
+        result = _compute_duration_analysis(closed_trades)
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        logger.error(f"Duration analytics error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/export/tearsheet')
 def api_export_tearsheet():
     """Generate and download a strategy tear sheet PDF."""

@@ -3172,6 +3172,12 @@ header::after {
       <button id="ts-generate-btn" onclick="generateTearSheet()" style="width:100%; background:var(--amber); color:#000; border:none; padding:10px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Generate PDF</button>
     </div>
 
+    <!-- Data source disclaimer -->
+    <div id="an-disclaimer" style="display:none; background:rgba(245,158,11,0.1); border-left:3px solid #f59e0b; padding:8px 16px; margin-bottom:16px; border-radius:0 6px 6px 0; position:relative;">
+      <span id="an-disclaimer-text" style="color:#f59e0b; font-size:13px;"></span>
+      <button onclick="dismissDisclaimer('an')" style="position:absolute; top:6px; right:8px; background:none; border:none; color:#f59e0b; font-size:16px; cursor:pointer; opacity:0.7; line-height:1;" title="Dismiss">&times;</button>
+    </div>
+
     <!-- Loading / empty states -->
     <div id="an-loading" style="display: none; text-align: center; padding: 40px; color: var(--text-dim);">Loading analytics...</div>
     <div id="an-empty" style="display: none; text-align: center; padding: 60px 20px; color: var(--text-dim);">
@@ -3236,7 +3242,7 @@ header::after {
                   <div id="an-regime-dir"></div>
                 </div>
               </div>
-              <div class="an-grid-2" style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+              <div class="an-grid-2" style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:14px;">
                 <div>
                   <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">VIX Transitions</div>
                   <div id="an-regime-trans"></div>
@@ -3245,6 +3251,13 @@ header::after {
                   <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Market Neutrality</div>
                   <div id="an-regime-neutral"></div>
                 </div>
+              </div>
+              <!-- Direction Drill-Down sub-section -->
+              <div id="an-dir-drilldown" style="display:none; padding-top:14px; border-top:1px solid var(--border);">
+                <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Direction Drill-Down</div>
+                <div id="an-dir-cross-table" style="font-size:12px; margin-bottom:10px;"></div>
+                <div id="an-dir-up-cards" style="display:none; margin-bottom:10px;"></div>
+                <div id="an-dir-interp" style="font-size:10px; color:var(--text-dim); font-style:italic;"></div>
               </div>
             </div>
           </div></div>
@@ -3319,6 +3332,47 @@ header::after {
             </div>
           </div>
         </div></div>
+      </div>
+
+      <!-- BB Agreement Analytics -->
+      <div id="an-bb-section" data-cpanel-id="an-bb" style="margin-bottom: 16px;">
+        <div class="panel" style="padding: 12px; border-left: 3px solid #8b5cf6;">
+          <div class="panel-title cpanel-toggle" style="margin-bottom: 12px;">BB Agreement Analysis</div>
+          <div class="cpanel-body"><div>
+            <div id="an-bb-empty" style="display:none; color: var(--text-dim); font-size: 12px; padding: 16px 0; text-align: center;">No BB agreement data available</div>
+            <div id="an-bb-content" style="display:none;">
+              <div id="an-bb-cards" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;"></div>
+              <div id="an-bb-bars" style="margin-bottom: 14px;"></div>
+              <div id="an-bb-note" style="font-size: 10px; color: var(--text-dim); padding-top: 8px; border-top: 1px solid var(--border);">
+                BB filter is analytics-only (NO-Indicators per Phil Newton). It never gates DI entry.
+              </div>
+            </div>
+          </div></div>
+        </div>
+      </div>
+
+      <!-- Trade Duration Analysis -->
+      <div id="an-duration-section" data-cpanel-id="an-duration" style="margin-bottom: 16px;">
+        <div class="panel" style="padding: 12px; border-left: 3px solid #06b6d4;">
+          <div class="panel-title cpanel-toggle" style="margin-bottom: 12px;">Trade Duration</div>
+          <div class="cpanel-body"><div>
+            <div id="an-dur-empty" style="display:none; color: var(--text-dim); font-size: 12px; padding: 16px 0; text-align: center;">No duration data available</div>
+            <div id="an-dur-content" style="display:none;">
+              <div id="an-dur-cards" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px;"></div>
+              <div class="an-grid-2" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 14px;">
+                <div>
+                  <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Duration Distribution</div>
+                  <div id="an-dur-chart"></div>
+                </div>
+                <div>
+                  <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Win Rate by Duration</div>
+                  <div id="an-dur-table" style="font-size: 12px;"></div>
+                </div>
+              </div>
+              <div id="an-dur-interp" style="font-size: 10px; color: var(--text-dim); font-style: italic; padding-top: 8px; border-top: 1px solid var(--border);"></div>
+            </div>
+          </div></div>
+        </div>
       </div>
 
       <!-- Rolling metrics -->
@@ -3481,6 +3535,11 @@ header::after {
         </div>
 
         <div id="bt-results" style="display: none;">
+          <!-- Simulated results disclaimer -->
+          <div id="bt-disclaimer" style="display:none; background:rgba(245,158,11,0.1); border-left:3px solid #f59e0b; padding:8px 16px; margin-bottom:16px; border-radius:0 6px 6px 0; position:relative;">
+            <span style="color:#f59e0b; font-size:13px;">&#9888;&#65039; Simulated Results &#8212; Uses synthetic pricing, instant fills at theoretical mid, and no bid-ask spread modeling. Results reflect backtested performance, not live execution.</span>
+            <button id="bt-disclaimer-close" onclick="dismissDisclaimer('bt')" style="position:absolute; top:6px; right:8px; background:none; border:none; color:#f59e0b; font-size:16px; cursor:pointer; opacity:0.7; line-height:1;" title="Dismiss">&times;</button>
+          </div>
           <!-- Metrics cards row -->
           <div id="bt-metrics-cards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px;"></div>
 
@@ -3707,6 +3766,50 @@ function fmt$(v) {
   const n = Number(v);
   const s = Math.abs(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
   return (n < 0 ? '-$' : '$') + s;
+}
+
+function fmtBig$(v) {
+  if (v == null) return '--';
+  const n = Number(v);
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-$' : '$';
+  if (abs >= 1e9) return sign + (abs / 1e9).toFixed(2) + 'B';
+  if (abs >= 1e6) return sign + (abs / 1e6).toFixed(1) + 'M';
+  if (abs >= 1e4) return sign + (abs / 1e3).toFixed(1) + 'K';
+  return sign + abs.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+// Disclaimer banners
+// Track which disclaimer type was dismissed so source changes reset it
+const _dismissedDisclaimerType = {};
+
+function dismissDisclaimer(prefix) {
+  const el = document.getElementById(prefix + '-disclaimer');
+  if (el) el.style.display = 'none';
+  _dismissedDisclaimerType[prefix] = el ? el.dataset.dtype : '1';
+}
+
+function showDisclaimer(prefix, text, dtype) {
+  const el = document.getElementById(prefix + '-disclaimer');
+  if (!el) return;
+  // If the type changed (e.g. backtest -> dry_run), reset dismissed state
+  const key = dtype || 'default';
+  if (_dismissedDisclaimerType[prefix] && _dismissedDisclaimerType[prefix] === key) return;
+  if (key !== (el.dataset.dtype || '')) {
+    delete _dismissedDisclaimerType[prefix];
+  }
+  if (_dismissedDisclaimerType[prefix] === key) return;
+  el.dataset.dtype = key;
+  if (text !== undefined) {
+    const span = document.getElementById(prefix + '-disclaimer-text');
+    if (span) span.innerHTML = text;
+  }
+  el.style.display = 'block';
+}
+
+function hideDisclaimer(prefix) {
+  const el = document.getElementById(prefix + '-disclaimer');
+  if (el) el.style.display = 'none';
 }
 
 function esc(s) {
@@ -6589,6 +6692,7 @@ async function loadAnalytics() {
   document.getElementById('an-loading').style.display = 'block';
   document.getElementById('an-empty').style.display = 'none';
   document.getElementById('an-content').style.display = 'none';
+  hideDisclaimer('an');
 
   const data = await fetchJSON(url);
 
@@ -6600,6 +6704,13 @@ async function loadAnalytics() {
   }
 
   document.getElementById('an-content').style.display = 'block';
+
+  // Show appropriate disclaimer based on data source
+  if (sourceVal.startsWith('backtest:')) {
+    showDisclaimer('an', '&#9888;&#65039; Simulated Results &#8212; Uses synthetic pricing, instant fills at theoretical mid, and no bid-ask spread modeling. Results reflect backtested performance, not live execution.', 'backtest');
+  } else if (currentBroker === 'dry_run') {
+    showDisclaimer('an', '&#9888;&#65039; Dry Run &#8212; Uses real market data but simulated execution. Option prices may differ from broker quotes. No real orders are placed.', 'dryrun');
+  }
 
   // Date range
   const dr = data.date_range || {};
@@ -6622,19 +6733,21 @@ async function loadAnalytics() {
   renderAnRiskMetrics(sourceVal);
   renderAnAttribution(sourceVal);
   renderAnRegime(sourceVal);
+  renderAnBBAnalysis(sourceVal);
+  renderAnDuration(sourceVal);
 }
 
 function renderAnMetrics(data) {
   const core = data.core || {};
   const tm = data.trade_metrics || {};
   const cards = [
-    {label: 'Total P&L', value: '$' + (core.total_return_dollar||0).toLocaleString(undefined,{minimumFractionDigits:2}), color: core.total_return_dollar >= 0 ? 'var(--green)' : 'var(--red)'},
+    {label: 'Total P&L', value: fmtBig$(core.total_return_dollar||0), color: core.total_return_dollar >= 0 ? 'var(--green)' : 'var(--red)'},
     {label: 'Win Rate', value: (tm.win_rate||0).toFixed(1) + '%', color: tm.win_rate >= 50 ? 'var(--green)' : 'var(--amber)'},
     {label: 'Profit Factor', value: (tm.profit_factor||0).toFixed(2), color: tm.profit_factor >= 1 ? 'var(--green)' : 'var(--red)'},
     {label: 'Sharpe Ratio', value: (core.sharpe_ratio||0).toFixed(3), color: core.sharpe_ratio >= 1 ? 'var(--green)' : 'var(--text)'},
     {label: 'Sortino Ratio', value: (core.sortino_ratio||0).toFixed(3), color: core.sortino_ratio >= 1 ? 'var(--green)' : 'var(--text)'},
     {label: 'Max Drawdown', value: (core.max_drawdown_pct||0).toFixed(2) + '%', color: 'var(--red)'},
-    {label: 'Avg Win / Loss', value: '$' + Math.abs(tm.avg_win||0).toFixed(0) + ' / $' + Math.abs(tm.avg_loss||0).toFixed(0), color: 'var(--text)'},
+    {label: 'Avg Win / Loss', value: fmtBig$(Math.abs(tm.avg_win||0)) + ' / ' + fmtBig$(Math.abs(tm.avg_loss||0)), color: 'var(--text)'},
     {label: 'Total Trades', value: tm.total_trades||0, color: 'var(--text)'},
   ];
   const container = document.getElementById('an-metrics-cards');
@@ -7149,6 +7262,263 @@ async function renderAnRegime(sourceVal) {
     nHtml = '<span style="color:var(--text-dim); font-size:11px;">' + (neut.interpretation || 'Insufficient data') + '</span>';
   }
   document.getElementById('an-regime-neutral').innerHTML = nHtml;
+
+  // Direction Drill-Down
+  const dd = data.direction_drilldown;
+  const ddEl = document.getElementById('an-dir-drilldown');
+  if (dd && dd.rows && dd.rows.some(r => r.bull_count + r.bear_count > 0)) {
+    ddEl.style.display = 'block';
+
+    function wrColor(wr, count) {
+      if (count === 0) return 'var(--text-dim)';
+      if (wr >= 70) return 'var(--green)';
+      if (wr >= 50) return 'var(--amber)';
+      return 'var(--red)';
+    }
+
+    // Cross-tabulation table
+    let xHtml = '<table style="width:100%;border-collapse:collapse;">';
+    xHtml += '<tr style="border-bottom:1px solid var(--border);">';
+    xHtml += '<th style="text-align:left;padding:4px;">Market Day</th>';
+    xHtml += '<th style="text-align:center;padding:4px;">Bull Trades</th>';
+    xHtml += '<th style="text-align:center;padding:4px;">Bull WR</th>';
+    xHtml += '<th style="text-align:center;padding:4px;">Bear Trades</th>';
+    xHtml += '<th style="text-align:center;padding:4px;">Bear WR</th>';
+    xHtml += '</tr>';
+    for (const r of dd.rows) {
+      const total = r.bull_count + r.bear_count;
+      if (total === 0) {
+        xHtml += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
+        xHtml += '<td style="padding:4px;color:var(--text-dim);">' + r.regime + '</td>';
+        xHtml += '<td colspan="4" style="text-align:center;color:var(--text-dim);padding:4px;">--</td></tr>';
+        continue;
+      }
+      const bwc = wrColor(r.bull_win_rate, r.bull_count);
+      const rwc = wrColor(r.bear_win_rate, r.bear_count);
+      xHtml += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
+      xHtml += '<td style="padding:4px;">' + r.regime + '</td>';
+      xHtml += '<td style="text-align:center;padding:4px;">' + r.bull_count + '</td>';
+      xHtml += '<td style="text-align:center;padding:4px;font-family:var(--font-mono);color:' + bwc + ';">' + (r.bull_count ? r.bull_win_rate.toFixed(1) + '%' : '--') + '</td>';
+      xHtml += '<td style="text-align:center;padding:4px;">' + r.bear_count + '</td>';
+      xHtml += '<td style="text-align:center;padding:4px;font-family:var(--font-mono);color:' + rwc + ';">' + (r.bear_count ? r.bear_win_rate.toFixed(1) + '%' : '--') + '</td>';
+      xHtml += '</tr>';
+    }
+    xHtml += '</table>';
+    document.getElementById('an-dir-cross-table').innerHTML = xHtml;
+
+    // Up-day detail cards
+    const upEl = document.getElementById('an-dir-up-cards');
+    const up = dd.up_detail;
+    if (up && (up.bull_count + up.bear_count) > 0) {
+      upEl.style.display = 'grid';
+      upEl.style.gridTemplateColumns = '1fr 1fr';
+      upEl.style.gap = '10px';
+      const bullWorse = up.bull_count >= 2 && up.bear_count >= 2 && up.bull_win_rate < up.bear_win_rate;
+      const bearWorse = up.bear_count >= 2 && up.bull_count >= 2 && up.bear_win_rate < up.bull_win_rate;
+      const bullBorder = bullWorse ? 'border:1px solid var(--red);' : 'border:1px solid var(--border);';
+      const bearBorder = bearWorse ? 'border:1px solid var(--red);' : 'border:1px solid var(--border);';
+      let uHtml = '';
+      uHtml += '<div style="background:var(--bg);' + bullBorder + 'border-radius:6px;padding:10px;">';
+      uHtml += '<div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Up Day Bullish</div>';
+      uHtml += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center;">';
+      uHtml += '<div><div style="font-size:14px;font-weight:700;font-family:var(--font-mono);color:var(--text);">' + up.bull_count + '</div><div style="font-size:9px;color:var(--text-dim);">Trades</div></div>';
+      uHtml += '<div><div style="font-size:14px;font-weight:700;font-family:var(--font-mono);color:' + wrColor(up.bull_win_rate, up.bull_count) + ';">' + (up.bull_count ? up.bull_win_rate.toFixed(1) + '%' : '--') + '</div><div style="font-size:9px;color:var(--text-dim);">Win Rate</div></div>';
+      const bullPnlColor = (up.bull_avg_pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+      uHtml += '<div><div style="font-size:14px;font-weight:700;font-family:var(--font-mono);color:' + bullPnlColor + ';">' + fmt$(up.bull_avg_pnl || 0) + '</div><div style="font-size:9px;color:var(--text-dim);">Avg P&L</div></div>';
+      uHtml += '</div></div>';
+
+      uHtml += '<div style="background:var(--bg);' + bearBorder + 'border-radius:6px;padding:10px;">';
+      uHtml += '<div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Up Day Bearish</div>';
+      uHtml += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center;">';
+      uHtml += '<div><div style="font-size:14px;font-weight:700;font-family:var(--font-mono);color:var(--text);">' + up.bear_count + '</div><div style="font-size:9px;color:var(--text-dim);">Trades</div></div>';
+      uHtml += '<div><div style="font-size:14px;font-weight:700;font-family:var(--font-mono);color:' + wrColor(up.bear_win_rate, up.bear_count) + ';">' + (up.bear_count ? up.bear_win_rate.toFixed(1) + '%' : '--') + '</div><div style="font-size:9px;color:var(--text-dim);">Win Rate</div></div>';
+      const bearPnlColor = (up.bear_avg_pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+      uHtml += '<div><div style="font-size:14px;font-weight:700;font-family:var(--font-mono);color:' + bearPnlColor + ';">' + fmt$(up.bear_avg_pnl || 0) + '</div><div style="font-size:9px;color:var(--text-dim);">Avg P&L</div></div>';
+      uHtml += '</div></div>';
+      upEl.innerHTML = uHtml;
+    } else {
+      upEl.style.display = 'none';
+    }
+
+    // Interpretation
+    document.getElementById('an-dir-interp').textContent = dd.interpretation || '';
+  } else {
+    ddEl.style.display = 'none';
+  }
+}
+
+async function renderAnBBAnalysis(sourceVal) {
+  const emptyEl = document.getElementById('an-bb-empty');
+  const contentEl = document.getElementById('an-bb-content');
+  emptyEl.style.display = 'none';
+  contentEl.style.display = 'none';
+
+  let url = '/api/analytics/bb?source=live';
+  if (sourceVal && sourceVal.startsWith('backtest:')) {
+    const runId = sourceVal.split(':')[1];
+    url = '/api/analytics/bb?source=backtest&run_id=' + runId;
+  }
+
+  const data = await fetchJSON(url);
+  if (!data || !data.success || !data.total_trades_with_bb) {
+    emptyEl.style.display = 'block';
+    return;
+  }
+  contentEl.style.display = 'block';
+
+  const ag = data.agreed || {};
+  const dg = data.disagreed || {};
+
+  // Summary cards
+  const agWrColor = (ag.win_rate || 0) >= 50 ? 'var(--green)' : 'var(--amber)';
+  const dgWrColor = (dg.win_rate || 0) >= 50 ? 'var(--green)' : 'var(--amber)';
+  const agPnlColor = (ag.avg_pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+  const dgPnlColor = (dg.avg_pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+
+  let cardsHtml = '';
+  cardsHtml += '<div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px;">';
+  cardsHtml += '<div style="font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">BB Agreed</div>';
+  cardsHtml += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">';
+  cardsHtml += '<div style="text-align:center;"><div style="font-size:16px; font-weight:700; font-family:var(--font-mono); color:' + agWrColor + ';">' + (ag.win_rate || 0).toFixed(1) + '%</div><div style="font-size:9px; color:var(--text-dim);">Win Rate</div></div>';
+  cardsHtml += '<div style="text-align:center;"><div style="font-size:16px; font-weight:700; font-family:var(--font-mono); color:' + agPnlColor + ';">' + fmt$(ag.avg_pnl || 0) + '</div><div style="font-size:9px; color:var(--text-dim);">Avg P&L</div></div>';
+  cardsHtml += '</div>';
+  cardsHtml += '<div style="font-size:10px; color:var(--text-dim); margin-top:6px; text-align:center;">' + (ag.count || 0) + ' trades (' + (ag.wins || 0) + 'W / ' + (ag.losses || 0) + 'L) | Total: ' + fmt$(ag.total_pnl || 0) + '</div>';
+  cardsHtml += '</div>';
+
+  cardsHtml += '<div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px;">';
+  cardsHtml += '<div style="font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">BB Disagreed</div>';
+  cardsHtml += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">';
+  cardsHtml += '<div style="text-align:center;"><div style="font-size:16px; font-weight:700; font-family:var(--font-mono); color:' + dgWrColor + ';">' + (dg.win_rate || 0).toFixed(1) + '%</div><div style="font-size:9px; color:var(--text-dim);">Win Rate</div></div>';
+  cardsHtml += '<div style="text-align:center;"><div style="font-size:16px; font-weight:700; font-family:var(--font-mono); color:' + dgPnlColor + ';">' + fmt$(dg.avg_pnl || 0) + '</div><div style="font-size:9px; color:var(--text-dim);">Avg P&L</div></div>';
+  cardsHtml += '</div>';
+  cardsHtml += '<div style="font-size:10px; color:var(--text-dim); margin-top:6px; text-align:center;">' + (dg.count || 0) + ' trades (' + (dg.wins || 0) + 'W / ' + (dg.losses || 0) + 'L) | Total: ' + fmt$(dg.total_pnl || 0) + '</div>';
+  cardsHtml += '</div>';
+  document.getElementById('an-bb-cards').innerHTML = cardsHtml;
+
+  // Comparison bars
+  const maxWr = Math.max(ag.win_rate || 0, dg.win_rate || 0, 1);
+  let barsHtml = '<div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Win Rate Comparison</div>';
+  const agW = Math.max((ag.win_rate || 0) / maxWr * 100, 2);
+  const dgW = Math.max((dg.win_rate || 0) / maxWr * 100, 2);
+  barsHtml += '<div style="display:flex; align-items:center; gap:8px; margin-bottom:4px; font-size:11px;">';
+  barsHtml += '<div style="width:70px; color:var(--text-dim); flex-shrink:0;">Agreed</div>';
+  barsHtml += '<div style="flex:1; background:var(--bg); border-radius:3px; height:18px; position:relative;">';
+  barsHtml += '<div style="width:' + agW + '%; background:' + agWrColor + '; height:100%; border-radius:3px; opacity:0.7;"></div>';
+  barsHtml += '</div>';
+  barsHtml += '<div style="width:45px; text-align:right; font-family:var(--font-mono); color:' + agWrColor + ';">' + (ag.win_rate || 0).toFixed(1) + '%</div>';
+  barsHtml += '<div style="width:30px; text-align:right; color:var(--text-dim);">' + (ag.count || 0) + '</div>';
+  barsHtml += '</div>';
+  barsHtml += '<div style="display:flex; align-items:center; gap:8px; margin-bottom:4px; font-size:11px;">';
+  barsHtml += '<div style="width:70px; color:var(--text-dim); flex-shrink:0;">Disagreed</div>';
+  barsHtml += '<div style="flex:1; background:var(--bg); border-radius:3px; height:18px; position:relative;">';
+  barsHtml += '<div style="width:' + dgW + '%; background:' + dgWrColor + '; height:100%; border-radius:3px; opacity:0.7;"></div>';
+  barsHtml += '</div>';
+  barsHtml += '<div style="width:45px; text-align:right; font-family:var(--font-mono); color:' + dgWrColor + ';">' + (dg.win_rate || 0).toFixed(1) + '%</div>';
+  barsHtml += '<div style="width:30px; text-align:right; color:var(--text-dim);">' + (dg.count || 0) + '</div>';
+  barsHtml += '</div>';
+
+  // Interpretation
+  const wrDiff = (ag.win_rate || 0) - (dg.win_rate || 0);
+  let interp = '';
+  if (data.total_trades_with_bb < 10) {
+    interp = 'Not enough data for meaningful comparison (need 10+ trades with BB data).';
+  } else if (Math.abs(wrDiff) < 3) {
+    interp = 'BB filter shows minimal impact on DI win rate (< 3% difference). Removing it was the right call.';
+  } else if (wrDiff > 0) {
+    interp = 'BB-agreed trades outperform by ' + wrDiff.toFixed(1) + '% win rate. Consider tracking for insights, but NO-Indicators remains the core rule.';
+  } else {
+    interp = 'BB-disagreed trades actually perform better by ' + Math.abs(wrDiff).toFixed(1) + '% win rate. Confirms removing the filter was correct.';
+  }
+  barsHtml += '<div style="font-size:10px; color:var(--text-dim); margin-top:8px; font-style:italic;">' + interp + '</div>';
+
+  document.getElementById('an-bb-bars').innerHTML = barsHtml;
+}
+
+function _fmtDuration(mins) {
+  if (mins == null || mins === 0) return '0m';
+  const h = Math.floor(mins / 60);
+  const m = Math.round(mins % 60);
+  if (h === 0) return m + 'm';
+  return h + 'h ' + m + 'm';
+}
+
+async function renderAnDuration(sourceVal) {
+  const emptyEl = document.getElementById('an-dur-empty');
+  const contentEl = document.getElementById('an-dur-content');
+  emptyEl.style.display = 'none';
+  contentEl.style.display = 'none';
+
+  let url = '/api/analytics/duration?source=live';
+  if (sourceVal && sourceVal.startsWith('backtest:')) {
+    const runId = sourceVal.split(':')[1];
+    url = '/api/analytics/duration?source=backtest&run_id=' + runId;
+  }
+
+  const data = await fetchJSON(url);
+  if (!data || !data.success || !data.total_trades) {
+    emptyEl.style.display = 'block';
+    return;
+  }
+  contentEl.style.display = 'block';
+
+  // Summary cards
+  const cards = [
+    {label: 'Avg Winner', value: _fmtDuration(data.avg_winner_minutes), color: 'var(--green)'},
+    {label: 'Avg Loser', value: _fmtDuration(data.avg_loser_minutes), color: 'var(--red)'},
+    {label: 'Fastest Winner', value: _fmtDuration(data.fastest_winner_minutes), color: 'var(--green)'},
+    {label: 'Longest Loser', value: _fmtDuration(data.longest_loser_minutes), color: 'var(--red)'},
+  ];
+  let cardsHtml = '';
+  for (const c of cards) {
+    cardsHtml += '<div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;text-align:center;">';
+    cardsHtml += '<div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">' + c.label + '</div>';
+    cardsHtml += '<div style="font-size:16px;font-weight:700;font-family:var(--font-mono);color:' + c.color + ';">' + c.value + '</div>';
+    cardsHtml += '</div>';
+  }
+  document.getElementById('an-dur-cards').innerHTML = cardsHtml;
+
+  // Duration distribution - horizontal stacked bars
+  const buckets = data.buckets || [];
+  const maxCount = Math.max(...buckets.map(b => b.total), 1);
+  let chartHtml = '';
+  for (const b of buckets) {
+    if (b.total === 0 && !buckets.some(x => x.total > 0)) continue;
+    const wPct = Math.max(b.winners / maxCount * 100, 0);
+    const lPct = Math.max(b.losers / maxCount * 100, 0);
+    chartHtml += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:11px;">';
+    chartHtml += '<div style="width:40px;color:var(--text-dim);flex-shrink:0;text-align:right;">' + b.bucket + '</div>';
+    chartHtml += '<div style="flex:1;display:flex;gap:1px;height:16px;">';
+    if (b.winners > 0) chartHtml += '<div style="width:' + wPct + '%;background:var(--green);border-radius:2px;opacity:0.7;" title="' + b.winners + ' wins"></div>';
+    if (b.losers > 0) chartHtml += '<div style="width:' + lPct + '%;background:var(--red);border-radius:2px;opacity:0.7;" title="' + b.losers + ' losses"></div>';
+    chartHtml += '</div>';
+    chartHtml += '<div style="width:24px;text-align:right;color:var(--text-dim);font-family:var(--font-mono);">' + b.total + '</div>';
+    chartHtml += '</div>';
+  }
+  chartHtml += '<div style="font-size:9px;color:var(--text-dim);margin-top:4px;display:flex;gap:12px;">';
+  chartHtml += '<span><span style="display:inline-block;width:8px;height:8px;background:var(--green);border-radius:2px;opacity:0.7;margin-right:3px;"></span>Winners</span>';
+  chartHtml += '<span><span style="display:inline-block;width:8px;height:8px;background:var(--red);border-radius:2px;opacity:0.7;margin-right:3px;"></span>Losers</span>';
+  chartHtml += '</div>';
+  document.getElementById('an-dur-chart').innerHTML = chartHtml;
+
+  // Win rate by duration table
+  let tHtml = '<table style="width:100%;border-collapse:collapse;">';
+  tHtml += '<tr style="border-bottom:1px solid var(--border);"><th style="text-align:left;padding:3px;">Duration</th><th style="text-align:center;">Trades</th><th style="text-align:center;">Win Rate</th><th style="text-align:right;padding-right:4px;">Avg P&L</th></tr>';
+  for (const b of buckets) {
+    if (b.total === 0) continue;
+    const wrColor = b.win_rate >= 50 ? 'var(--green)' : 'var(--amber)';
+    const pnlColor = b.avg_pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    tHtml += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
+    tHtml += '<td style="padding:3px;">' + b.bucket + '</td>';
+    tHtml += '<td style="text-align:center;">' + b.total + '</td>';
+    tHtml += '<td style="text-align:center;font-family:var(--font-mono);color:' + wrColor + ';">' + b.win_rate.toFixed(1) + '%</td>';
+    tHtml += '<td style="text-align:right;padding-right:4px;font-family:var(--font-mono);color:' + pnlColor + ';">$' + b.avg_pnl.toFixed(2) + '</td>';
+    tHtml += '</tr>';
+  }
+  tHtml += '</table>';
+  document.getElementById('an-dur-table').innerHTML = tHtml;
+
+  // Interpretation
+  document.getElementById('an-dur-interp').textContent = data.interpretation || '';
 }
 
 // ---------------------------------------------------------------
@@ -7336,6 +7706,7 @@ async function loadBacktestResults(runId) {
     const report = data.report;
     document.getElementById('bt-no-results').style.display = 'none';
     document.getElementById('bt-results').style.display = 'block';
+    showDisclaimer('bt', undefined, 'backtest');
 
     renderBtMetrics(report);
     renderBtAssumptions(report, data.params);
@@ -7361,8 +7732,8 @@ function renderBtAssumptions(report, params) {
   if (params) {
     const strats = params.strategies || {};
     const enabledStrats = Object.entries(strats)
-      .filter(([k, v]) => v)
-      .map(([k]) => ({di: 'Daily Income', tnt: 'Tag N Turn', orb: 'ORB', bnb: 'B&B'}[k] || k))
+      .filter(([k, v]) => typeof v === 'object' ? v.enabled : v)
+      .map(([k]) => ({daily_income: 'Daily Income', tag_n_turn: 'Tag N Turn', di: 'Daily Income', tnt: 'Tag N Turn', orb: 'ORB', bnb: 'B&B'}[k] || k))
       .join(', ') || 'None';
     html += `
     <div style="margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border);">
@@ -7408,7 +7779,7 @@ function renderBtMetrics(report) {
   const core = report.core || {};
   const tm = report.trade_metrics || {};
   const cards = [
-    {label: 'Total Return', value: '$' + (core.total_return_dollar||0).toLocaleString(undefined,{minimumFractionDigits:2}), color: core.total_return_dollar >= 0 ? 'var(--green)' : 'var(--red)'},
+    {label: 'Total Return', value: fmtBig$(core.total_return_dollar||0), color: core.total_return_dollar >= 0 ? 'var(--green)' : 'var(--red)'},
     {label: 'Annualized', value: (core.annualized_return||0).toFixed(2) + '%', color: core.annualized_return >= 0 ? 'var(--green)' : 'var(--red)'},
     {label: 'Sharpe', value: (core.sharpe_ratio||0).toFixed(3), color: 'var(--text)'},
     {label: 'Sortino', value: (core.sortino_ratio||0).toFixed(3), color: 'var(--text)'},
@@ -7416,7 +7787,7 @@ function renderBtMetrics(report) {
     {label: 'Trades', value: tm.total_trades||0, color: 'var(--text)'},
     {label: 'Win Rate', value: (tm.win_rate||0).toFixed(1) + '%', color: tm.win_rate >= 50 ? 'var(--green)' : 'var(--amber)'},
     {label: 'Profit Factor', value: (tm.profit_factor||0).toFixed(2), color: tm.profit_factor >= 1 ? 'var(--green)' : 'var(--red)'},
-    {label: 'Expectancy', value: '$' + (tm.expectancy||0).toFixed(2), color: tm.expectancy >= 0 ? 'var(--green)' : 'var(--red)'},
+    {label: 'Expectancy', value: fmtBig$(tm.expectancy||0), color: tm.expectancy >= 0 ? 'var(--green)' : 'var(--red)'},
   ];
 
   const container = document.getElementById('bt-metrics-cards');
