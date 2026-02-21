@@ -1737,6 +1737,57 @@ def api_history():
     })
 
 
+@app.route('/api/greeks')
+def api_greeks():
+    """Portfolio-level Greeks (delta, gamma, theta, vega) for open positions."""
+    from src.analytics.greeks import GreeksCalculator
+
+    try:
+        spx = yahoo.get_spx_quote() or {}
+        spx_price = spx.get('price')
+        vix_quote = yahoo.get_vix_quote()
+        vix_level = vix_quote.get('price') if vix_quote else None
+
+        if not spx_price or not vix_level:
+            return jsonify({
+                'has_positions': False, 'net_delta': 0, 'net_gamma': 0,
+                'net_theta': 0, 'net_vega': 0, 'theta_per_hour': 0,
+                'position_count': 0, 'spx_price': spx_price,
+                'vix_level': vix_level, 'iv_used': 0,
+                'risk_free_rate': 0.05, 'interpretation': 'Market data unavailable.',
+            })
+
+        conn = get_db_connection()
+        open_positions, _ = classify_trades(conn, spx_price)
+        conn.close()
+
+        if not open_positions:
+            return jsonify({
+                'has_positions': False, 'net_delta': 0, 'net_gamma': 0,
+                'net_theta': 0, 'net_vega': 0, 'theta_per_hour': 0,
+                'position_count': 0, 'spx_price': round(spx_price, 2),
+                'vix_level': round(vix_level, 2), 'iv_used': 0,
+                'risk_free_rate': 0.05, 'interpretation': 'No open positions.',
+            })
+
+        calc = GreeksCalculator()
+        result = calc.calculate_portfolio_greeks(open_positions, spx_price, vix_level)
+        result['spx_price'] = round(spx_price, 2)
+        result['vix_level'] = round(vix_level, 2)
+        result['risk_free_rate'] = calc.risk_free_rate
+        return jsonify(result)
+
+    except Exception as e:
+        logger.error(f"Greeks calculation error: {e}")
+        return jsonify({
+            'has_positions': False, 'net_delta': 0, 'net_gamma': 0,
+            'net_theta': 0, 'net_vega': 0, 'theta_per_hour': 0,
+            'position_count': 0, 'spx_price': None, 'vix_level': None,
+            'iv_used': 0, 'risk_free_rate': 0.05,
+            'interpretation': 'Error calculating Greeks.',
+        })
+
+
 @app.route('/api/journal')
 def api_journal():
     """Trade journal with entry reasons, exit analysis, and market context."""

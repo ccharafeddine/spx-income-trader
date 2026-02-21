@@ -769,6 +769,53 @@ header::after {
 .plan-metric .label { color: var(--text-dim); }
 .plan-metric .value { color: #fff; font-family: var(--font-mono); }
 
+/* Greeks Panel */
+.greeks-panel {
+  border-left: 3px solid var(--amber);
+  display: none;
+}
+.greeks-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.greek-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 8px;
+  text-align: center;
+}
+.greek-card .label {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.greek-value {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+.greek-value.positive { color: var(--green); }
+.greek-value.negative { color: var(--red); }
+.greek-value.amber { color: var(--amber); }
+.greeks-interpretation {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 4px 0;
+  font-style: italic;
+}
+.greeks-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
 /* Tables */
 .signal-table {
   width: 100%;
@@ -2796,6 +2843,33 @@ header::after {
     <div id="trade-plan-content"></div>
   </div>
 
+  <!-- PORTFOLIO GREEKS (visible only when positions exist) -->
+  <div class="panel greeks-panel" id="greeks-panel">
+    <div class="panel-title">Portfolio Greeks</div>
+    <div id="greeks-content">
+      <div class="greeks-grid">
+        <div class="greek-card">
+          <div class="label">Delta</div>
+          <div class="greek-value" id="greek-delta">--</div>
+        </div>
+        <div class="greek-card">
+          <div class="label">Gamma</div>
+          <div class="greek-value" id="greek-gamma">--</div>
+        </div>
+        <div class="greek-card">
+          <div class="label">Theta/Hr</div>
+          <div class="greek-value" id="greek-theta">--</div>
+        </div>
+        <div class="greek-card">
+          <div class="label">Vega</div>
+          <div class="greek-value" id="greek-vega">--</div>
+        </div>
+      </div>
+      <div class="greeks-interpretation" id="greeks-interpretation"></div>
+      <div class="greeks-meta" id="greeks-meta"></div>
+    </div>
+  </div>
+
   <!-- BOTTOM ROW: Signal Log + Trade History -->
   <div class="bottom-row">
     <!-- SIGNAL LOG -->
@@ -4359,6 +4433,44 @@ function updateTradePlan(positions, todayData) {
   content.innerHTML = html;
 }
 
+async function updateGreeks() {
+  const panel = document.getElementById('greeks-panel');
+  const d = await fetchJSON('/api/greeks');
+  if (!d || !d.has_positions) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+
+  function applyColor(el, val) {
+    el.className = 'greek-value';
+    if (val > 0.0001) el.classList.add('positive');
+    else if (val < -0.0001) el.classList.add('negative');
+  }
+
+  const deltaEl = document.getElementById('greek-delta');
+  deltaEl.textContent = d.net_delta.toFixed(2);
+  applyColor(deltaEl, d.net_delta);
+
+  const gammaEl = document.getElementById('greek-gamma');
+  gammaEl.textContent = d.net_gamma.toFixed(4);
+  applyColor(gammaEl, d.net_gamma);
+
+  const thetaEl = document.getElementById('greek-theta');
+  thetaEl.textContent = '$' + Math.abs(d.theta_per_hour).toFixed(2);
+  thetaEl.className = 'greek-value amber';
+
+  const vegaEl = document.getElementById('greek-vega');
+  vegaEl.textContent = d.net_vega.toFixed(2);
+  applyColor(vegaEl, d.net_vega);
+
+  document.getElementById('greeks-interpretation').textContent = d.interpretation || '';
+  const ivPct = d.iv_used ? (d.iv_used * 100).toFixed(1) : '--';
+  const vixStr = d.vix_level ? d.vix_level.toFixed(2) : '--';
+  const rateStr = d.risk_free_rate ? (d.risk_free_rate * 100).toFixed(1) : '--';
+  document.getElementById('greeks-meta').textContent = 'IV: ' + ivPct + '% (VIX ' + vixStr + ') \u00B7 r: ' + rateStr + '%';
+}
+
 async function updateSignals() {
   const d = await fetchJSON('/api/signals?days=30');
   if (!d || !d.signals || !d.signals.length) {
@@ -5595,7 +5707,7 @@ async function refreshAll() {
   const cdEl = document.getElementById('refresh-countdown');
   cdEl.style.opacity = '0.4';
   cdEl.textContent = '...';
-  const tasks = [updateStatus(), updateToday(), updateSignals(), updateHistory(), updateRiskStatus()];
+  const tasks = [updateStatus(), updateToday(), updateSignals(), updateHistory(), updateRiskStatus(), updateGreeks()];
   if (activeTab === 'journal') tasks.push(updateJournal());
   await Promise.all(tasks);
   countdown = 30;
