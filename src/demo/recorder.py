@@ -34,16 +34,18 @@ class EventRecorder:
     One file per trading day: YYYY-MM-DD.jsonl
     """
 
-    def __init__(self, output_dir: Path = None):
+    def __init__(self, output_dir: Path = None, filename: str = None):
         if output_dir is None:
             from src.utils.app_paths import DATA_DIR
             output_dir = DATA_DIR / 'database' / 'recordings'
         self._output_dir = Path(output_dir)
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
+        self._filename = filename  # Fixed filename (no date rotation)
         self._lock = threading.Lock()
         self._file = None
         self._file_date = None
+        self._start_time = None
         self._last_price_tick_t = 0.0
         self._event_count = 0
 
@@ -52,7 +54,13 @@ class EventRecorder:
         return self._event_count
 
     @property
+    def start_time(self) -> Optional[float]:
+        return self._start_time
+
+    @property
     def file_path(self) -> Optional[Path]:
+        if self._filename:
+            return self._output_dir / self._filename
         if self._file_date is None:
             return None
         return self._output_dir / f'{self._file_date}.jsonl'
@@ -93,6 +101,18 @@ class EventRecorder:
 
     def _ensure_file(self, ts: float):
         """Open or rotate the output file if the date changed."""
+        if self._start_time is None:
+            self._start_time = ts
+
+        # Fixed filename mode: open once, no rotation
+        if self._filename:
+            if self._file is not None:
+                return
+            path = self._output_dir / self._filename
+            self._file = open(path, 'a', encoding='utf-8')
+            logger.info(f"Recording to {path}")
+            return
+
         et = pytz.timezone('America/New_York')
         today = datetime.fromtimestamp(ts, tz=et).strftime('%Y-%m-%d')
         if self._file_date == today and self._file is not None:

@@ -1609,6 +1609,35 @@ header::after {
 .risk-detail .paused { color: var(--red); font-weight: bold; }
 .risk-detail .resume { color: var(--amber); }
 
+/* Session Recording Panel */
+.rec-panel { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.rec-title { font-size: 11px; font-weight: bold; color: var(--text-dim); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+.rec-hint { font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+.rec-btn {
+  padding: 3px 10px; border-radius: 3px; font-family: var(--font-ui); font-size: 10px;
+  cursor: pointer; transition: all 0.15s; border: 1px solid var(--border); background: transparent; color: var(--text-dim);
+}
+.rec-btn:hover { border-color: var(--text-dim); color: var(--text); }
+.rec-btn.red { border-color: #dc2626; color: #dc2626; }
+.rec-btn.red:hover { background: rgba(220,38,38,0.15); }
+.rec-btn.green { border-color: #16a34a; color: #16a34a; }
+.rec-btn.green:hover { background: rgba(22,163,74,0.15); }
+.rec-active-row { display: flex; align-items: center; gap: 8px; font-size: 11px; margin-bottom: 6px; }
+.rec-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #dc2626;
+  animation: rec-pulse 1.2s ease-in-out infinite;
+}
+@keyframes rec-pulse { 0%,100% { opacity: 1; box-shadow: 0 0 4px #dc2626; } 50% { opacity: 0.4; box-shadow: none; } }
+.rec-elapsed { color: var(--text); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.rec-events { color: var(--text-dim); font-size: 10px; }
+.rec-file-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 3px 0; font-size: 10px; color: var(--text-dim);
+}
+.rec-file-row .rec-fname { color: var(--text); font-family: var(--font-mono); }
+.rec-file-row .rec-meta { white-space: nowrap; }
+.rec-saved { font-size: 11px; color: #16a34a; margin-bottom: 6px; }
+
 /* VIX in chart footer */
 .footer-vix {
   display: flex;
@@ -2820,6 +2849,49 @@ header::after {
           <div class="risk-section-title">Risk Status</div>
           <div id="risk-status-body">
             <span class="econ-no-events">Loading...</span>
+          </div>
+        </div>
+        <div class="risk-status-panel" id="recon-panel">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <div class="risk-section-title" style="margin-bottom:0;">Reconciliation</div>
+            <button id="recon-run-btn" onclick="runReconciliation()"
+              style="padding:2px 8px; background:transparent; border:1px solid var(--border); border-radius:3px; color:var(--text-dim); font-family:var(--font-ui); font-size:10px; cursor:pointer; transition:all 0.15s;"
+              onmouseover="this.style.borderColor='var(--text-dim)';this.style.color='var(--text)'"
+              onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-dim)'">Run Now</button>
+          </div>
+          <div id="recon-body" style="margin-top:6px;"><span class="econ-no-events">Loading...</span></div>
+        </div>
+        <!-- Session Recording Panel (desktop mode only, hidden in demo/standalone) -->
+        <div class="rec-panel" id="rec-panel" style="display:none;">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <div class="rec-title" style="margin-bottom:0;">Session Recording</div>
+            <div id="rec-controls-idle">
+              <button class="rec-btn" id="rec-start-btn" onclick="startRecording()">Record</button>
+            </div>
+            <div id="rec-controls-active" style="display:none;">
+              <button class="rec-btn red" onclick="stopRecording()">Stop</button>
+            </div>
+          </div>
+          <!-- Idle state -->
+          <div id="rec-state-idle" style="margin-top:6px;">
+            <div class="rec-hint">Capture bot events for demo replay</div>
+            <div id="rec-recent-list" style="margin-top:6px;"></div>
+          </div>
+          <!-- Active state -->
+          <div id="rec-state-active" style="display:none; margin-top:6px;">
+            <div class="rec-active-row">
+              <div class="rec-dot"></div>
+              <span class="rec-elapsed" id="rec-elapsed">00:00</span>
+              <span class="rec-events" id="rec-event-count">0 events</span>
+            </div>
+          </div>
+          <!-- Stopped state -->
+          <div id="rec-state-stopped" style="display:none; margin-top:6px;">
+            <div class="rec-saved" id="rec-saved-msg">Recording saved</div>
+            <div style="display:flex; gap:6px;">
+              <button class="rec-btn green" id="rec-load-btn" onclick="loadLastRecordingAsDemo()">Load as Demo</button>
+              <button class="rec-btn" onclick="dismissRecordingStopped()">Dismiss</button>
+            </div>
           </div>
         </div>
       </div>
@@ -4092,6 +4164,7 @@ async function updateStatus() {
 
   // Bot controls (desktop mode)
   updateBotControls(d.bot.running);
+  updateRecordingBtnState(d.bot.running);
 
   // Mode badge
   const badge = document.getElementById('mode-badge');
@@ -6150,6 +6223,178 @@ async function stopBot() {
   }
 }
 
+// ---------------------------------------------------------------
+// Session Recording (desktop mode only)
+// ---------------------------------------------------------------
+let recStartedAt = null;
+let recTimerInterval = null;
+let recPollInterval = null;
+let recLastFilename = null;
+
+function setRecordingState(state) {
+  const idle = document.getElementById('rec-state-idle');
+  const active = document.getElementById('rec-state-active');
+  const stopped = document.getElementById('rec-state-stopped');
+  const ctrlIdle = document.getElementById('rec-controls-idle');
+  const ctrlActive = document.getElementById('rec-controls-active');
+  if (!idle) return;
+  idle.style.display = state === 'idle' ? '' : 'none';
+  active.style.display = state === 'active' ? '' : 'none';
+  stopped.style.display = state === 'stopped' ? '' : 'none';
+  ctrlIdle.style.display = state === 'idle' ? '' : 'none';
+  ctrlActive.style.display = state === 'active' ? '' : 'none';
+}
+
+function updateRecElapsed() {
+  if (!recStartedAt) return;
+  const secs = Math.floor((Date.now() / 1000) - recStartedAt);
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  const el = document.getElementById('rec-elapsed');
+  if (el) el.textContent = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+async function startRecording() {
+  const btn = document.getElementById('rec-start-btn');
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+  try {
+    const resp = await fetch('/api/recording/start', {method: 'POST', headers: API_HEADERS});
+    const data = await resp.json();
+    if (!data.success) {
+      alert('Cannot start recording: ' + data.error);
+      return;
+    }
+    recLastFilename = data.filename;
+    recStartedAt = Date.now() / 1000;
+    setRecordingState('active');
+    recTimerInterval = setInterval(updateRecElapsed, 1000);
+    recPollInterval = setInterval(pollRecordingStatus, 2000);
+  } catch (e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Record';
+  }
+}
+
+async function stopRecording() {
+  try {
+    const resp = await fetch('/api/recording/stop', {method: 'POST', headers: API_HEADERS});
+    const data = await resp.json();
+    if (recTimerInterval) { clearInterval(recTimerInterval); recTimerInterval = null; }
+    if (recPollInterval) { clearInterval(recPollInterval); recPollInterval = null; }
+    if (!data.success) {
+      alert('Error stopping recording: ' + data.error);
+      setRecordingState('idle');
+      return;
+    }
+    recLastFilename = data.filename;
+    const msg = document.getElementById('rec-saved-msg');
+    if (msg) msg.textContent = data.event_count + ' events saved to ' + data.filename;
+    setRecordingState('stopped');
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function pollRecordingStatus() {
+  try {
+    const data = await fetchJSON('/api/recording/status');
+    if (!data || !data.recording) {
+      // Recording stopped externally (bot stopped)
+      if (recTimerInterval) { clearInterval(recTimerInterval); recTimerInterval = null; }
+      if (recPollInterval) { clearInterval(recPollInterval); recPollInterval = null; }
+      setRecordingState('idle');
+      loadRecordingList();
+      return;
+    }
+    const el = document.getElementById('rec-event-count');
+    if (el) el.textContent = data.event_count + ' events';
+  } catch (_) {}
+}
+
+async function loadRecordingList() {
+  try {
+    const data = await fetchJSON('/api/recording/list');
+    const container = document.getElementById('rec-recent-list');
+    if (!container || !data || !data.recordings || data.recordings.length === 0) {
+      if (container) container.innerHTML = '';
+      return;
+    }
+    let html = '';
+    data.recordings.slice(0, 3).forEach(function(r) {
+      const dur = r.duration_seconds;
+      const durStr = dur > 0 ? Math.floor(dur / 60) + 'm' : '< 1m';
+      const evts = r.event_count;
+      html += '<div class="rec-file-row">';
+      html += '<span class="rec-fname">' + r.filename.replace('recording_', '').replace('.jsonl', '') + '</span>';
+      html += '<span class="rec-meta">' + evts + ' evts, ' + durStr + '</span>';
+      html += '<button class="rec-btn" onclick="loadSpecificDemo(\'' + r.filename + '\')">Load</button>';
+      html += '</div>';
+    });
+    container.innerHTML = html;
+  } catch (_) {}
+}
+
+async function loadLastRecordingAsDemo() {
+  if (!recLastFilename) return;
+  await loadSpecificDemo(recLastFilename);
+}
+
+async function loadSpecificDemo(filename) {
+  try {
+    const resp = await fetch('/api/recording/load-demo', {
+      method: 'POST', headers: API_HEADERS,
+      body: JSON.stringify({filename}),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      alert('Recording loaded as demo file. Restart the app with --demo to replay it.');
+    } else {
+      alert('Failed to load: ' + data.error);
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+function dismissRecordingStopped() {
+  setRecordingState('idle');
+  loadRecordingList();
+}
+
+function updateRecordingBtnState(botRunning) {
+  const btn = document.getElementById('rec-start-btn');
+  if (!btn) return;
+  btn.disabled = !botRunning;
+  btn.title = botRunning ? '' : 'Start the bot first';
+}
+
+// Init recording panel on page load
+(async function initRecording() {
+  if (DEMO_MODE) return;
+  try {
+    const resp = await fetch('/api/recording/status');
+    if (!resp.ok) return; // Not in desktop mode (standalone)
+    const panel = document.getElementById('rec-panel');
+    if (panel) panel.style.display = '';
+    const data = await resp.json();
+    if (data.recording) {
+      recStartedAt = data.started_at || (Date.now() / 1000);
+      recLastFilename = data.filename;
+      setRecordingState('active');
+      recTimerInterval = setInterval(updateRecElapsed, 1000);
+      recPollInterval = setInterval(pollRecordingStatus, 2000);
+    } else {
+      setRecordingState('idle');
+      loadRecordingList();
+    }
+  } catch (_) {
+    // Not desktop mode, panel stays hidden
+  }
+})();
+
 // Economic events (loaded once per page load, static for the day)
 async function updateEconomicEvents() {
   try {
@@ -6272,11 +6517,122 @@ async function updateRiskStatus() {
 }
 updateRiskStatus();
 
+// ---------------------------------------------------------------
+// Reconciliation
+// ---------------------------------------------------------------
+let _reconPollTimer = null;
+
+async function updateReconciliation() {
+  const el = document.getElementById('recon-body');
+  if (!el) return;
+  try {
+    const resp = await fetch('/api/reconcile');
+    const d = await resp.json();
+
+    if (d.mode === 'dry_run' || d.mode === 'demo') {
+      el.innerHTML = '<span class="econ-no-events">Live mode only</span>';
+      document.getElementById('recon-run-btn').style.display = 'none';
+      return;
+    }
+    if (d.status === 'not_yet_run') {
+      el.innerHTML = '<span class="econ-no-events">Not yet run</span>';
+      return;
+    }
+    if (d.status === 'error') {
+      el.innerHTML = '<span class="econ-no-events">' + (d.message || 'Error') + '</span>';
+      return;
+    }
+
+    // We have results
+    const nDisc = (d.discrepancies || []).length;
+    const matched = d.matched || 0;
+    const checked = d.trades_checked || 0;
+
+    // Check staleness (> 24h old)
+    let staleTag = '';
+    if (d.run_timestamp) {
+      const age = Date.now() - new Date(d.run_timestamp).getTime();
+      if (age > 86400000) staleTag = ' <span style="color:var(--text-dim);font-size:10px;">(stale)</span>';
+    }
+
+    let html = '';
+    if (nDisc === 0) {
+      html += '<div class="risk-row"><span class="risk-led green"></span>';
+      html += '<span style="color:var(--text);font-size:11px;">' + matched + '/' + checked + ' trades matched</span>';
+      html += staleTag + '</div>';
+    } else {
+      html += '<div class="risk-row"><span class="risk-led yellow"></span>';
+      html += '<span style="color:var(--amber);font-size:11px;">' + nDisc + ' discrepanc' + (nDisc === 1 ? 'y' : 'ies') + '</span>';
+      html += staleTag + '</div>';
+      // Expandable table
+      html += '<div id="recon-details" style="margin-top:4px;">';
+      html += '<table style="width:100%;font-size:10px;border-collapse:collapse;">';
+      html += '<tr style="color:var(--text-dim);text-align:left;"><th style="padding:2px 4px;">ID</th><th style="padding:2px 4px;">Dir</th><th style="padding:2px 4px;">Field</th><th style="padding:2px 4px;">DB</th><th style="padding:2px 4px;">Broker</th><th style="padding:2px 4px;">Delta</th><th style="padding:2px 4px;">Status</th></tr>';
+      d.discrepancies.forEach(function(disc) {
+        var tid = (disc.trade_id || '-').substring(0, 8);
+        var dir = disc.direction || '-';
+        var dbVal = disc.db_value != null ? disc.db_value : '-';
+        var brVal = disc.broker_value != null ? disc.broker_value : '-';
+        var delta = disc.delta != null ? disc.delta : '-';
+        var statusColor = disc.status === 'price_discrepancy' ? 'var(--amber)' : disc.status === 'missing_from_broker' ? 'var(--red)' : 'var(--text-dim)';
+        html += '<tr style="border-top:1px solid var(--border);">';
+        html += '<td style="padding:2px 4px;color:var(--text-dim);">' + tid + '</td>';
+        html += '<td style="padding:2px 4px;">' + dir + '</td>';
+        html += '<td style="padding:2px 4px;">' + disc.field + '</td>';
+        html += '<td style="padding:2px 4px;">' + dbVal + '</td>';
+        html += '<td style="padding:2px 4px;">' + brVal + '</td>';
+        html += '<td style="padding:2px 4px;">' + delta + '</td>';
+        html += '<td style="padding:2px 4px;color:' + statusColor + ';">' + disc.status + '</td>';
+        html += '</tr>';
+      });
+      html += '</table></div>';
+    }
+
+    if (d.total_db_pnl != null) {
+      var pnlColor = d.total_db_pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      html += '<div style="font-size:10px;color:var(--text-dim);margin-top:4px;">DB P&L: <span style="color:' + pnlColor + ';">$' + d.total_db_pnl.toFixed(2) + '</span>';
+      if (d.date) html += ' (' + d.date + ')';
+      html += '</div>';
+    }
+
+    el.innerHTML = html;
+
+    // Stop polling if we were waiting for results
+    if (_reconPollTimer) {
+      clearInterval(_reconPollTimer);
+      _reconPollTimer = null;
+    }
+  } catch(e) {
+    if (el) el.innerHTML = '<span class="econ-no-events">Reconciliation unavailable</span>';
+  }
+}
+
+async function runReconciliation() {
+  const btn = document.getElementById('recon-run-btn');
+  const el = document.getElementById('recon-body');
+  btn.disabled = true;
+  btn.textContent = 'Requested...';
+  try {
+    await fetch('/api/reconcile', {
+      method: 'POST',
+      headers: {'X-API-Token': '{{ api_token }}'}
+    });
+    el.innerHTML = '<span class="econ-no-events">Waiting for bot...</span>';
+    // Poll every 5s until result arrives
+    _reconPollTimer = setInterval(updateReconciliation, 5000);
+  } catch(e) {
+    el.innerHTML = '<span class="econ-no-events">Request failed</span>';
+  }
+  setTimeout(function() { btn.disabled = false; btn.textContent = 'Run Now'; }, 3000);
+}
+
+updateReconciliation();
+
 async function refreshAll() {
   const cdEl = document.getElementById('refresh-countdown');
   cdEl.style.opacity = '0.4';
   cdEl.textContent = '...';
-  const tasks = [updateStatus(), updateToday(), updateSignals(), updateHistory(), updateRiskStatus(), updateGreeks()];
+  const tasks = [updateStatus(), updateToday(), updateSignals(), updateHistory(), updateRiskStatus(), updateGreeks(), updateReconciliation()];
   if (activeTab === 'journal') tasks.push(updateJournal());
   await Promise.all(tasks);
   countdown = 30;

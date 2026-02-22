@@ -180,6 +180,10 @@ class DesktopApp:
         # Version update check result (populated by background thread)
         self._update_info = None
 
+        # Session recording state
+        self._session_recorder = None
+        self._session_recorder_lock = threading.Lock()
+
         # Import the Flask app and register bot control routes on it
         from dashboard.app import app as flask_app
         self._flask_app = flask_app
@@ -244,6 +248,27 @@ class DesktopApp:
                 'error': None,
             }
             return jsonify(info)
+
+        @app.route('/api/recording/start', methods=['POST'])
+        def api_recording_start():
+            from flask import jsonify
+            success, result = desktop.start_recording()
+            if success:
+                return jsonify({'success': True, 'filename': result})
+            return jsonify({'success': False, 'error': result}), 409
+
+        @app.route('/api/recording/stop', methods=['POST'])
+        def api_recording_stop():
+            from flask import jsonify
+            success, result = desktop.stop_recording()
+            if success:
+                return jsonify({'success': True, **result})
+            return jsonify({'success': False, 'error': result}), 409
+
+        @app.route('/api/recording/status', methods=['GET'])
+        def api_recording_status():
+            from flask import jsonify
+            return jsonify(desktop.get_recording_status())
 
         @app.route('/api/settings/minimize-to-tray', methods=['GET', 'PUT'])
         def api_minimize_to_tray():
@@ -489,6 +514,9 @@ class DesktopApp:
         except Exception as e:
             logger.error(f"Bot thread error: {e}", exc_info=True)
         finally:
+            # Close any active session recording before bot cleanup
+            self._close_session_recorder()
+
             # Ensure shutdown cleanup (DB event, notification) always runs.
             # shutdown() is idempotent so this is safe even if it was
             # already called from within start() (e.g. fatal-error path).
@@ -919,6 +947,104 @@ class DesktopApp:
                 return True  # Hide failed, allow close
             return False  # Prevent close, window is hidden
         return True  # Setting disabled or no tray, allow close
+
+    # ------------------------------------------------------------------
+    # Session recording
+    # ------------------------------------------------------------------
+
+    def start_recording(self):
+        """Start recording bot events to a JSONL file.
+
+        Returns:
+            (success: bool, filename_or_error: str)
+        """
+        with self._session_recorder_lock:
+            if self._session_recorder is not None:
+                return False, 'Already recording'
+
+        with self._bot_lock:
+            bot = self._bot
+            if bot is None or not bot.running:
+                return False, 'Bot is not running'
+
+        from src.demo.recorder import EventRecorder
+        from src.utils.app_paths import DATA_DIR
+
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'recording_{ts}.jsonl'
+        output_dir = DATA_DIR / 'database' / 'demo_recordings'
+
+        recorder = EventRecorder(output_dir=output_dir, filename=filename)
+
+        with self._session_recorder_lock:
+            self._session_recorder = recorder
+
+        # Attach recorder to the bot
+        with self._bot_lock:
+            if self._bot is not None:
+                self._bot.recorder = recorder
+
+        logger.info(f"Session recording started: {filename}")
+        return True, filename
+
+    def stop_recording(self):
+        """Stop the active session recording.
+
+        Returns:
+            (success: bool, info_or_error: dict | str)
+        """
+        with self._session_recorder_lock:
+            recorder = self._session_recorder
+            if recorder is None:
+                return False, 'Not recording'
+            self._session_recorder = None
+
+        # Detach from bot
+        with self._bot_lock:
+            if self._bot is not None:
+                self._bot.recorder = None
+
+        recorder.close()
+
+        info = {
+            'filename': recorder._filename,
+            'event_count': recorder.event_count,
+            'file_path': str(recorder.file_path) if recorder.file_path else None,
+        }
+        logger.info(f"Session recording stopped: {info['event_count']} events -> {info['filename']}")
+        return True, info
+
+    def get_recording_status(self):
+        """Return current recording status."""
+        with self._session_recorder_lock:
+            recorder = self._session_recorder
+
+        if recorder is None:
+            return {'recording': False}
+
+        import time as _time
+        elapsed = 0
+        if recorder.start_time:
+            elapsed = int(_time.time() - recorder.start_time)
+
+        return {
+            'recording': True,
+            'filename': recorder._filename,
+            'event_count': recorder.event_count,
+            'elapsed_seconds': elapsed,
+            'started_at': recorder.start_time,
+        }
+
+    def _close_session_recorder(self):
+        """Close active session recorder (called during bot shutdown)."""
+        with self._session_recorder_lock:
+            recorder = self._session_recorder
+            if recorder is None:
+                return
+            self._session_recorder = None
+
+        recorder.close()
+        logger.info(f"Session recording auto-closed on bot stop: {recorder.event_count} events")
 
     # ------------------------------------------------------------------
     # Shutdown

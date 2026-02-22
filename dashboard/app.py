@@ -3110,6 +3110,49 @@ def api_risk_status():
 
 
 # ---------------------------------------------------------------------------
+# P&L Reconciliation API
+# ---------------------------------------------------------------------------
+
+@app.route('/api/reconcile')
+def api_reconcile_get():
+    """Return cached reconciliation results (written by the bot)."""
+    if getattr(app, '_demo_mode', False):
+        return jsonify({'mode': 'demo', 'message': 'Reconciliation not available in demo mode'})
+
+    mode = get_trading_mode()
+    if mode == 'dry-run':
+        return jsonify({'mode': 'dry_run', 'message': 'Reconciliation only available in live mode'})
+
+    try:
+        recon_path = BASE_DIR / 'database' / 'reconciliation_state.json'
+        if not recon_path.exists():
+            return jsonify({'status': 'not_yet_run', 'message': 'Not yet run'})
+
+        with open(recon_path, 'r') as f:
+            data = json.load(f)
+        return jsonify(data)
+    except Exception:
+        return jsonify({'status': 'error', 'message': 'Failed to read reconciliation data'})
+
+
+@app.route('/api/reconcile', methods=['POST'])
+def api_reconcile_post():
+    """Request on-demand reconciliation (writes trigger file for bot)."""
+    mode = get_trading_mode()
+    if mode == 'dry-run':
+        return jsonify({'success': False, 'message': 'Reconciliation only available in live mode'})
+
+    try:
+        trigger_path = BASE_DIR / 'database' / '.reconcile_requested'
+        trigger_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(trigger_path, 'w') as f:
+            f.write(datetime.now().isoformat())
+        return jsonify({'success': True, 'message': 'Reconciliation requested'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+# ---------------------------------------------------------------------------
 # Performance Analytics API
 # ---------------------------------------------------------------------------
 
@@ -5292,6 +5335,89 @@ def api_backtest_delete():
         return jsonify({'success': True, 'deleted': deleted})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Session Recording API (list / load)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/recording/list')
+def api_recording_list():
+    """List available session recordings from demo_recordings/."""
+    import shutil
+    recordings_dir = DATA_DIR / 'database' / 'demo_recordings'
+    if not recordings_dir.is_dir():
+        return jsonify({'recordings': []})
+
+    files = sorted(
+        recordings_dir.glob('recording_*.jsonl'),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+    result = []
+    for f in files[:10]:
+        stat = f.stat()
+        event_count = 0
+        first_t = None
+        last_t = None
+        try:
+            with open(f, 'r', encoding='utf-8') as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    event_count += 1
+                    try:
+                        evt = json.loads(line)
+                        t = evt.get('t')
+                        if t is not None:
+                            if first_t is None:
+                                first_t = t
+                            last_t = t
+                    except json.JSONDecodeError:
+                        pass
+        except Exception:
+            pass
+
+        duration = int(last_t - first_t) if first_t and last_t else 0
+        result.append({
+            'filename': f.name,
+            'size_bytes': stat.st_size,
+            'event_count': event_count,
+            'duration_seconds': duration,
+            'created_at': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        })
+
+    return jsonify({'recordings': result})
+
+
+@app.route('/api/recording/load-demo', methods=['POST'])
+def api_recording_load_demo():
+    """Copy a recording file to demo_selected.jsonl for demo playback."""
+    data = request.get_json() or {}
+    filename = data.get('filename', '')
+
+    # Validate filename to prevent path traversal
+    if not filename or '..' in filename or '/' in filename or '\\' in filename:
+        return jsonify({'success': False, 'error': 'Invalid filename'}), 400
+
+    if not filename.endswith('.jsonl'):
+        return jsonify({'success': False, 'error': 'Invalid file type'}), 400
+
+    recordings_dir = DATA_DIR / 'database' / 'demo_recordings'
+    source = recordings_dir / filename
+    if not source.exists():
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    dest = recordings_dir / 'demo_selected.jsonl'
+    try:
+        import shutil
+        shutil.copy2(str(source), str(dest))
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+    return jsonify({'success': True, 'demo_file': str(dest)})
 
 
 # ---------------------------------------------------------------------------
