@@ -2,7 +2,7 @@
 
 ![CI](https://github.com/ccharafeddine/spx-income-trader/actions/workflows/ci.yml/badge.svg) ![Python 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Automated SPX 0DTE options income trading system. Runs four parallel credit spread strategies on the S&P 500 index, autonomously from market open to close, with real-time risk management, a web dashboard, full backtesting, and multi-broker support (E*TRADE, Charles Schwab, dry-run simulation). Ships as a standalone desktop app for Windows and macOS.
+Automated SPX 0DTE options income trading system. Runs parallel credit spread strategies on the S&P 500 index, autonomously from market open to close, with real-time risk management, a web dashboard, full backtesting, session recording, and multi-broker support (E\*TRADE, Charles Schwab, dry-run simulation). Ships as a standalone desktop app for Windows and macOS.
 
 ---
 
@@ -20,16 +20,22 @@ The entire pipeline runs autonomously. The bot handles strike selection, order s
 
 ## Strategies
 
-### Daily Income (DI) -- Core 0DTE
-The primary strategy. Detects 30-minute pulse bars during the 9:30-11:30 ET setup window. A pulse bar is one where price closes in the extreme top or bottom 10% of the bar's range, signaling strong directional momentum. After detection, the bot waits for a breakout confirmation (price breaking above the pulse bar high for bullish, below the low for bearish), then enters an ATM credit spread with same-day expiration. No indicators gate entry. Exits at 80% of max profit, via 1 PM management rules (PDT accounts only), or at expiration. Bollinger Band agreement is tracked as analytics-only metadata on each trade.
+### Core Strategies
 
-### Tag 'n Turn (TNT) -- Swing
-Bollinger Band mean reversion strategy with 3-7 DTE. Uses a state machine: detects when price tags a Bollinger Band, waits for a pulse bar confirming reversal, then enters on breakout. Targets the opposite Bollinger Band. Holds up to 7 days. Runs in a separate swing slot alongside the 0DTE strategies.
+#### Daily Income (DI) -- 0DTE
+The primary strategy. Detects 30-minute pulse bars during the 9:30-11:30 ET setup window. A pulse bar is one where price closes in the extreme top or bottom 10% of the bar's range, signaling strong directional momentum. After detection, the bot waits for a breakout confirmation (price breaking above the pulse bar high for bullish, below the low for bearish), then enters an ATM credit spread with same-day expiration. A morning bias filter blocks bearish entries on strong up days and bullish entries on strong down days, reducing counter-trend trades. Exits at 80% of max profit, via 1 PM management rules (PDT accounts only), or at expiration. Bollinger Band agreement is tracked as analytics-only metadata on each trade.
 
-### Bed & Breakfast (B&B) -- Directional Confluence
-Detects pulse bars in the 3:00-4:00 PM ET window to generate an overnight directional signal. Only the final bar (15:30) creates a definitive signal; if both the 15:00 and 15:30 bars produce pulses in opposite directions, they cancel out. The signal persists overnight and is used the next morning as directional confluence for DI (informational-only in V1, no independent trade entries). If the market gaps more than 0.3% against the signal direction overnight, the signal is automatically invalidated.
+#### Tag 'n Turn (TNT) -- Swing
+Bollinger Band mean reversion strategy with 3-7 DTE. Uses a state machine: detects when price tags a Bollinger Band (50-period, 2 std dev), waits for a pulse bar confirming reversal, then enters on breakout. Targets the opposite Bollinger Band. Holds up to 7 days. Runs in a separate swing slot alongside the 0DTE strategies.
 
-### Opening Range Breakout (ORB)
+### Experimental Strategies
+
+These strategies are functional and included in backtesting, but are considered experimental. They may see changes to their entry logic, parameters, or role in future versions.
+
+#### Bed & Breakfast (B&B) -- Directional Confluence
+Detects pulse bars in the 3:00-4:00 PM ET window to generate an overnight directional signal. Only the final bar (15:30) creates a definitive signal; if both the 15:00 and 15:30 bars produce pulses in opposite directions, they cancel out. The signal persists overnight and is used the next morning as directional confluence for DI (informational-only, no independent trade entries). If the market gaps more than 0.3% against the signal direction overnight, the signal is automatically invalidated.
+
+#### Opening Range Breakout (ORB)
 Uses the first 30-minute bar of the day to define the opening range. Strong signals only: price must close in the top or bottom 10% of the range (weak signals are rejected). A minimum range filter (default 8.0 points) skips narrow, choppy days. When price breaks above the range high or below the range low, a confirmation delay (default 3 minutes) ensures the breakout holds before entry. Managed by DI's exit logic once entered.
 
 ### Position Limits
@@ -56,12 +62,13 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Credit quality gates reject low-premium setups
 - Max position limits enforced across all strategies (2 total: 1 0DTE + 1 swing)
 - PDT rule compliance: tracks day trades in a rolling 5-business-day window, blocks entries when slots exhausted (accounts under $25k). 1 PM trend-based management activates only in PDT mode.
+- Morning bias filter: blocks counter-trend entries based on intraday market direction
 - VIX regime awareness (low / normal / elevated / high / extreme)
 - Win/loss streak tracking with frozen previous-streak display
 
 ### Broker Integration
 - Multi-broker architecture with pluggable broker interface
-- **E*TRADE**: Full API integration with OAuth flow, token auto-renewal (90-min cycle), order preview/place/confirm pipeline
+- **E\*TRADE**: Full API integration with OAuth flow, token auto-renewal (90-min cycle), order preview/place/confirm pipeline
 - **Charles Schwab**: schwab-py integration with OAuth2 authorization, automatic token refresh, and full options order support
 - **Dry-run mode** (default): Real market data via Yahoo Finance with simulated fills using Black-Scholes pricing. No broker credentials needed.
 - Reactive 401 handling with automatic token refresh and retry on both brokers
@@ -106,7 +113,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Risk-adjusted metrics panel: Value at Risk (VaR), CVaR, tail ratio, win/loss streaks
 - P&L attribution panel: decomposes trade P&L into theta, delta, vega, and residual components
 - Market regime analysis: VIX regime performance, market direction performance, VIX transitions, market neutrality (correlation/beta to SPX)
-- Direction drill-down: cross-tabulates market day type x trade direction to investigate regime-specific weaknesses (e.g., the "Up day problem")
+- Direction drill-down: cross-tabulates market day type x trade direction to investigate regime-specific weaknesses
 - BB agreement analysis: compares win rates and P&L for trades where the Bollinger Band filter agreed vs. disagreed with direction
 - Trade duration analysis: winner vs. loser duration comparison, duration distribution chart, win rate by duration bucket
 - Execution quality: slippage summary, slippage by time bucket and VIX regime, exit reason breakdown with drill-down
@@ -120,6 +127,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Automatic SPX and VIX data download from Yahoo Finance
 - VIX-aware slippage model: scales with volatility regime ($0.02/leg base, $0.04/leg in elevated+ VIX)
 - NYSE half-day calendar: early close days (1 PM ET) handled automatically
+- Morning bias filter applied during simulation
 - Backtest assumptions panel showing input parameters (date range, capital, strategies, thresholds) and simulation details (slippage model, pricing model, fill assumptions, flagged unusual credits)
 - Configurable parameters: pulse threshold, spread width, profit target, min credit, max contracts, slippage, max daily loss, initial capital
 - Position sizing scales with simulated account growth over the backtest period
@@ -134,17 +142,36 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Hot-reloadable: changes take effect without restarting the bot (the only hot-reloadable setting)
 
 ### Demo Mode
-- Record live trading sessions as JSONL event streams
+- Record live trading sessions as JSONL event streams (14 event types)
 - Replay recordings at accelerated speed (1x / 5x / 10x / 30x / 60x)
 - Pre-built demo scenarios: winning day, losing day, no-setup day
 - Dashboard looks identical during replay (same API routes, same UI)
 - Play/pause, speed control, seek, and jump-to-next-event controls
+- Privacy scrub removes account IDs, tokens, and API keys from recordings
+
+### Session Recording
+- Start and stop recording from the dashboard Overview tab while the bot is running
+- Recordings saved as JSONL files in `demo_recordings/` with timestamped filenames
+- Browse recent recordings with event count and duration metadata
+- Load any recording as a demo file for replay
+- Recording panel auto-hides in standalone mode and demo mode
+- UI restores recording state on page refresh (pulsing indicator, elapsed timer, event count)
+- Recording auto-closes when the bot stops
+
+### Reconciliation
+- Compares database trades against broker order fills
+- Detects price and quantity mismatches (configurable tolerance)
+- Reports matched count, discrepancies, and P&L delta
+- On-demand reconciliation trigger from the dashboard
+- Available in live mode only (skipped in dry-run and demo modes)
 
 ### Observability
 - Structured JSON logging with credential masking
 - Prometheus metrics endpoint (`/metrics`) with trade counters, P&L gauges, and latency histograms
 - Health endpoint (`/api/health`) for uptime monitoring
+- Price feed health monitoring with stale timeout and failure tracking
 - Rotating log files with separate error-level log
+- Crash log written to `~/spx_crash.log` for desktop app failures
 
 ### Desktop Application
 - Native window via pywebview (not a browser wrapper)
@@ -152,6 +179,8 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Windows (PyInstaller) and macOS (py2app) builds
 - Headless mode (`--headless`) for running without a UI
 - Dev mode (`--dev`) opens in system browser
+- Bot start/stop controls from the dashboard and system tray context menu
+- Bot crash detection with watchdog thread and notification
 
 ### Data & Storage
 - SQLite database with WAL mode for concurrent read/write access
@@ -160,6 +189,8 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Automatic database migrations on startup
 - Signal log rotation at 5,000 entries with atomic writes (tempfile + rename)
 - CSRF protection via per-session API token on all state-changing requests
+- Settings API allowlist prevents arbitrary key injection
+- Sensitive values redacted in API responses
 
 ---
 
@@ -193,9 +224,9 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 
 ![Settings Dry Run](screenshots/settings_dryrun.png)
 
-**Settings - E*TRADE** -- Broker credential management with masked display, connection testing, OAuth session status with token age and auto-renewal.
+**Settings - E\*TRADE** -- Broker credential management with masked display, connection testing, OAuth session status with token age and auto-renewal.
 
-![Settings E*TRADE](screenshots/settings_etrade.png)
+![Settings E\*TRADE](screenshots/settings_etrade.png)
 
 ---
 
@@ -208,14 +239,17 @@ Market Data
     |--- Schwab Quotes API (live mode, 10s polling)
     |
     v
-BarBuilder (30-min aggregation)
+Price Feed (health monitoring, stale timeout, TTL cache)
+    |
+    v
+BarBuilder (30-min aggregation) + BarAggregator (5-min for charts)
     |
     v
 Strategy Engine
-    |--- Daily Income (0DTE credit spreads, pulse bar + breakout)
+    |--- Daily Income (0DTE credit spreads, pulse bar + breakout + morning bias)
     |--- Tag 'n Turn (BB mean reversion, 3-7 DTE swing)
-    |--- Bed & Breakfast (directional confluence signal for DI)
-    |--- Opening Range Breakout (strong-only, range filter, confirmation delay)
+    |--- Bed & Breakfast (directional confluence signal for DI) [experimental]
+    |--- Opening Range Breakout (strong-only, range filter, confirmation delay) [experimental]
     |
     v
 Portfolio Manager (2-slot limits, risk gates, circuit breaker, PDT gate)
@@ -233,10 +267,11 @@ Position Manager (P&L tracking, exit management, partial fill tracking, PDT-cond
     +---> Flask Dashboard (Overview, Journal, Analytics, Backtest, Logs)
     +---> Notification Manager (Slack, Discord, email, SMS, webhooks)
     +---> Prometheus Metrics (/metrics)
-    +---> Event Recorder (demo JSONL capture)
+    +---> Event Recorder (session recording, demo JSONL capture)
+    +---> Trade Reconciler (DB vs. broker fill comparison)
 ```
 
-**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E*TRADE API, schwab-py, pywebview, PyInstaller/py2app, Prometheus
+**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, pywebview, PyInstaller/py2app, Prometheus
 
 ---
 
@@ -256,6 +291,7 @@ All settings are configured via `config/strategy_params.yaml` and the dashboard 
 - PDT protection settings (including 1pm management mode)
 - ORB range filter and confirmation delay
 - B&B gap invalidation threshold
+- Morning bias filter toggle
 
 ### What is hot-reloadable (no restart needed)
 - Notification settings (Slack, Discord, webhooks, email, SMS)
@@ -272,6 +308,7 @@ All settings are configured via `config/strategy_params.yaml` and the dashboard 
 | `portfolio.position_sizing.risk_per_trade_pct` | 2% | Account percentage risked per trade |
 | `timing.morning_start` | 09:30 | Setup window open |
 | `timing.morning_end` | 11:30 | Setup window close |
+| `di_morning_bias_filter` | true | Block counter-trend entries based on intraday direction |
 | `tag_n_turn.spread_width` | $10 | TNT spread width (wider for swing trades) |
 | `tag_n_turn.min_dte` / `max_dte` | 3 / 7 | TNT expiration range |
 | `orb.min_range_points` | 8.0 | Minimum opening range size in points (skip narrow days) |
@@ -302,7 +339,7 @@ python app_desktop.py
 **Broker Setup:**
 
 - **Schwab**: Launch the app, go to Settings, enter your Schwab API credentials, and complete the OAuth2 flow. The bot handles token refresh automatically. Set `broker.active: schwab` in `strategy_params.yaml`.
-- **E*TRADE**: Configure your consumer key and secret via the Settings page or OS keychain. OAuth token renewal runs on a 90-minute cycle. Set `broker.active: etrade`.
+- **E\*TRADE**: Configure your consumer key and secret via the Settings page or OS keychain. OAuth token renewal runs on a 90-minute cycle. Set `broker.active: etrade`.
 - **Dry Run** (default): No broker config needed. Uses real market data with simulated fills.
 
 **Configuration:**
@@ -355,22 +392,26 @@ The packaged app copies the database and seeds `strategy_params.yaml` on first r
 src/
     main.py                  # TradingBot orchestrator and main loop
     core/
-        strategy.py          # Daily Income strategy (pulse bar + breakout)
+        strategy.py          # Daily Income strategy (pulse bar + breakout + morning bias)
         tag_n_turn.py        # Tag 'n Turn swing strategy (BB reversals)
-        bnb_strategy.py      # B&B directional confluence signal
-        orb_strategy.py      # Opening Range Breakout strategy
+        bnb_strategy.py      # B&B directional confluence signal [experimental]
+        orb_strategy.py      # Opening Range Breakout strategy [experimental]
         portfolio_manager.py # Multi-strategy coordination and risk gates
         position_manager.py  # Trade lifecycle, P&L, exit management
         bar_builder.py       # 30-min bar aggregation from tick data
+        bar_aggregator_5min.py # 5-min bars for dashboard charts (display-only)
         pulse_detector.py    # Pulse bar pattern detection
         bollinger_filter.py  # Bollinger Band filter and trend bias
         pdt_tracker.py       # Pattern Day Trader rule tracking
         drawdown_manager.py  # Drawdown tracking and circuit breakers
+        reconciler.py        # Trade reconciliation (DB vs. broker fills)
     data/
         yahoo_finance.py     # Real-time SPX/VIX quotes
         market_data.py       # Market data abstraction
-        price_feed.py        # Price feed abstraction (Yahoo/E*TRADE/Schwab)
-        vix_provider.py      # VIX data with multi-source fallback
+        price_feed.py        # Price feed abstraction with health monitoring
+        vix_provider.py      # VIX data with multi-source fallback and regime classification
+        economic_calendar.py # FOMC, CPI, and other high-impact event tracking
+        sma_provider.py      # Simple moving average calculations
     brokers/
         base.py              # Abstract broker interface
         broker_factory.py    # Broker selection and instantiation
@@ -391,34 +432,36 @@ src/
         sim_broker.py        # Simulated broker for backtesting
         report.py            # Backtest report generation
     demo/
-        recorder.py          # JSONL event recorder for live sessions
+        recorder.py          # JSONL event recorder (live sessions + dashboard recording)
         replay.py            # Replay engine with threaded playback
     models/
         bar.py               # Bar dataclass
         spread.py            # CreditSpread, OptionLeg models
         trade.py             # Trade record, TradeStatus enum
     utils/
-        app_paths.py         # Cross-platform path resolution
+        app_paths.py         # Cross-platform path resolution (dev vs. packaged)
         logging.py           # Structured logging with credential masking
         metrics.py           # Prometheus metrics
         notifications.py     # Slack, Discord, email, SMS, webhooks
-        version.py           # Version management
+        market_calendar.py   # NYSE calendar, half-days, holidays
+        version.py           # Version management and update check
 
 dashboard/
-    app.py                   # Flask REST API and dashboard server
+    app.py                   # Flask REST API and dashboard server (40+ routes)
     templates/
         index.html           # Main dashboard (5 tabs)
         settings.html        # Configuration UI
         setup.html           # Initial setup wizard
+    static/                  # Icons and static assets
 
 config/
     strategy_params.yaml     # All strategy and risk parameters
-    settings.py              # Environment, paths, DB config
+    settings.py              # Environment, paths, DB config, keyring integration
 
 database/
     db_manager.py            # SQLite operations (WAL mode, migrations)
-    schema.sql               # Database schema (54 columns)
-    demo_recordings/         # Pre-built demo JSONL files
+    schema.sql               # Database schema
+    demo_recordings/         # Pre-built and session-recorded demo JSONL files
 
 scripts/
     generate_demo_recording.py  # Fabricate demo scenarios
@@ -432,31 +475,33 @@ build/
     build_windows.py         # PyInstaller build script (Windows)
     build_macos.py           # py2app build script (macOS)
 
-app_desktop.py               # Desktop app entry point (pywebview + Flask)
+app_desktop.py               # Desktop app entry point (pywebview + Flask + session recording)
 ```
 
 ---
 
 ## Testing
 
-889 tests covering:
-- Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays)
+970 tests covering:
+- Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays, morning bias filter)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
 - Position management (sizing, P&L calculation, exit triggers, partial fill tracking)
 - Risk gates (circuit breaker, position limits, credit quality, drawdown)
 - Catastrophic scenario testing (max_contracts enforcement, B&B entry prevention, circuit breaker all-path coverage)
-- PDT compliance tracking and entry gating
+- PDT compliance tracking, entry gating, and 1PM management integration
 - Bar building and market state management
 - Consecutive loss tracking and streak counters
 - VIX data provider multi-source fallback chains
+- Price feed health monitoring and stale detection
 - Daily journal persistence and API endpoints
 - Notification delivery (Slack, Discord, email, webhook)
 - Demo mode (recording, replay, Flask integration)
+- Session recording (fixed filename mode, start/stop lifecycle, dashboard list/load routes, path traversal protection)
+- Trade reconciliation (DB vs. broker comparison, mismatch detection)
 - Monitoring and observability (Prometheus metrics, health endpoint)
 - Schwab and E*TRADE broker integration
 - Slippage tracking and database migrations
 - Database separation (dry-run vs live mode)
-- PDT-conditional 1pm management integration
 - Analytics computations (BB agreement, trade duration, direction drilldown, P&L attribution, regime analysis, execution quality)
 - Backtest engine PDT mode and BB agreement tracking
 
@@ -498,6 +543,7 @@ The dashboard Backtest tab provides:
 - Completed backtests auto-appear in the Analytics tab dropdown
 - VIX-aware slippage: base $0.02/leg, elevated to $0.04/leg in high-VIX regimes
 - PDT-aware simulation: 1pm management activates when initial capital < $25k
+- Morning bias filter applied during simulation
 - BB agreement tracked as analytics metadata on every backtest trade
 - Disclaimer banner reminds that backtest results are simulated
 - NYSE half-day calendar: early close days handled automatically
@@ -522,6 +568,18 @@ Three pre-built scenarios:
 - **Winning day**: Bullish pulse, breakout confirmed, put spread entered, 80% profit target hit
 - **Losing day**: Bullish pulse, breakout, reversal, stop loss hit
 - **No-setup day**: Narrow range, no pulse detected, all windows expire
+
+### Session Recording from the Dashboard
+
+In desktop mode, you can record live bot sessions directly from the Overview tab:
+
+1. Start the bot in dry-run or live mode
+2. Click **Record** in the Session Recording panel
+3. The panel shows a pulsing indicator, elapsed time, and event count
+4. Click **Stop** to save the recording
+5. Click **Load as Demo** to set it up for replay, then restart with `--demo`
+
+Recordings are saved to `database/demo_recordings/` and can be browsed from the panel. The recording state persists across page refreshes. If the bot stops while recording, the recording is automatically closed and saved.
 
 ---
 
