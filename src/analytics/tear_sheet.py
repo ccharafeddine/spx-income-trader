@@ -57,6 +57,19 @@ _EXIT_REASON_LABELS = {
 }
 
 
+_STRATEGY_ABBREV = {
+    'daily_income': 'DI',
+    'tag_n_turn': 'TNT',
+    'orb': 'ORB',
+    'bnb': 'B&B',
+}
+
+
+def _strategy_label(raw_key):
+    """Convert raw strategy key to abbreviated display name."""
+    return _STRATEGY_ABBREV.get(raw_key, raw_key)
+
+
 def _exit_reason_label(raw_key):
     """Convert raw exit reason key to human-readable label."""
     if raw_key in _EXIT_REASON_LABELS:
@@ -301,7 +314,7 @@ class TearSheetGenerator:
         }
 
     def _compute_risk_metrics(self, equity_curve, report=None):
-        """Compute risk metrics. Uses report values for streaks/calmar when available."""
+        """Compute risk metrics. Uses report equity curve for streaks when available."""
         if len(equity_curve) < 20:
             return {'sufficient_data': False}
 
@@ -328,25 +341,15 @@ class TearSheetGenerator:
         lower_5 = abs(percentile(lower, 5)) if len(lower) > 1 else 1
         tail_ratio = upper_95 / lower_5 if lower_5 > 0 else 0
 
-        # Use report values for streaks and calmar when available
         report_core = (report or {}).get('core', {})
-        report_risk = {}
 
-        # Check if the dashboard already computed risk_metrics and passed them
-        # through the report; otherwise compute streaks locally
-        longest_win = longest_loss = current_win = current_loss = 0
-        for p in daily_pnls:
-            if p > 0:
-                current_win += 1
-                current_loss = 0
-                longest_win = max(longest_win, current_win)
-            elif p < 0:
-                current_loss += 1
-                current_win = 0
-                longest_loss = max(longest_loss, current_loss)
-            else:
-                current_win = 0
-                current_loss = 0
+        # Compute daily streaks from equity curve (matches dashboard algorithm).
+        # For backtest reports, prefer the report's full equity curve over the
+        # rebuilt one so values match the backtest tab exactly.
+        report_ec = (report or {}).get('equity_curve', [])
+        streak_pnls = ([e.get('daily_pnl', e.get('pnl', 0)) for e in report_ec]
+                       if len(report_ec) >= 20 else daily_pnls)
+        longest_win, longest_loss = self._compute_daily_streaks(streak_pnls)
 
         calmar = report_core.get('calmar_ratio', 0)
         if not calmar:
@@ -372,6 +375,49 @@ class TearSheetGenerator:
             'longest_win_streak': longest_win,
             'longest_loss_streak': longest_loss,
         }
+
+    @staticmethod
+    def _compute_daily_streaks(daily_pnls):
+        """Compute longest consecutive winning/losing day streaks.
+
+        Matches dashboard _analytics_risk_metrics algorithm: days with $0 P&L
+        do not break or extend an active streak.
+
+        Returns (longest_win, longest_loss).
+        """
+        win_streaks = []
+        loss_streaks = []
+        current_streak = 0
+        current_type = None  # 'win' or 'loss'
+
+        for pnl in daily_pnls:
+            if pnl > 0:
+                if current_type == 'win':
+                    current_streak += 1
+                else:
+                    if current_type == 'loss' and current_streak > 0:
+                        loss_streaks.append(current_streak)
+                    current_streak = 1
+                    current_type = 'win'
+            elif pnl < 0:
+                if current_type == 'loss':
+                    current_streak += 1
+                else:
+                    if current_type == 'win' and current_streak > 0:
+                        win_streaks.append(current_streak)
+                    current_streak = 1
+                    current_type = 'loss'
+            # pnl == 0 doesn't break or extend streaks
+
+        # Flush final streak
+        if current_type == 'win' and current_streak > 0:
+            win_streaks.append(current_streak)
+        elif current_type == 'loss' and current_streak > 0:
+            loss_streaks.append(current_streak)
+
+        longest_win = max(win_streaks) if win_streaks else 0
+        longest_loss = max(loss_streaks) if loss_streaks else 0
+        return longest_win, longest_loss
 
     def _compute_attribution(self, trades):
         """Compute P&L attribution from filtered trades."""
@@ -870,7 +916,7 @@ class TearSheetGenerator:
 
             row = [
                 Paragraph(trade_date, _make_style(f'd_{idx}', 'Courier', 7, TEXT_COLOR, TA_LEFT, 0)),
-                Paragraph(str(t.get('strategy_type', ''))[:12],
+                Paragraph(_strategy_label(t.get('strategy_type', '')),
                           _make_style(f's_{idx}', 'Helvetica', 7, TEXT_COLOR, TA_LEFT, 0)),
                 Paragraph(str(t.get('direction', ''))[:4],
                           _make_style(f'dir_{idx}', 'Helvetica', 7, TEXT_COLOR, TA_LEFT, 0)),
@@ -881,13 +927,13 @@ class TearSheetGenerator:
                 Paragraph(f'${t.get("credit_received", 0):.2f}',
                           _make_style(f'cr_{idx}', 'Courier', 7, TEXT_COLOR, TA_LEFT, 0)),
                 Paragraph(_fmt_dollar(pnl) if pnl is not None else 'N/A', pnl_style),
-                Paragraph(str(t.get('exit_reason', ''))[:15],
+                Paragraph(_exit_reason_label(t.get('exit_reason', ''))[:25],
                           _make_style(f'r_{idx}', 'Helvetica', 7, TEXT_DIM, TA_LEFT, 0)),
             ]
             data.append(row)
 
-        col_widths = [0.8*inch, 0.9*inch, 0.5*inch, 0.7*inch, 0.7*inch,
-                      0.7*inch, 1.0*inch, 1.0*inch]
+        col_widths = [0.8*inch, 0.5*inch, 0.5*inch, 0.7*inch, 0.7*inch,
+                      0.7*inch, 1.0*inch, 1.5*inch]
         t = Table(data, colWidths=col_widths)
 
         style_cmds = [
