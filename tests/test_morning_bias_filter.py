@@ -182,13 +182,13 @@ def _make_bullish_pulse_bar(dt):
 
 
 class TestMorningBiasFilterBacktest:
-    """Test that morning bias filter uses overnight gap in backtest engine."""
+    """Test that morning bias filter uses full-day return in backtest engine."""
 
     def test_bearish_skipped_on_up_day(self):
-        """Bearish DI pulse skipped when overnight gap is Up (>0.25%)."""
+        """Bearish DI pulse skipped when full-day return is Up (>0.25%)."""
         engine = _make_engine(di_morning_bias_filter=True)
-        engine._prev_close = 5000.0
-        engine._spx_open = 5020.0  # +0.4% overnight gap (Up)
+        engine._spx_open = 5000.0
+        engine._spx_close = 5020.0  # +0.4% full-day return (Up)
 
         bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
         bar = _make_bearish_pulse_bar(bar_dt)
@@ -198,10 +198,10 @@ class TestMorningBiasFilterBacktest:
         assert engine._direction_filter_skips == 1
 
     def test_bullish_proceeds_on_up_day(self):
-        """Bullish DI pulse proceeds even when overnight gap is Up."""
+        """Bullish DI pulse proceeds even when full-day return is Up."""
         engine = _make_engine(di_morning_bias_filter=True)
-        engine._prev_close = 5000.0
-        engine._spx_open = 5020.0  # +0.4% overnight gap (Up)
+        engine._spx_open = 5000.0
+        engine._spx_close = 5020.0  # +0.4% full-day return (Up)
 
         bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
         bar = _make_bullish_pulse_bar(bar_dt)
@@ -214,8 +214,8 @@ class TestMorningBiasFilterBacktest:
     def test_filter_disabled_allows_bearish_on_up_day(self):
         """With filter disabled, bearish DI pulse proceeds on Up days."""
         engine = _make_engine(di_morning_bias_filter=False)
-        engine._prev_close = 5000.0
-        engine._spx_open = 5020.0  # +0.4% overnight gap (Up)
+        engine._spx_open = 5000.0
+        engine._spx_close = 5020.0  # +0.4% full-day return (Up)
 
         bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
         bar = _make_bearish_pulse_bar(bar_dt)
@@ -226,10 +226,23 @@ class TestMorningBiasFilterBacktest:
         assert engine._direction_filter_skips == 0
 
     def test_bearish_allowed_on_flat_day(self):
-        """Bearish DI pulse proceeds when overnight gap is Flat."""
+        """Bearish DI pulse proceeds when full-day return is Flat."""
         engine = _make_engine(di_morning_bias_filter=True)
-        engine._prev_close = 5000.0
-        engine._spx_open = 5005.0  # +0.1% overnight gap (Flat)
+        engine._spx_open = 5000.0
+        engine._spx_close = 5005.0  # +0.1% full-day return (Flat)
+
+        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
+        bar = _make_bearish_pulse_bar(bar_dt)
+        engine._check_for_setup(bar, bar_dt, vix=15.0)
+
+        assert engine._pending_setup is not None
+        assert engine._direction_filter_skips == 0
+
+    def test_bearish_allowed_on_down_day(self):
+        """Bearish DI pulse proceeds when full-day return is Down."""
+        engine = _make_engine(di_morning_bias_filter=True)
+        engine._spx_open = 5000.0
+        engine._spx_close = 4970.0  # -0.6% full-day return (Down)
 
         bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
         bar = _make_bearish_pulse_bar(bar_dt)
@@ -239,10 +252,10 @@ class TestMorningBiasFilterBacktest:
         assert engine._direction_filter_skips == 0
 
     def test_bearish_skipped_on_strong_up_day(self):
-        """Bearish DI pulse skipped on Strong Up (>1%) overnight gap."""
+        """Bearish DI pulse skipped on Strong Up (>1%) full-day return."""
         engine = _make_engine(di_morning_bias_filter=True)
-        engine._prev_close = 5000.0
-        engine._spx_open = 5060.0  # +1.2% overnight gap (Strong Up)
+        engine._spx_open = 5000.0
+        engine._spx_close = 5060.0  # +1.2% full-day return (Strong Up)
 
         bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
         bar = _make_bearish_pulse_bar(bar_dt)
@@ -250,19 +263,6 @@ class TestMorningBiasFilterBacktest:
 
         assert engine._pending_setup is None
         assert engine._direction_filter_skips == 1
-
-    def test_no_prev_close_skips_filter(self):
-        """First trading day (no prev_close) should bypass the filter."""
-        engine = _make_engine(di_morning_bias_filter=True)
-        engine._prev_close = 0.0  # default, no prior day
-        engine._spx_open = 5020.0
-
-        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
-        bar = _make_bearish_pulse_bar(bar_dt)
-        engine._check_for_setup(bar, bar_dt, vix=15.0)
-
-        assert engine._pending_setup is not None
-        assert engine._direction_filter_skips == 0
 
     def test_direction_filter_skips_in_report(self):
         """Backtest report should include direction_filter_skips count."""
@@ -276,15 +276,20 @@ class TestMorningBiasFilterBacktest:
         results = engine.run()
         assert 'direction_filter_skips' in results
 
-    def test_prev_close_tracked_across_days(self):
-        """Engine should update _prev_close at end of each trading day."""
+    def test_daily_move_pct_in_trades(self):
+        """Backtest trades should include daily_move_pct field."""
         from src.backtest.data_loader import load_bars_from_csv
         bars_df = load_bars_from_csv(FIXTURE_CSV)
         engine = BacktestEngine(
             bars_df=bars_df,
             vix_daily={},
             initial_capital=50000,
+            min_credit=0.50,
+            slippage=0.02,
         )
-        assert engine._prev_close == 0.0
-        engine.run()
-        assert engine._prev_close > 0.0
+        results = engine.run()
+        trades = results['trades']
+        if trades:
+            # All trades should have daily_move_pct
+            for t in trades:
+                assert 'daily_move_pct' in t, f"Trade missing daily_move_pct: {t['trade_id']}"

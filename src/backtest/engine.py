@@ -150,6 +150,7 @@ class BacktestTrade:
     slippage_pct: float = 0.0
     entry_time_bucket: str = ''
     bb_agreement: Optional[bool] = None
+    daily_move_pct: Optional[float] = None  # Full-day SPX return (open-to-close)
 
     def to_dict(self) -> dict:
         return {
@@ -179,6 +180,7 @@ class BacktestTrade:
             'slippage_pct': self.slippage_pct,
             'entry_time_bucket': self.entry_time_bucket,
             'bb_agreement': self.bb_agreement,
+            'daily_move_pct': self.daily_move_pct,
         }
 
 
@@ -287,9 +289,9 @@ class BacktestEngine:
         self._tnt_position: Optional[Dict] = None  # For TNT exit checks
         self._tnt_entry_date: Optional[date] = None
 
-        # SPX open for morning bias filter
+        # SPX open/close for morning bias filter (full-day return)
         self._spx_open: float = 0.0
-        self._prev_close: float = 0.0  # Prior day close for overnight gap
+        self._spx_close: float = 0.0  # Day close for full-day return filter
         self._direction_filter_skips: int = 0
 
         # Daily counters
@@ -498,6 +500,7 @@ class BacktestEngine:
         spx_open = float(day_bars.iloc[0]['open'])
         self._spx_open = spx_open  # For morning bias filter access
         spx_close = float(day_bars.iloc[-1]['close'])
+        self._spx_close = spx_close  # For full-day return filter
         max_daily_loss = self.broker.balance * (self.max_daily_loss_pct / 100.0)
 
         for timestamp, row in day_bars.iterrows():
@@ -625,9 +628,6 @@ class BacktestEngine:
         )
         self.daily_results.append(daily)
 
-        # Store prev close for next day's morning bias filter
-        self._prev_close = spx_close
-
         # Equity curve point
         self.equity_curve.append({
             'date': trading_day.isoformat(),
@@ -646,16 +646,17 @@ class BacktestEngine:
             return
 
         # Morning bias filter: block bearish DI on Up/Strong Up days
-        # Uses overnight gap (spx_open vs prev_close) to determine morning bias
-        if self.strategy.di_morning_bias_filter and direction == TradeDirection.BEARISH and self._prev_close > 0:
+        # In backtest mode, uses full-day return (spx_close vs spx_open) since
+        # the day's data is known. This matches the dashboard direction drill-down.
+        if self.strategy.di_morning_bias_filter and direction == TradeDirection.BEARISH:
             allowed, regime, move_pct = SPXIncomeStrategy.check_morning_bias_filter(
-                direction, self._prev_close, self._spx_open
+                direction, self._spx_open, self._spx_close
             )
             if not allowed:
                 self._direction_filter_skips += 1
                 logger.debug(
                     f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} DI bearish setup skipped - "
-                    f"morning bias is {regime} (overnight gap {'+' if move_pct >= 0 else ''}{move_pct:.2f}%)"
+                    f"day return is {regime} ({'+' if move_pct >= 0 else ''}{move_pct:.2f}%)"
                 )
                 return
 
@@ -1125,6 +1126,7 @@ class BacktestEngine:
             slippage_pct=round(getattr(trade, '_bt_slippage', 0) / trade.spread.credit_received * 100, 2) if trade.spread.credit_received else 0.0,
             entry_time_bucket=getattr(trade, '_bt_entry_time_bucket', ''),
             bb_agreement=getattr(trade, '_bt_bb_agreement', None),
+            daily_move_pct=round(((self._spx_close - self._spx_open) / self._spx_open) * 100, 4) if self._spx_open > 0 else None,
         )
         self.trades.append(bt_trade)
 
@@ -1177,5 +1179,6 @@ class BacktestEngine:
             slippage_pct=round(getattr(trade, '_bt_slippage', 0) / trade.spread.credit_received * 100, 2) if trade.spread.credit_received else 0.0,
             entry_time_bucket=getattr(trade, '_bt_entry_time_bucket', ''),
             bb_agreement=getattr(trade, '_bt_bb_agreement', None),
+            daily_move_pct=round(((self._spx_close - self._spx_open) / self._spx_open) * 100, 4) if self._spx_open > 0 else None,
         )
         self.trades.append(bt_trade)
