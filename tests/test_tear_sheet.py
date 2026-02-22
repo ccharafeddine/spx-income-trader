@@ -368,7 +368,7 @@ class TestTearSheetEndpoint:
         }
 
     def test_monthly_endpoint_returns_pdf(self):
-        """Monthly endpoint should return a downloadable PDF."""
+        """Monthly endpoint should save PDF and return JSON with path."""
         from dashboard.app import app
 
         fake_trades = _make_trades(5)
@@ -389,11 +389,13 @@ class TestTearSheetEndpoint:
                              '&start_year=2026&start_month=2'
                              '&end_year=2026&end_month=2&source=live')
                 assert resp.status_code == 200
-                assert resp.content_type == 'application/pdf'
-                assert resp.data[:5] == b'%PDF-'
+                data = resp.get_json()
+                assert data['success'] is True
+                assert data['filename'].endswith('.pdf')
+                assert 'path' in data
 
     def test_weekly_endpoint_returns_pdf(self):
-        """Weekly endpoint should return a downloadable PDF."""
+        """Weekly endpoint should save PDF and return JSON with path."""
         from dashboard.app import app
 
         fake_trades = _make_trades(5)
@@ -413,11 +415,12 @@ class TestTearSheetEndpoint:
                 resp = c.get('/api/export/tearsheet?period=weekly'
                              '&start=2026-02-17&end=2026-02-21&source=live')
                 assert resp.status_code == 200
-                assert resp.content_type == 'application/pdf'
-                assert resp.data[:5] == b'%PDF-'
+                data = resp.get_json()
+                assert data['success'] is True
+                assert data['filename'].endswith('.pdf')
 
     def test_custom_endpoint_returns_pdf(self):
-        """Custom endpoint should return a downloadable PDF."""
+        """Custom endpoint should save PDF and return JSON with path."""
         from dashboard.app import app
 
         fake_trades = _make_trades(5)
@@ -437,8 +440,9 @@ class TestTearSheetEndpoint:
                 resp = c.get('/api/export/tearsheet?period=custom'
                              '&start=2026-01-01&end=2026-12-31&source=live')
                 assert resp.status_code == 200
-                assert resp.content_type == 'application/pdf'
-                assert resp.data[:5] == b'%PDF-'
+                data = resp.get_json()
+                assert data['success'] is True
+                assert data['filename'].endswith('.pdf')
 
     def test_weekly_missing_dates_returns_error(self):
         """Weekly export without dates should return 400 with error message."""

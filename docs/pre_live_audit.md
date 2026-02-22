@@ -1,7 +1,7 @@
 # Pre-Live Trading Audit Report
 
 **Date:** 2026-02-17
-**Auditor:** Claude Opus 4.6 (automated code audit)
+**Auditor:** Automated code audit
 **Scope:** Full codebase review for live E*TRADE/Schwab deployment
 **Test Suite:** 433/433 passed (0 failures, 1 unrelated deprecation warning)
 

@@ -3359,7 +3359,7 @@ header::after {
               <div id="an-bb-cards" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;"></div>
               <div id="an-bb-bars" style="margin-bottom: 14px;"></div>
               <div id="an-bb-note" style="font-size: 10px; color: var(--text-dim); padding-top: 8px; border-top: 1px solid var(--border);">
-                BB filter is analytics-only (NO-Indicators per Phil Newton). It never gates DI entry.
+                BB filter is analytics-only. It never gates DI entry.
               </div>
             </div>
           </div></div>
@@ -7552,22 +7552,34 @@ async function renderAnDuration(sourceVal) {
 // ---------------------------------------------------------------
 function openTearSheetModal() {
   const now = new Date();
-  // Default monthly range: last full calendar month
-  let defMonth = now.getMonth(); // 0-indexed, so this is previous month
-  let defYear = now.getFullYear();
-  if (defMonth === 0) { defMonth = 12; defYear--; } // January -> December of prev year
-  document.getElementById('ts-start-year').value = defYear;
-  document.getElementById('ts-start-month').value = defMonth;
-  document.getElementById('ts-end-year').value = defYear;
-  document.getElementById('ts-end-month').value = defMonth;
+  let startYear, startMonth, endYear, endMonth, startDate, endDate;
 
-  // Default weekly/custom range: this week
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - now.getDay() + 1);
-  const friday = new Date(monday);
-  friday.setDate(monday.getDate() + 4);
-  document.getElementById('ts-start').value = monday.toISOString().slice(0,10);
-  document.getElementById('ts-end').value = friday.toISOString().slice(0,10);
+  // Read active data source date range from the Analytics tab display
+  const drText = (document.getElementById('an-date-range').textContent || '').trim();
+  const drMatch = drText.match(/(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})/);
+  if (drMatch) {
+    const sp = drMatch[1].split('-');
+    const ep = drMatch[2].split('-');
+    startYear = parseInt(sp[0]); startMonth = parseInt(sp[1]);
+    endYear = parseInt(ep[0]); endMonth = parseInt(ep[1]);
+    startDate = drMatch[1]; endDate = drMatch[2];
+  } else {
+    // Fallback: current month
+    startMonth = now.getMonth() + 1;
+    startYear = now.getFullYear();
+    endMonth = startMonth; endYear = startYear;
+    const mon = new Date(now); mon.setDate(now.getDate() - now.getDay() + 1);
+    const fri = new Date(mon); fri.setDate(mon.getDate() + 4);
+    startDate = mon.toISOString().slice(0,10);
+    endDate = fri.toISOString().slice(0,10);
+  }
+
+  document.getElementById('ts-start-year').value = startYear;
+  document.getElementById('ts-start-month').value = startMonth;
+  document.getElementById('ts-end-year').value = endYear;
+  document.getElementById('ts-end-month').value = endMonth;
+  document.getElementById('ts-start').value = startDate;
+  document.getElementById('ts-end').value = endDate;
 
   document.getElementById('ts-error').style.display = 'none';
   document.getElementById('ts-generate-btn').textContent = 'Generate PDF';
@@ -7652,29 +7664,12 @@ async function generateTearSheet() {
       } catch (_) {}
       throw new Error(errMsg);
     }
-    const contentType = res.headers.get('content-type') || '';
-    if (!contentType.includes('application/pdf')) {
-      throw new Error('Server returned unexpected content type: ' + contentType);
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.error || 'PDF generation failed');
     }
-    const blob = await res.blob();
-    if (blob.size === 0) {
-      throw new Error('Server returned empty PDF');
-    }
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    const cd = res.headers.get('content-disposition') || '';
-    const match = cd.match(/filename[*]?=(?:UTF-8'')?["']?([^"';\s]+)/);
-    a.download = match ? match[1] : 'tearsheet.pdf';
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    // Delay cleanup so the download can start
-    setTimeout(function() {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-    }, 5000);
     closeTearSheetModal();
+    showToast('PDF saved to Downloads: ' + data.filename, 'success');
   } catch (e) {
     errEl.textContent = e.message || 'An unexpected error occurred during PDF generation.';
     errEl.style.display = 'block';

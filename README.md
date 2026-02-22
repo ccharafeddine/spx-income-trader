@@ -11,7 +11,7 @@ Automated SPX 0DTE options income trading system. Runs four parallel credit spre
 1. **Scan** -- Monitors 30-minute SPX bars for pulse bar momentum patterns (price closing in the top or bottom 10% of the bar's range)
 2. **Confirm** -- Waits for price to break the pulse bar's high or low, confirming directional momentum
 3. **Execute** -- Enters an ATM credit spread ($5 wide, same-day expiration) in the confirmed direction. Partial fills are accepted and tracked at actual quantity; zero fills are rejected.
-4. **Manage** -- Targets 80% of max profit. At 1:00 PM ET, applies trend-based management rules to decide hold vs. close
+4. **Manage** -- Targets 80% of max profit. For PDT accounts (under $25k), applies 1 PM ET trend-based management rules to decide hold vs. close
 5. **Repeat** -- Resets daily. No overnight exposure on 0DTE positions
 
 The entire pipeline runs autonomously. The bot handles strike selection, order sizing, execution, monitoring, and exit management across all strategies simultaneously.
@@ -21,7 +21,7 @@ The entire pipeline runs autonomously. The bot handles strike selection, order s
 ## Strategies
 
 ### Daily Income (DI) -- Core 0DTE
-The primary strategy. Detects 30-minute pulse bars during the 9:30-11:30 ET setup window. A pulse bar is one where price closes in the extreme top or bottom 10% of the bar's range, signaling strong directional momentum. After detection, the bot waits for a breakout confirmation (price breaking above the pulse bar high for bullish, below the low for bearish), then enters an ATM credit spread with same-day expiration. Exits at 80% of max profit, via 1 PM management rules, or at expiration.
+The primary strategy. Detects 30-minute pulse bars during the 9:30-11:30 ET setup window. A pulse bar is one where price closes in the extreme top or bottom 10% of the bar's range, signaling strong directional momentum. After detection, the bot waits for a breakout confirmation (price breaking above the pulse bar high for bullish, below the low for bearish), then enters an ATM credit spread with same-day expiration. No indicators gate entry. Exits at 80% of max profit, via 1 PM management rules (PDT accounts only), or at expiration. Bollinger Band agreement is tracked as analytics-only metadata on each trade.
 
 ### Tag 'n Turn (TNT) -- Swing
 Bollinger Band mean reversion strategy with 3-7 DTE. Uses a state machine: detects when price tags a Bollinger Band, waits for a pulse bar confirming reversal, then enters on breakout. Targets the opposite Bollinger Band. Holds up to 7 days. Runs in a separate swing slot alongside the 0DTE strategies.
@@ -55,7 +55,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Partial fill handling: accepts partial fills at actual quantity, rejects zero fills, sends notification on partial fills
 - Credit quality gates reject low-premium setups
 - Max position limits enforced across all strategies (2 total: 1 0DTE + 1 swing)
-- PDT rule compliance: tracks day trades in a rolling 5-business-day window, blocks entries when slots exhausted (accounts under $25k)
+- PDT rule compliance: tracks day trades in a rolling 5-business-day window, blocks entries when slots exhausted (accounts under $25k). 1 PM trend-based management activates only in PDT mode.
 - VIX regime awareness (low / normal / elevated / high / extreme)
 - Win/loss streak tracking with frozen previous-streak display
 
@@ -92,7 +92,10 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 
 ### Analytics
 - Data source selector: view analytics for live trades or any historical backtest run
+- Collapsible panels with Expand All / Collapse All toolbar (state persisted in localStorage)
+- Disclaimer banners for simulated (backtest) and dry-run data sources
 - Sharpe ratio, Sortino ratio, max drawdown, profit factor, expectancy
+- Large dollar values auto-abbreviated ($10.2K, $1.5M, $2.3B) in summary cards
 - Equity curve and drawdown series charts
 - Monthly returns heatmap with yearly totals
 - P&L distribution histogram
@@ -100,6 +103,15 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Per-strategy trade breakdown (trades, wins, win rate, total P&L)
 - Per-direction breakdown (bullish vs. bearish)
 - Rolling win rate chart (7-day, 30-day, 90-day moving averages)
+- Risk-adjusted metrics panel: Value at Risk (VaR), CVaR, tail ratio, win/loss streaks
+- P&L attribution panel: decomposes trade P&L into theta, delta, vega, and residual components
+- Market regime analysis: VIX regime performance, market direction performance, VIX transitions, market neutrality (correlation/beta to SPX)
+- Direction drill-down: cross-tabulates market day type x trade direction to investigate regime-specific weaknesses (e.g., the "Up day problem")
+- BB agreement analysis: compares win rates and P&L for trades where the Bollinger Band filter agreed vs. disagreed with direction
+- Trade duration analysis: winner vs. loser duration comparison, duration distribution chart, win rate by duration bucket
+- Execution quality: slippage summary, slippage by time bucket and VIX regime, exit reason breakdown with drill-down
+- Portfolio Greeks: real-time delta, gamma, theta, vega exposure via Black-Scholes calculator
+- Strategy tear sheet PDF export with monthly, weekly, and custom date range options
 - Auto-loads completed backtest results without requiring app restart
 
 ### Backtesting
@@ -169,11 +181,11 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 
 ![Trade Detail](screenshots/trade_detail.png)
 
-**Backtest** -- Parameter configuration, strategy selection, previous runs with bulk delete, equity curve, drawdown chart, monthly returns table, win rate by day of week, and backtest assumptions panel.
+**Backtest** -- Parameter configuration, strategy selection, previous runs with bulk delete, equity curve, drawdown chart, monthly returns table, win rate by day of week, backtest assumptions panel, and disclaimer banner for simulated data.
 
 ![Backtest](screenshots/backtest_example.png)
 
-**Analytics** -- Data source selector (live or backtest), equity curve, drawdown, monthly returns heatmap, P&L distribution, win rate by day/time/VIX regime. Works with both live trades and historical backtest results.
+**Analytics** -- Data source selector (live or backtest), collapsible panels covering equity curve, drawdown, regime analysis with direction drilldown, BB agreement, trade duration, execution quality, P&L attribution, risk metrics, and strategy tear sheet export. Disclaimer banners for simulated/dry-run sources.
 
 ![Analytics](screenshots/backtest_analytics.png)
 
@@ -212,7 +224,7 @@ Broker Interface
     |--- Dry-Run Broker (real data, simulated fills via Black-Scholes)
     |
     v
-Position Manager (P&L tracking, exit management, partial fill tracking, 1pm check)
+Position Manager (P&L tracking, exit management, partial fill tracking, PDT-conditional 1pm)
     |
     +---> SQLite Database (mode-specific: dry-run / live)
     +---> Flask Dashboard (Overview, Journal, Analytics, Backtest, Logs)
@@ -238,7 +250,7 @@ All settings are configured via `config/strategy_params.yaml` and the dashboard 
 - Drawdown limits (daily, weekly, monthly)
 - Setup window timing (morning start/end, afternoon window)
 - Bollinger Band filter parameters
-- PDT protection settings
+- PDT protection settings (including 1pm management mode)
 - ORB range filter and confirmation delay
 - B&B gap invalidation threshold
 
@@ -363,6 +375,11 @@ src/
         schwab_broker.py     # Schwab live trading (schwab-py)
         schwab_auth.py       # Schwab OAuth2 token management
         dry_run_broker.py    # Simulated execution with real data
+    analytics/
+        regime_analysis.py   # VIX/direction regime performance and drilldown
+        pnl_attribution.py   # Theta/delta/vega P&L decomposition
+        greeks.py            # Black-Scholes Greeks calculator
+        tear_sheet.py        # PDF strategy tear sheet generator
     backtest/
         engine.py            # Multi-strategy backtest engine
         runner.py            # CLI backtest runner
@@ -396,7 +413,7 @@ config/
 
 database/
     db_manager.py            # SQLite operations (WAL mode, migrations)
-    schema.sql               # Database schema (53 columns)
+    schema.sql               # Database schema (54 columns)
     demo_recordings/         # Pre-built demo JSONL files
 
 scripts/
@@ -418,7 +435,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask)
 
 ## Testing
 
-610 tests covering:
+889 tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
 - Position management (sizing, P&L calculation, exit triggers, partial fill tracking)
@@ -435,6 +452,9 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask)
 - Schwab and E*TRADE broker integration
 - Slippage tracking and database migrations
 - Database separation (dry-run vs live mode)
+- PDT-conditional 1pm management integration
+- Analytics computations (BB agreement, trade duration, direction drilldown, P&L attribution, regime analysis, execution quality)
+- Backtest engine PDT mode and BB agreement tracking
 
 ```bash
 python -m pytest tests/ -v
@@ -473,6 +493,9 @@ The dashboard Backtest tab provides:
 - Previous runs list with bulk select and delete
 - Completed backtests auto-appear in the Analytics tab dropdown
 - VIX-aware slippage: base $0.02/leg, elevated to $0.04/leg in high-VIX regimes
+- PDT-aware simulation: 1pm management activates when initial capital < $25k
+- BB agreement tracked as analytics metadata on every backtest trade
+- Disclaimer banner reminds that backtest results are simulated
 - NYSE half-day calendar: early close days handled automatically
 
 SPX and VIX data are downloaded automatically from Yahoo Finance. Pass `--csv` and `--vix-csv` to use existing data files.

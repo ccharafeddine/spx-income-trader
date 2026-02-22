@@ -4305,14 +4305,12 @@ def api_analytics_duration():
 def api_export_tearsheet():
     """Generate and download a strategy tear sheet PDF."""
     from src.analytics.tear_sheet import TearSheetGenerator
-    from src.analytics.greeks import GreeksCalculator
-    from src.analytics.pnl_attribution import PnLAttributor
 
     period = request.args.get('period', 'monthly')
     source = request.args.get('source', 'live')
 
     try:
-        # Load trades
+        # Load ALL trades from the data source (filtering happens inside generator)
         if source.startswith('backtest:') or source == 'backtest':
             run_id = request.args.get('run_id')
             if source.startswith('backtest:'):
@@ -4327,11 +4325,8 @@ def api_export_tearsheet():
                 return jsonify({'success': False, 'error': 'Run not found'}), 404
             report = json.loads(row[0])
             trades = report.get('_trades', report.get('trades', []))
-            analytics = report
-            risk_metrics = _analytics_risk_metrics(
-                report.get('equity_curve', []),
-                report.get('core', {}).get('calmar_ratio', 0))
         else:
+            report = None
             db_path = DATABASE_PATH
             conn = sqlite3.connect(db_path, timeout=10)
             conn.row_factory = sqlite3.Row
@@ -4340,22 +4335,10 @@ def api_export_tearsheet():
             spx_price = spx_quote.get('price')
             _, trades = classify_trades(conn, spx_price)
             conn.close()
-            starting_capital = _get_starting_capital()
-            analytics = _analytics_compute(trades, starting_capital)
-            risk_metrics = _analytics_risk_metrics(
-                analytics.get('equity_curve', []),
-                analytics.get('core', {}).get('calmar_ratio', 0))
 
-        # Attribution
-        attributor = PnLAttributor(GreeksCalculator())
-        attribution = attributor.attribute_batch(trades)
-
-        # Execution
-        execution = _analytics_execution(trades)
-
-        # Determine date range
+        # Generator handles filtering, analytics recomputation, and PDF building
         generator = TearSheetGenerator()
-        data_source = source  # Pass through for PDF header labeling
+        data_source = source
 
         if period == 'monthly':
             year = int(request.args.get('start_year') or request.args.get('year', datetime.now().year))
@@ -4369,9 +4352,9 @@ def api_export_tearsheet():
                 end_year = None
                 end_month = None
             pdf_bytes = generator.generate_monthly(
-                year, month, trades, analytics, risk_metrics,
-                attribution, execution, data_source=data_source,
-                end_year=end_year, end_month=end_month)
+                year, month, trades, None, None,
+                None, None, data_source=data_source,
+                end_year=end_year, end_month=end_month, report=report)
             if end_year and end_month:
                 filename = f'tearsheet_{year}_{month:02d}_to_{end_year}_{end_month:02d}.pdf'
             else:
@@ -4385,8 +4368,8 @@ def api_export_tearsheet():
             start_date = date.fromisoformat(start_str)
             end_date = date.fromisoformat(end_str)
             pdf_bytes = generator.generate_weekly(
-                start_date, end_date, trades, analytics, risk_metrics,
-                attribution, execution, data_source=data_source)
+                start_date, end_date, trades, None, None,
+                None, None, data_source=data_source, report=report)
             filename = f'tearsheet_{start_str}_{end_str}.pdf'
 
         else:  # custom
@@ -4397,17 +4380,22 @@ def api_export_tearsheet():
             start_date = date.fromisoformat(start_str)
             end_date = date.fromisoformat(end_str)
             pdf_bytes = generator.generate_custom(
-                start_date, end_date, trades, analytics, risk_metrics,
-                attribution, execution, data_source=data_source)
+                start_date, end_date, trades, None, None,
+                None, None, data_source=data_source, report=report)
             filename = f'tearsheet_{start_str}_{end_str}.pdf'
 
-        from flask import send_file
-        return send_file(
-            io.BytesIO(pdf_bytes),
-            mimetype='application/pdf',
-            as_attachment=True,
-            download_name=filename,
-        )
+        # Save PDF to user's Downloads folder for reliable delivery
+        # (PyWebView's embedded browser does not support blob URL downloads)
+        downloads_dir = Path.home() / 'Downloads'
+        downloads_dir.mkdir(parents=True, exist_ok=True)
+        save_path = downloads_dir / filename
+        save_path.write_bytes(pdf_bytes)
+
+        return jsonify({
+            'success': True,
+            'path': str(save_path),
+            'filename': filename,
+        })
 
     except Exception as e:
         logger.error(f"Tear sheet generation error: {e}", exc_info=True)

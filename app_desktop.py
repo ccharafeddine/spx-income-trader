@@ -202,6 +202,7 @@ class DesktopApp:
         # Expose bot's in-memory bars so /api/today can use them directly
         # (more reliable than log file parsing for the current session)
         app._desktop_get_bot_bars = desktop.get_bot_bars
+        app._desktop_get_bot_bars_5min = desktop.get_bot_bars_5min
 
         @app.route('/api/bot/start', methods=['POST'])
         def api_bot_start():
@@ -594,6 +595,33 @@ class DesktopApp:
                 if bb is None:
                     return None
                 bars = bb.get_bars()
+                result = []
+                for b in bars:
+                    result.append({
+                        'time': b.timestamp.strftime('%H:%M'),
+                        'open': b.open,
+                        'high': b.high,
+                        'low': b.low,
+                        'close': b.close,
+                    })
+                return result
+            except Exception:
+                return None
+
+    def get_bot_bars_5min(self):
+        """Return completed 5-min bars from the bot's in-memory aggregator.
+
+        Returns a list of dicts with time/open/high/low/close, or None
+        if the bot is not running.
+        """
+        with self._bot_lock:
+            if self._bot is None:
+                return None
+            try:
+                agg = getattr(self._bot, 'bar_aggregator_5min', None)
+                if agg is None:
+                    return None
+                bars = agg.get_bars()
                 result = []
                 for b in bars:
                     result.append({

@@ -122,7 +122,7 @@ monitoring:
   check_interval: 60
 
 filters:
-  # BB filter is analytics-only for DI strategy (NO-Indicators per Phil Newton)
+  # BB filter is analytics-only for DI strategy (no indicators on DI entries)
   # These settings are used by TNT strategy and for bb_agreement tracking
   bollinger_enabled: true
   bollinger_period: 50
