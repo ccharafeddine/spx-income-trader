@@ -44,6 +44,7 @@ from src.core.orb_strategy import ORBStrategy
 from src.core.portfolio_manager import PortfolioManager, StrategyType
 from src.core.pdt_tracker import PDTTracker
 from src.data.market_data import MarketDataFeed
+from src.data.price_feed import create_price_feed
 from database.db_manager import DatabaseManager
 from src.utils.notifications import NotificationManager
 from src.utils.logging import setup_logging, log_trade_event
@@ -138,7 +139,11 @@ class TradingBot:
             extreme_move_pct=self.extreme_move_override_pct,
         )
         self.market_data = MarketDataFeed(broker)
-        
+        self.price_feed = create_price_feed(
+            trading_mode='dry-run' if dry_run else 'live',
+            broker=broker,
+        )
+
         # State
         self.running = False
         self._shutdown_called = False
@@ -625,10 +630,27 @@ class TradingBot:
                     if self.bollinger.has_sufficient_data:
                         bias = self.bollinger.current_bias or 'none'
                         bb_str = f" | BB bias={bias.upper()}"
-                    logger.info(f"[Heartbeat] Loop #{loop_count} at {current_time.strftime('%H:%M:%S')} ET{setup_str}{bb_str}")
+                    pf_str = ""
+                    if not self.price_feed.is_healthy():
+                        pf_health = self.price_feed.get_health_status()
+                        pf_str = (
+                            f" | PRICE FEED UNHEALTHY "
+                            f"({pf_health['source']}, "
+                            f"{pf_health['consecutive_failures']} failures)"
+                        )
+                    logger.info(f"[Heartbeat] Loop #{loop_count} at {current_time.strftime('%H:%M:%S')} ET{setup_str}{bb_str}{pf_str}")
                     last_heartbeat = current_time
                     metrics.bot_uptime_seconds.set(
                         time_module.monotonic() - self._start_time)
+
+                    # Persist price feed health for dashboard
+                    try:
+                        pf_state_path = Path(BASE_DIR) / 'database' / 'price_feed_state.json'
+                        pf_state_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(pf_state_path, 'w') as _pf:
+                            json.dump(self.price_feed.get_health_status(), _pf)
+                    except Exception:
+                        pass
                     if self.recorder:
                         self.recorder.record('status_update',
                             loop_count=loop_count, spx_price=self._current_spx_price,
@@ -666,8 +688,8 @@ class TradingBot:
                             and self.current_trading_date == current_time.date()
                             and current_time.time() >= time(16, 0)):
                         try:
-                            spx_close = self.broker.get_current_price("SPX")
-                            if spx_close > 0:
+                            spx_close = self.price_feed.get_latest_price()
+                            if spx_close and spx_close > 0:
                                 self.bnb_strategy.on_day_end(spx_close)
                                 self._bnb_day_end_called = True
                                 logger.info(f"B&B on_day_end: SPX close ${spx_close:,.2f}")
@@ -1194,11 +1216,12 @@ class TradingBot:
         ORB, B&B) receive data even outside the daily income setup window.
         """
         try:
-            # Get current SPX price
-            self._current_spx_price = self.broker.get_current_price("SPX")
-            if self._current_spx_price == 0:
+            # Get current SPX price via price feed abstraction
+            price = self.price_feed.get_latest_price()
+            if price is None or price == 0:
                 logger.warning("Failed to get SPX price")
                 return
+            self._current_spx_price = price
 
             current_price = self._current_spx_price
 
@@ -1229,16 +1252,18 @@ class TradingBot:
 
                 # Cache day_open and prev_close for trade context
                 try:
-                    md = getattr(self.broker, 'market_data', None)
-                    if md is None:
+                    bar_data = self.price_feed.get_latest_bar_data()
+                    if bar_data:
+                        day_open = bar_data.get('open', current_price)
+                        prev_close = bar_data.get('previous_close', 0)
+                    else:
+                        # Broker feeds don't return OHLC; fall back to Yahoo
                         from src.data.yahoo_finance import YahooFinanceProvider
-                        md = YahooFinanceProvider()
-                    spx_quote = md.get_spx_quote()
-                    if spx_quote:
-                        day_open = spx_quote.get('open', current_price)
-                        prev_close = spx_quote.get('previous_close', 0)
-                        if day_open and day_open > 0:
-                            self.position_manager.set_daily_cache(day_open, prev_close)
+                        spx_quote = YahooFinanceProvider().get_spx_quote()
+                        day_open = spx_quote.get('open', current_price) if spx_quote else current_price
+                        prev_close = spx_quote.get('previous_close', 0) if spx_quote else 0
+                    if day_open and day_open > 0:
+                        self.position_manager.set_daily_cache(day_open, prev_close)
                 except Exception as e:
                     logger.warning(f"Failed to cache daily open/prev_close: {e}")
 

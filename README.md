@@ -202,7 +202,10 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 ## Architecture
 
 ```
-Market Data (Yahoo Finance)
+Market Data
+    |--- Yahoo Finance (backtest historical data, dry-run real-time)
+    |--- E*TRADE Quotes API (live mode, 10s polling)
+    |--- Schwab Quotes API (live mode, 10s polling)
     |
     v
 BarBuilder (30-min aggregation)
@@ -366,6 +369,7 @@ src/
     data/
         yahoo_finance.py     # Real-time SPX/VIX quotes
         market_data.py       # Market data abstraction
+        price_feed.py        # Price feed abstraction (Yahoo/E*TRADE/Schwab)
         vix_provider.py      # VIX data with multi-source fallback
     brokers/
         base.py              # Abstract broker interface

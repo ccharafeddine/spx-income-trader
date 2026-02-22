@@ -1490,6 +1490,16 @@ def api_status():
     # Active broker name for header badge
     active_broker = STRATEGY_PARAMS.get('broker', {}).get('active', 'dry_run')
 
+    # Price feed health (written by bot heartbeat)
+    price_feed_health = None
+    try:
+        pf_path = DATA_DIR / 'database' / 'price_feed_state.json'
+        if pf_path.exists():
+            with open(pf_path, 'r') as _pf:
+                price_feed_health = json.load(_pf)
+    except Exception:
+        pass
+
     return jsonify({
         'version': APP_VERSION,
         'bot': bot,
@@ -1511,6 +1521,7 @@ def api_status():
         'orb': orb_status,
         'portfolio': portfolio_status,
         'etrade_token': etrade_token,
+        'price_feed': price_feed_health,
     })
 
 

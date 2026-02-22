@@ -99,6 +99,16 @@ def _make_mock_bot(dry_run=True, daily_pnl=0.0):
     bot.db.get_daily_counts_by_strategy.return_value = {}
     bot.db.get_daily_summary.return_value = {'trades_count': 0, 'realized_pnl': 0.0}
 
+    # Price feed
+    bot.price_feed = MagicMock()
+    bot.price_feed.get_latest_price.return_value = 6000.0
+    bot.price_feed.get_latest_bar_data.return_value = None
+    bot.price_feed.is_healthy.return_value = True
+    bot.price_feed.get_health_status.return_value = {
+        'source': 'yahoo', 'healthy': True,
+        'last_update_secs_ago': 1.0, 'consecutive_failures': 0,
+    }
+
     # Signal log
     bot._signal_log_path = Path(__file__).parent / 'test_signals.json'
     bot._log_signal = MagicMock()
