@@ -289,6 +289,8 @@ class BacktestEngine:
 
         # SPX open for morning bias filter
         self._spx_open: float = 0.0
+        self._prev_close: float = 0.0  # Prior day close for overnight gap
+        self._direction_filter_skips: int = 0
 
         # Daily counters
         self._daily_pnl: float = 0.0
@@ -463,6 +465,7 @@ class BacktestEngine:
             'slippage_detail': self._slippage_detail,
             'half_day_calendar': True,
             'flagged_credit_count': self._flagged_credit_count,
+            'direction_filter_skips': self._direction_filter_skips,
         }
 
     def _process_day(self, trading_day: date):
@@ -622,6 +625,9 @@ class BacktestEngine:
         )
         self.daily_results.append(daily)
 
+        # Store prev close for next day's morning bias filter
+        self._prev_close = spx_close
+
         # Equity curve point
         self.equity_curve.append({
             'date': trading_day.isoformat(),
@@ -640,14 +646,16 @@ class BacktestEngine:
             return
 
         # Morning bias filter: block bearish DI on Up/Strong Up days
-        if self.strategy.di_morning_bias_filter and direction == TradeDirection.BEARISH:
+        # Uses overnight gap (spx_open vs prev_close) to determine morning bias
+        if self.strategy.di_morning_bias_filter and direction == TradeDirection.BEARISH and self._prev_close > 0:
             allowed, regime, move_pct = SPXIncomeStrategy.check_morning_bias_filter(
-                direction, self._spx_open, bar.close
+                direction, self._prev_close, self._spx_open
             )
             if not allowed:
+                self._direction_filter_skips += 1
                 logger.debug(
-                    f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} DI bearish setup skipped — "
-                    f"morning bias is {regime} (SPX {'+' if move_pct >= 0 else ''}{move_pct:.2f}%)"
+                    f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} DI bearish setup skipped - "
+                    f"morning bias is {regime} (overnight gap {'+' if move_pct >= 0 else ''}{move_pct:.2f}%)"
                 )
                 return
 

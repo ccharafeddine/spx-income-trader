@@ -122,3 +122,169 @@ class TestMorningBiasConfig:
         }):
             strategy = SPXIncomeStrategy()
             assert strategy.di_morning_bias_filter is False
+
+
+# -------------------------------------------------------------------
+# Backtest engine integration tests
+# -------------------------------------------------------------------
+
+from datetime import datetime, date
+import pytz
+from src.backtest.engine import BacktestEngine
+from src.models.bar import Bar
+
+ET = pytz.timezone('America/New_York')
+
+FIXTURE_CSV = str(Path(__file__).parent / 'fixtures' / 'backtest_sample.csv')
+
+
+def _make_engine(di_morning_bias_filter=True):
+    """Create a minimal BacktestEngine for filter testing."""
+    from src.backtest.data_loader import load_bars_from_csv
+    bars_df = load_bars_from_csv(FIXTURE_CSV)
+    engine = BacktestEngine(
+        bars_df=bars_df,
+        vix_daily={},
+        initial_capital=50000,
+        pulse_threshold=10.0,
+        spread_width=5.0,
+    )
+    engine.strategy.di_morning_bias_filter = di_morning_bias_filter
+    return engine
+
+
+def _make_bearish_pulse_bar(dt):
+    """Create a bar classified as BEARISH_PULSE by the pulse detector.
+
+    Bearish pulse: close < open, close at bottom of range (<=10%).
+    """
+    return Bar(
+        timestamp=dt,
+        open=5010.0,
+        high=5012.0,
+        low=4990.0,
+        close=4991.0,  # 4.5% of range
+    )
+
+
+def _make_bullish_pulse_bar(dt):
+    """Create a bar classified as BULLISH_PULSE by the pulse detector.
+
+    Bullish pulse: close > open, close at top of range (>=90%).
+    """
+    return Bar(
+        timestamp=dt,
+        open=4990.0,
+        high=5012.0,
+        low=4990.0,
+        close=5010.0,  # 90.9% of range
+    )
+
+
+class TestMorningBiasFilterBacktest:
+    """Test that morning bias filter uses overnight gap in backtest engine."""
+
+    def test_bearish_skipped_on_up_day(self):
+        """Bearish DI pulse skipped when overnight gap is Up (>0.25%)."""
+        engine = _make_engine(di_morning_bias_filter=True)
+        engine._prev_close = 5000.0
+        engine._spx_open = 5020.0  # +0.4% overnight gap (Up)
+
+        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
+        bar = _make_bearish_pulse_bar(bar_dt)
+        engine._check_for_setup(bar, bar_dt, vix=15.0)
+
+        assert engine._pending_setup is None
+        assert engine._direction_filter_skips == 1
+
+    def test_bullish_proceeds_on_up_day(self):
+        """Bullish DI pulse proceeds even when overnight gap is Up."""
+        engine = _make_engine(di_morning_bias_filter=True)
+        engine._prev_close = 5000.0
+        engine._spx_open = 5020.0  # +0.4% overnight gap (Up)
+
+        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
+        bar = _make_bullish_pulse_bar(bar_dt)
+        engine._check_for_setup(bar, bar_dt, vix=15.0)
+
+        assert engine._pending_setup is not None
+        assert engine._pending_setup['direction'] == TradeDirection.BULLISH
+        assert engine._direction_filter_skips == 0
+
+    def test_filter_disabled_allows_bearish_on_up_day(self):
+        """With filter disabled, bearish DI pulse proceeds on Up days."""
+        engine = _make_engine(di_morning_bias_filter=False)
+        engine._prev_close = 5000.0
+        engine._spx_open = 5020.0  # +0.4% overnight gap (Up)
+
+        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
+        bar = _make_bearish_pulse_bar(bar_dt)
+        engine._check_for_setup(bar, bar_dt, vix=15.0)
+
+        assert engine._pending_setup is not None
+        assert engine._pending_setup['direction'] == TradeDirection.BEARISH
+        assert engine._direction_filter_skips == 0
+
+    def test_bearish_allowed_on_flat_day(self):
+        """Bearish DI pulse proceeds when overnight gap is Flat."""
+        engine = _make_engine(di_morning_bias_filter=True)
+        engine._prev_close = 5000.0
+        engine._spx_open = 5005.0  # +0.1% overnight gap (Flat)
+
+        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
+        bar = _make_bearish_pulse_bar(bar_dt)
+        engine._check_for_setup(bar, bar_dt, vix=15.0)
+
+        assert engine._pending_setup is not None
+        assert engine._direction_filter_skips == 0
+
+    def test_bearish_skipped_on_strong_up_day(self):
+        """Bearish DI pulse skipped on Strong Up (>1%) overnight gap."""
+        engine = _make_engine(di_morning_bias_filter=True)
+        engine._prev_close = 5000.0
+        engine._spx_open = 5060.0  # +1.2% overnight gap (Strong Up)
+
+        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
+        bar = _make_bearish_pulse_bar(bar_dt)
+        engine._check_for_setup(bar, bar_dt, vix=15.0)
+
+        assert engine._pending_setup is None
+        assert engine._direction_filter_skips == 1
+
+    def test_no_prev_close_skips_filter(self):
+        """First trading day (no prev_close) should bypass the filter."""
+        engine = _make_engine(di_morning_bias_filter=True)
+        engine._prev_close = 0.0  # default, no prior day
+        engine._spx_open = 5020.0
+
+        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
+        bar = _make_bearish_pulse_bar(bar_dt)
+        engine._check_for_setup(bar, bar_dt, vix=15.0)
+
+        assert engine._pending_setup is not None
+        assert engine._direction_filter_skips == 0
+
+    def test_direction_filter_skips_in_report(self):
+        """Backtest report should include direction_filter_skips count."""
+        from src.backtest.data_loader import load_bars_from_csv
+        bars_df = load_bars_from_csv(FIXTURE_CSV)
+        engine = BacktestEngine(
+            bars_df=bars_df,
+            vix_daily={},
+            initial_capital=50000,
+        )
+        results = engine.run()
+        assert 'direction_filter_skips' in results
+
+    def test_prev_close_tracked_across_days(self):
+        """Engine should update _prev_close at end of each trading day."""
+        from src.backtest.data_loader import load_bars_from_csv
+        bars_df = load_bars_from_csv(FIXTURE_CSV)
+        engine = BacktestEngine(
+            bars_df=bars_df,
+            vix_daily={},
+            initial_capital=50000,
+        )
+        assert engine._prev_close == 0.0
+        engine.run()
+        assert engine._prev_close > 0.0
