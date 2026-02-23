@@ -43,6 +43,7 @@ from src.core.bnb_strategy import BnBStrategy
 from src.core.orb_strategy import ORBStrategy
 from src.core.portfolio_manager import PortfolioManager, StrategyType
 from src.core.pdt_tracker import PDTTracker
+from src.core.reconciler import TradeReconciler
 from src.data.market_data import MarketDataFeed
 from src.data.price_feed import create_price_feed
 from database.db_manager import DatabaseManager
@@ -184,6 +185,7 @@ class TradingBot:
         self._journal_signals_evaluated = 0
         self._journal_trades_entered = 0
         self._journal_finalized = False
+        self._reconciliation_done_today = False
 
         # Daily loss limit is enforced solely by PortfolioManager.daily_realized_pnl
         # to prevent dual-tracker drift. No separate TradingBot.daily_pnl.
@@ -596,6 +598,7 @@ class TradingBot:
                     self._journal_signals_evaluated = 0
                     self._journal_trades_entered = 0
                     self._journal_finalized = False
+                    self._reconciliation_done_today = False
 
                     # Reset parallel strategies for new day
                     self._bnb_day_end_called = False
@@ -657,7 +660,7 @@ class TradingBot:
                             daily_pnl=self.portfolio.daily_realized_pnl,
                             bars_built=self._journal_bars_built,
                             pulse_bars=self._journal_pulse_bars,
-                            positions_count=len(self.position_manager.get_open_positions()))
+                            positions_count=len(self.position_manager.get_open_trades()))
 
                 # Check for dashboard settings changes
                 settings_changed_file = Path(BASE_DIR) / 'database' / '.settings_changed'
@@ -669,6 +672,15 @@ class TradingBot:
                             logger.info("Settings changed: notification config reloaded")
                     except OSError:
                         pass
+
+                # Check for on-demand reconciliation request
+                recon_trigger = Path(DATABASE_PATH).parent / '.reconcile_requested'
+                if recon_trigger.exists() and not self.dry_run:
+                    try:
+                        recon_trigger.unlink()
+                    except OSError:
+                        pass
+                    self._run_pnl_reconciliation()
 
                 # Check if market is open -- record market_open/market_close transitions
                 market_open_now = self._is_market_open(current_time)
@@ -702,6 +714,10 @@ class TradingBot:
                             and current_time.time() >= time(16, 0)):
                         self._finalize_daily_journal()
 
+                    # Run P&L reconciliation once after market close (live mode only)
+                    if not self.dry_run and not self._reconciliation_done_today:
+                        self._run_pnl_reconciliation()
+
                     logger.info(f"Market closed ({current_time.strftime('%a %H:%M')} ET). Next check in 60s...")
                     self._interruptible_sleep(60)
                     consecutive_errors = 0  # Reset error counter
@@ -714,7 +730,7 @@ class TradingBot:
 
                 # Record position updates for demo replay
                 if self.recorder:
-                    open_positions = self.position_manager.get_open_positions()
+                    open_positions = self.position_manager.get_open_trades()
                     if open_positions:
                         pos_data = []
                         for p in open_positions:
@@ -1123,6 +1139,36 @@ class TradingBot:
         except Exception as e:
             logger.warning(f"Failed to save daily journal: {e}")
 
+    def _run_pnl_reconciliation(self):
+        """Run P&L reconciliation against broker and write result to state file."""
+        try:
+            reconciler = TradeReconciler(self.broker, self.db)
+            result = reconciler.reconcile(self.current_trading_date)
+
+            # Write state file for dashboard
+            recon_path = Path(DATABASE_PATH).parent / 'reconciliation_state.json'
+            recon_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(recon_path, 'w') as f:
+                json.dump(result, f, indent=2)
+
+            n_disc = len(result['discrepancies'])
+            logger.info(
+                f"Reconciliation complete: {result['matched']} matched, "
+                f"{n_disc} discrepancies, DB P&L ${result['total_db_pnl']:+.2f}"
+            )
+
+            if n_disc > 0 and self.notifier:
+                summary_lines = [f"{d['field']}: {d['status']}" for d in result['discrepancies'][:5]]
+                self.notifier.send_alert(
+                    f"P&L Reconciliation: {n_disc} discrepancy(ies) found",
+                    '\n'.join(summary_lines),
+                )
+
+            self._reconciliation_done_today = True
+
+        except Exception as e:
+            logger.warning(f"Reconciliation failed: {e}")
+
     def _build_no_trade_summary(self, spx_open, spx_close, spx_change_pct, vix_level, vix_regime):
         """Build a human-readable summary of why no trades were taken."""
         parts = []
@@ -1174,7 +1220,7 @@ class TradingBot:
             metrics.trade_pnl_dollars.observe(pnl)
             metrics.daily_pnl_dollars.set(self.portfolio.daily_realized_pnl)
             metrics.open_positions_count.set(
-                len(self.position_manager.get_open_positions()))
+                len(self.position_manager.get_open_trades()))
             log_trade_event('trade_exited',
                 trade_id=closed['id'], pnl=pnl,
                 pnl_pct=closed.get('pnl_pct', 0),
@@ -1721,7 +1767,7 @@ class TradingBot:
                 self.tnt_trades_today += 1
 
             metrics.open_positions_count.set(
-                len(self.position_manager.get_open_positions()))
+                len(self.position_manager.get_open_trades()))
             log_trade_event('trade_entered',
                 trade_id=trade.id, strategy=strategy_name,
                 direction=spread.direction.value,
@@ -2101,7 +2147,7 @@ class TradingBot:
                 logger.info(f"Trade executed: {trade.id}")
                 self._journal_trades_entered += 1
                 metrics.open_positions_count.set(
-                    len(self.position_manager.get_open_positions()))
+                    len(self.position_manager.get_open_trades()))
                 log_trade_event('trade_entered',
                     trade_id=trade.id, strategy='daily_income',
                     direction=spread.direction.value,
