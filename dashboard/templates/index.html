@@ -1610,33 +1610,73 @@ header::after {
 .risk-detail .resume { color: var(--amber); }
 
 /* Session Recording Panel */
-.rec-panel { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
-.rec-title { font-size: 11px; font-weight: bold; color: var(--text-dim); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
-.rec-hint { font-size: 10px; color: var(--text-dim); margin-top: 4px; }
-.rec-btn {
-  padding: 3px 10px; border-radius: 3px; font-family: var(--font-ui); font-size: 10px;
+.rec-panel { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+
+/* Idle: circular record button */
+.rec-idle-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0 4px; }
+.rec-circle-btn {
+  width: 48px; height: 48px; border-radius: 50%; border: 2px solid #dc2626;
+  background: rgba(220,38,38,0.12); cursor: pointer; display: flex;
+  align-items: center; justify-content: center; transition: all 0.2s;
+  animation: rec-idle-glow 2.4s ease-in-out infinite;
+}
+.rec-circle-btn:hover { background: rgba(220,38,38,0.28); transform: scale(1.08); }
+.rec-circle-btn:active { transform: scale(0.95); }
+.rec-circle-btn:disabled { opacity: 0.3; cursor: not-allowed; animation: none; }
+.rec-circle-btn:disabled:hover { transform: none; background: rgba(220,38,38,0.12); }
+.rec-circle-inner { width: 18px; height: 18px; border-radius: 50%; background: #dc2626; }
+.rec-circle-label { font-size: 10px; font-weight: 700; color: #dc2626; letter-spacing: 1.5px; text-transform: uppercase; }
+@keyframes rec-idle-glow {
+  0%,100% { box-shadow: 0 0 8px rgba(220,38,38,0.25); }
+  50% { box-shadow: 0 0 18px rgba(220,38,38,0.50); }
+}
+
+/* Active: live badge + controls */
+.rec-live-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #dc2626; color: #fff; font-size: 12px; font-weight: 700;
+  padding: 5px 12px; border-radius: 4px; letter-spacing: 0.5px;
+}
+.rec-live-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #fff;
+  animation: rec-live-pulse 1s ease-in-out infinite;
+}
+@keyframes rec-live-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+.rec-active-info { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.rec-elapsed { color: var(--text); font-family: var(--font-mono); font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rec-events { color: var(--text-dim); font-size: 11px; }
+.rec-stop-btn {
+  margin-top: 8px; padding: 5px 14px; border-radius: 4px; font-family: var(--font-ui);
+  font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+  border: 1px solid var(--border); background: rgba(255,255,255,0.06); color: var(--text-dim);
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.rec-stop-btn:hover { background: rgba(255,255,255,0.12); color: var(--text); border-color: var(--text-dim); }
+.rec-stop-icon { width: 8px; height: 8px; background: var(--text-dim); border-radius: 1px; }
+.rec-stop-btn:hover .rec-stop-icon { background: var(--text); }
+
+/* Stopped: saved confirmation */
+.rec-saved-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0; }
+.rec-saved-icon { font-size: 22px; line-height: 1; color: #16a34a; }
+.rec-saved-text { font-size: 12px; font-weight: 600; color: #16a34a; }
+.rec-saved-detail { font-size: 10px; color: var(--text-dim); font-family: var(--font-mono); text-align: center; }
+.rec-saved-actions { display: flex; gap: 6px; margin-top: 4px; }
+.rec-btn-sm {
+  padding: 4px 10px; border-radius: 3px; font-family: var(--font-ui); font-size: 10px;
   cursor: pointer; transition: all 0.15s; border: 1px solid var(--border); background: transparent; color: var(--text-dim);
 }
-.rec-btn:hover { border-color: var(--text-dim); color: var(--text); }
-.rec-btn.red { border-color: #dc2626; color: #dc2626; }
-.rec-btn.red:hover { background: rgba(220,38,38,0.15); }
-.rec-btn.green { border-color: #16a34a; color: #16a34a; }
-.rec-btn.green:hover { background: rgba(22,163,74,0.15); }
-.rec-active-row { display: flex; align-items: center; gap: 8px; font-size: 11px; margin-bottom: 6px; }
-.rec-dot {
-  width: 8px; height: 8px; border-radius: 50%; background: #dc2626;
-  animation: rec-pulse 1.2s ease-in-out infinite;
-}
-@keyframes rec-pulse { 0%,100% { opacity: 1; box-shadow: 0 0 4px #dc2626; } 50% { opacity: 0.4; box-shadow: none; } }
-.rec-elapsed { color: var(--text); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-.rec-events { color: var(--text-dim); font-size: 10px; }
+.rec-btn-sm:hover { border-color: var(--text-dim); color: var(--text); }
+.rec-btn-sm.green { border-color: #16a34a; color: #16a34a; }
+.rec-btn-sm.green:hover { background: rgba(22,163,74,0.15); }
+
+/* Recent recordings list */
+.rec-recent-title { font-size: 10px; color: var(--text-dim); margin-top: 8px; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
 .rec-file-row {
   display: flex; align-items: center; justify-content: space-between; gap: 6px;
   padding: 3px 0; font-size: 10px; color: var(--text-dim);
 }
 .rec-file-row .rec-fname { color: var(--text); font-family: var(--font-mono); }
 .rec-file-row .rec-meta { white-space: nowrap; }
-.rec-saved { font-size: 11px; color: #16a34a; margin-bottom: 6px; }
 
 /* VIX in chart footer */
 .footer-vix {
@@ -2863,34 +2903,34 @@ header::after {
         </div>
         <!-- Session Recording Panel (desktop mode only, hidden in demo/standalone) -->
         <div class="rec-panel" id="rec-panel" style="display:none;">
-          <div style="display:flex; align-items:center; justify-content:space-between;">
-            <div class="rec-title" style="margin-bottom:0;">Session Recording</div>
-            <div id="rec-controls-idle">
-              <button class="rec-btn" id="rec-start-btn" onclick="startRecording()">Record</button>
+          <!-- Idle state: circular record button -->
+          <div id="rec-state-idle">
+            <div class="rec-idle-wrap">
+              <button class="rec-circle-btn" id="rec-start-btn" onclick="startRecording()" title="Start recording">
+                <div class="rec-circle-inner"></div>
+              </button>
+              <div class="rec-circle-label">REC</div>
             </div>
-            <div id="rec-controls-active" style="display:none;">
-              <button class="rec-btn red" onclick="stopRecording()">Stop</button>
-            </div>
+            <div id="rec-recent-list"></div>
           </div>
-          <!-- Idle state -->
-          <div id="rec-state-idle" style="margin-top:6px;">
-            <div class="rec-hint">Capture bot events for demo replay</div>
-            <div id="rec-recent-list" style="margin-top:6px;"></div>
-          </div>
-          <!-- Active state -->
-          <div id="rec-state-active" style="display:none; margin-top:6px;">
-            <div class="rec-active-row">
-              <div class="rec-dot"></div>
+          <!-- Active state: live recording badge -->
+          <div id="rec-state-active" style="display:none;">
+            <div class="rec-live-badge"><div class="rec-live-dot"></div> LIVE REC</div>
+            <div class="rec-active-info">
               <span class="rec-elapsed" id="rec-elapsed">00:00</span>
-              <span class="rec-events" id="rec-event-count">0 events</span>
+              <span class="rec-events" id="rec-event-count">0 events captured</span>
             </div>
+            <button class="rec-stop-btn" onclick="stopRecording()"><span class="rec-stop-icon"></span> STOP</button>
           </div>
-          <!-- Stopped state -->
-          <div id="rec-state-stopped" style="display:none; margin-top:6px;">
-            <div class="rec-saved" id="rec-saved-msg">Recording saved</div>
-            <div style="display:flex; gap:6px;">
-              <button class="rec-btn green" id="rec-load-btn" onclick="loadLastRecordingAsDemo()">Load as Demo</button>
-              <button class="rec-btn" onclick="dismissRecordingStopped()">Dismiss</button>
+          <!-- Stopped state: saved confirmation -->
+          <div id="rec-state-stopped" style="display:none;">
+            <div class="rec-saved-wrap">
+              <div class="rec-saved-icon">&#10003;</div>
+              <div class="rec-saved-text">Saved</div>
+              <div class="rec-saved-detail" id="rec-saved-msg"></div>
+              <div class="rec-saved-actions">
+                <button class="rec-btn-sm green" onclick="loadLastRecordingAsDemo()">Load as Demo</button>
+              </div>
             </div>
           </div>
         </div>
@@ -4698,10 +4738,10 @@ function renderChart(d) {
     });
 
     // Highlight pulse bars with yellow border rectangles (using sorted indices)
-    // Only show on 30m view (pulse bars are 30-min bars)
+    // Only show on 30m view, and only within trading window (09:30-11:30 ET)
     if (chartTimeframe === '30m') {
       sortedTimestamps.forEach((t, i) => {
-        if (pulseTimes.has(t) && sortedHighs[i] != null) {
+        if (pulseTimes.has(t) && sortedHighs[i] != null && t >= '09:30' && t <= '11:30') {
           shapes.push({
             type: 'rect',
             x0: i - 0.4, x1: i + 0.4,
@@ -4711,18 +4751,6 @@ function renderChart(d) {
             fillcolor: 'rgba(245,158,11,0.08)',
           });
         }
-      });
-
-      // Pulse annotations - positioned below chart, pointing up to the bar
-      (d.pulses || []).forEach(p => {
-        const color = p.direction === 'BULLISH' ? '#10b981' : '#ef4444';
-        const label = p.direction === 'BULLISH' ? '\u25B2 Pulse' : '\u25BC Pulse';
-        annotations.push({
-          x: p.time.substring(0, 5), y: -0.12, xref: 'x', yref: 'paper',
-          text: label, showarrow: true, arrowhead: 2, ay: 30,
-          font: {color: color, size: 11}, arrowcolor: color,
-          bgcolor: 'rgba(10,14,23,0.8)', borderpad: 3,
-        });
       });
     }
 
@@ -6231,18 +6259,19 @@ let recTimerInterval = null;
 let recPollInterval = null;
 let recLastFilename = null;
 
+let recDismissTimer = null;
 function setRecordingState(state) {
   const idle = document.getElementById('rec-state-idle');
   const active = document.getElementById('rec-state-active');
   const stopped = document.getElementById('rec-state-stopped');
-  const ctrlIdle = document.getElementById('rec-controls-idle');
-  const ctrlActive = document.getElementById('rec-controls-active');
   if (!idle) return;
   idle.style.display = state === 'idle' ? '' : 'none';
   active.style.display = state === 'active' ? '' : 'none';
   stopped.style.display = state === 'stopped' ? '' : 'none';
-  ctrlIdle.style.display = state === 'idle' ? '' : 'none';
-  ctrlActive.style.display = state === 'active' ? '' : 'none';
+  if (recDismissTimer) { clearTimeout(recDismissTimer); recDismissTimer = null; }
+  if (state === 'stopped') {
+    recDismissTimer = setTimeout(function() { setRecordingState('idle'); loadRecordingList(); }, 5000);
+  }
 }
 
 function updateRecElapsed() {
@@ -6257,7 +6286,6 @@ function updateRecElapsed() {
 async function startRecording() {
   const btn = document.getElementById('rec-start-btn');
   btn.disabled = true;
-  btn.textContent = 'Starting...';
   try {
     const resp = await fetch('/api/recording/start', {method: 'POST', headers: API_HEADERS});
     const data = await resp.json();
@@ -6274,7 +6302,6 @@ async function startRecording() {
     alert('Error: ' + e.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Record';
   }
 }
 
@@ -6291,7 +6318,13 @@ async function stopRecording() {
     }
     recLastFilename = data.filename;
     const msg = document.getElementById('rec-saved-msg');
-    if (msg) msg.textContent = data.event_count + ' events saved to ' + data.filename;
+    if (msg) {
+      const durSecs = recStartedAt ? Math.floor((Date.now() / 1000) - recStartedAt) : 0;
+      const dm = Math.floor(durSecs / 60);
+      const ds = durSecs % 60;
+      const durStr = String(dm).padStart(2, '0') + ':' + String(ds).padStart(2, '0');
+      msg.innerHTML = data.filename + '<br>' + data.event_count + ' events &middot; ' + durStr;
+    }
     setRecordingState('stopped');
   } catch (e) {
     alert('Error: ' + e.message);
@@ -6310,7 +6343,7 @@ async function pollRecordingStatus() {
       return;
     }
     const el = document.getElementById('rec-event-count');
-    if (el) el.textContent = data.event_count + ' events';
+    if (el) el.textContent = data.event_count + ' events captured';
   } catch (_) {}
 }
 
@@ -6322,7 +6355,7 @@ async function loadRecordingList() {
       if (container) container.innerHTML = '';
       return;
     }
-    let html = '';
+    let html = '<div class="rec-recent-title">Recent</div>';
     data.recordings.slice(0, 3).forEach(function(r) {
       const dur = r.duration_seconds;
       const durStr = dur > 0 ? Math.floor(dur / 60) + 'm' : '< 1m';
@@ -6330,7 +6363,7 @@ async function loadRecordingList() {
       html += '<div class="rec-file-row">';
       html += '<span class="rec-fname">' + r.filename.replace('recording_', '').replace('.jsonl', '') + '</span>';
       html += '<span class="rec-meta">' + evts + ' evts, ' + durStr + '</span>';
-      html += '<button class="rec-btn" onclick="loadSpecificDemo(\'' + r.filename + '\')">Load</button>';
+      html += '<button class="rec-btn-sm" onclick="loadSpecificDemo(\'' + r.filename + '\')">Load</button>';
       html += '</div>';
     });
     container.innerHTML = html;
@@ -6359,16 +6392,11 @@ async function loadSpecificDemo(filename) {
   }
 }
 
-function dismissRecordingStopped() {
-  setRecordingState('idle');
-  loadRecordingList();
-}
-
 function updateRecordingBtnState(botRunning) {
   const btn = document.getElementById('rec-start-btn');
   if (!btn) return;
   btn.disabled = !botRunning;
-  btn.title = botRunning ? '' : 'Start the bot first';
+  btn.title = botRunning ? 'Start recording' : 'Start the bot first';
 }
 
 // Init recording panel on page load
