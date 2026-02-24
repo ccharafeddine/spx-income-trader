@@ -1609,74 +1609,107 @@ header::after {
 .risk-detail .paused { color: var(--red); font-weight: bold; }
 .risk-detail .resume { color: var(--amber); }
 
-/* Session Recording Panel */
-.rec-panel { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
-
-/* Idle: circular record button */
-.rec-idle-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0 4px; }
-.rec-circle-btn {
-  width: 48px; height: 48px; border-radius: 50%; border: 2px solid #dc2626;
-  background: rgba(220,38,38,0.12); cursor: pointer; display: flex;
+/* Floating Session Recording */
+.rec-float {
+  position: fixed; bottom: 24px; right: 24px; z-index: 9000;
+  display: none; /* shown by JS in desktop mode */
+}
+.rec-float-btn {
+  width: 44px; height: 44px; border-radius: 50%; border: 2px solid #dc2626;
+  background: rgba(220,38,38,0.15); cursor: pointer; display: flex;
   align-items: center; justify-content: center; transition: all 0.2s;
   animation: rec-idle-glow 2.4s ease-in-out infinite;
+  position: relative;
 }
-.rec-circle-btn:hover { background: rgba(220,38,38,0.28); transform: scale(1.08); }
-.rec-circle-btn:active { transform: scale(0.95); }
-.rec-circle-btn:disabled { opacity: 0.3; cursor: not-allowed; animation: none; }
-.rec-circle-btn:disabled:hover { transform: none; background: rgba(220,38,38,0.12); }
-.rec-circle-inner { width: 18px; height: 18px; border-radius: 50%; background: #dc2626; }
-.rec-circle-label { font-size: 10px; font-weight: 700; color: #dc2626; letter-spacing: 1.5px; text-transform: uppercase; }
+.rec-float-btn:hover { background: rgba(220,38,38,0.32); transform: scale(1.1); }
+.rec-float-btn:active { transform: scale(0.93); }
+.rec-float-btn:disabled { opacity: 0.3; cursor: not-allowed; animation: none; }
+.rec-float-btn:disabled:hover { transform: none; background: rgba(220,38,38,0.15); }
+.rec-float-btn .rec-inner { width: 16px; height: 16px; border-radius: 50%; background: #dc2626; }
 @keyframes rec-idle-glow {
-  0%,100% { box-shadow: 0 0 8px rgba(220,38,38,0.25); }
-  50% { box-shadow: 0 0 18px rgba(220,38,38,0.50); }
+  0%,100% { box-shadow: 0 0 6px rgba(220,38,38,0.25); }
+  50% { box-shadow: 0 0 16px rgba(220,38,38,0.50); }
 }
+/* Tooltip */
+.rec-float-btn .rec-tip {
+  position: absolute; bottom: calc(100% + 8px); right: 0; white-space: nowrap;
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 5px 10px; font-size: 11px; color: var(--text-dim);
+  pointer-events: none; opacity: 0; transition: opacity 0.15s;
+  font-family: var(--font-ui);
+}
+.rec-float-btn:hover .rec-tip { opacity: 1; }
 
-/* Active: live badge + controls */
-.rec-live-badge {
-  display: inline-flex; align-items: center; gap: 6px;
-  background: #dc2626; color: #fff; font-size: 12px; font-weight: 700;
-  padding: 5px 12px; border-radius: 4px; letter-spacing: 0.5px;
+/* Popover panel (idle: recordings list) */
+.rec-popover {
+  position: absolute; bottom: calc(100% + 10px); right: 0;
+  width: 260px; background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 10px 12px; display: none;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
 }
-.rec-live-dot {
-  width: 8px; height: 8px; border-radius: 50%; background: #fff;
-  animation: rec-live-pulse 1s ease-in-out infinite;
+.rec-popover.open { display: block; }
+.rec-popover-title {
+  font-size: 10px; font-weight: 700; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
 }
-@keyframes rec-live-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-.rec-active-info { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
-.rec-elapsed { color: var(--text); font-family: var(--font-mono); font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.rec-events { color: var(--text-dim); font-size: 11px; }
-.rec-stop-btn {
-  margin-top: 8px; padding: 5px 14px; border-radius: 4px; font-family: var(--font-ui);
-  font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.15s;
-  border: 1px solid var(--border); background: rgba(255,255,255,0.06); color: var(--text-dim);
-  display: inline-flex; align-items: center; gap: 5px;
-}
-.rec-stop-btn:hover { background: rgba(255,255,255,0.12); color: var(--text); border-color: var(--text-dim); }
-.rec-stop-icon { width: 8px; height: 8px; background: var(--text-dim); border-radius: 1px; }
-.rec-stop-btn:hover .rec-stop-icon { background: var(--text); }
-
-/* Stopped: saved confirmation */
-.rec-saved-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0; }
-.rec-saved-icon { font-size: 22px; line-height: 1; color: #16a34a; }
-.rec-saved-text { font-size: 12px; font-weight: 600; color: #16a34a; }
-.rec-saved-detail { font-size: 10px; color: var(--text-dim); font-family: var(--font-mono); text-align: center; }
-.rec-saved-actions { display: flex; gap: 6px; margin-top: 4px; }
-.rec-btn-sm {
-  padding: 4px 10px; border-radius: 3px; font-family: var(--font-ui); font-size: 10px;
-  cursor: pointer; transition: all 0.15s; border: 1px solid var(--border); background: transparent; color: var(--text-dim);
-}
-.rec-btn-sm:hover { border-color: var(--text-dim); color: var(--text); }
-.rec-btn-sm.green { border-color: #16a34a; color: #16a34a; }
-.rec-btn-sm.green:hover { background: rgba(22,163,74,0.15); }
-
-/* Recent recordings list */
-.rec-recent-title { font-size: 10px; color: var(--text-dim); margin-top: 8px; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
 .rec-file-row {
   display: flex; align-items: center; justify-content: space-between; gap: 6px;
-  padding: 3px 0; font-size: 10px; color: var(--text-dim);
+  padding: 4px 0; font-size: 10px; color: var(--text-dim);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
 }
-.rec-file-row .rec-fname { color: var(--text); font-family: var(--font-mono); }
-.rec-file-row .rec-meta { white-space: nowrap; }
+.rec-file-row:last-child { border-bottom: none; }
+.rec-file-row .rec-fname { color: var(--text); font-family: var(--font-mono); font-size: 10px; }
+.rec-file-row .rec-meta { white-space: nowrap; color: var(--text-dim); }
+.rec-btn-sm {
+  padding: 3px 8px; border-radius: 3px; font-family: var(--font-ui); font-size: 9px;
+  cursor: pointer; transition: all 0.15s; border: 1px solid var(--border);
+  background: transparent; color: var(--text-dim);
+}
+.rec-btn-sm:hover { border-color: var(--text-dim); color: var(--text); }
+.rec-popover-empty { font-size: 11px; color: var(--text-dim); padding: 4px 0; }
+
+/* Active: live recording indicator (replaces the circle button) */
+.rec-live-indicator {
+  display: none; cursor: default;
+  background: #dc2626; border-radius: 6px; padding: 8px 12px;
+  min-width: 120px; text-align: left;
+}
+.rec-live-indicator.active { display: block; }
+.rec-live-top {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 700; color: #fff; letter-spacing: 0.5px;
+}
+.rec-live-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: #fff;
+  animation: rec-live-pulse 1s ease-in-out infinite;
+}
+@keyframes rec-live-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+.rec-live-elapsed {
+  font-family: var(--font-mono); font-size: 16px; font-weight: 700;
+  color: #fff; font-variant-numeric: tabular-nums; margin-top: 2px;
+}
+.rec-live-events { font-size: 10px; color: rgba(255,255,255,0.7); }
+.rec-stop-btn {
+  margin-top: 6px; padding: 4px 10px; border-radius: 3px; font-family: var(--font-ui);
+  font-size: 10px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+  border: 1px solid rgba(255,255,255,0.3); background: rgba(0,0,0,0.2); color: #fff;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.rec-stop-btn:hover { background: rgba(0,0,0,0.4); border-color: rgba(255,255,255,0.5); }
+.rec-stop-icon { width: 7px; height: 7px; background: #fff; border-radius: 1px; }
+
+/* Stopped: brief saved flash (shown inside the live indicator area) */
+.rec-saved-indicator {
+  display: none; background: var(--card-bg); border: 1px solid #16a34a;
+  border-radius: 6px; padding: 10px 14px; text-align: center; min-width: 120px;
+}
+.rec-saved-indicator.active { display: block; }
+.rec-saved-check { font-size: 18px; color: #16a34a; }
+.rec-saved-label { font-size: 11px; font-weight: 600; color: #16a34a; margin-top: 2px; }
+.rec-saved-detail { font-size: 9px; color: var(--text-dim); font-family: var(--font-mono); margin-top: 3px; }
+.rec-saved-actions { display: flex; gap: 6px; justify-content: center; margin-top: 6px; }
+.rec-btn-sm.green { border-color: #16a34a; color: #16a34a; }
+.rec-btn-sm.green:hover { background: rgba(22,163,74,0.15); }
 
 /* VIX in chart footer */
 .footer-vix {
@@ -2900,39 +2933,6 @@ header::after {
               onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-dim)'">Run Now</button>
           </div>
           <div id="recon-body" style="margin-top:6px;"><span class="econ-no-events">Loading...</span></div>
-        </div>
-        <!-- Session Recording Panel (desktop mode only, hidden in demo/standalone) -->
-        <div class="rec-panel" id="rec-panel" style="display:none;">
-          <!-- Idle state: circular record button -->
-          <div id="rec-state-idle">
-            <div class="rec-idle-wrap">
-              <button class="rec-circle-btn" id="rec-start-btn" onclick="startRecording()" title="Start recording">
-                <div class="rec-circle-inner"></div>
-              </button>
-              <div class="rec-circle-label">REC</div>
-            </div>
-            <div id="rec-recent-list"></div>
-          </div>
-          <!-- Active state: live recording badge -->
-          <div id="rec-state-active" style="display:none;">
-            <div class="rec-live-badge"><div class="rec-live-dot"></div> LIVE REC</div>
-            <div class="rec-active-info">
-              <span class="rec-elapsed" id="rec-elapsed">00:00</span>
-              <span class="rec-events" id="rec-event-count">0 events captured</span>
-            </div>
-            <button class="rec-stop-btn" onclick="stopRecording()"><span class="rec-stop-icon"></span> STOP</button>
-          </div>
-          <!-- Stopped state: saved confirmation -->
-          <div id="rec-state-stopped" style="display:none;">
-            <div class="rec-saved-wrap">
-              <div class="rec-saved-icon">&#10003;</div>
-              <div class="rec-saved-text">Saved</div>
-              <div class="rec-saved-detail" id="rec-saved-msg"></div>
-              <div class="rec-saved-actions">
-                <button class="rec-btn-sm green" onclick="loadLastRecordingAsDemo()">Load as Demo</button>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -6260,19 +6260,46 @@ let recPollInterval = null;
 let recLastFilename = null;
 
 let recDismissTimer = null;
+let recPopoverOpen = false;
+
 function setRecordingState(state) {
   const idle = document.getElementById('rec-state-idle');
   const active = document.getElementById('rec-state-active');
   const stopped = document.getElementById('rec-state-stopped');
   if (!idle) return;
   idle.style.display = state === 'idle' ? '' : 'none';
-  active.style.display = state === 'active' ? '' : 'none';
-  stopped.style.display = state === 'stopped' ? '' : 'none';
+  active.style.display = 'none'; active.classList.remove('active');
+  stopped.style.display = 'none'; stopped.classList.remove('active');
+  if (state === 'active') { active.style.display = ''; active.classList.add('active'); }
+  if (state === 'stopped') { stopped.style.display = ''; stopped.classList.add('active'); }
+  // Close popover when switching away from idle
+  if (state !== 'idle') { closeRecPopover(); }
   if (recDismissTimer) { clearTimeout(recDismissTimer); recDismissTimer = null; }
   if (state === 'stopped') {
     recDismissTimer = setTimeout(function() { setRecordingState('idle'); loadRecordingList(); }, 5000);
   }
 }
+
+function recIdleClick() {
+  const pop = document.getElementById('rec-popover');
+  if (!pop) return;
+  recPopoverOpen = !recPopoverOpen;
+  pop.classList.toggle('open', recPopoverOpen);
+  if (recPopoverOpen) loadRecordingList();
+}
+
+function closeRecPopover() {
+  recPopoverOpen = false;
+  const pop = document.getElementById('rec-popover');
+  if (pop) pop.classList.remove('open');
+}
+
+// Close popover when clicking outside
+document.addEventListener('click', function(e) {
+  if (!recPopoverOpen) return;
+  const float = document.getElementById('rec-float');
+  if (float && !float.contains(e.target)) closeRecPopover();
+});
 
 function updateRecElapsed() {
   if (!recStartedAt) return;
@@ -6284,6 +6311,7 @@ function updateRecElapsed() {
 }
 
 async function startRecording() {
+  closeRecPopover();
   const btn = document.getElementById('rec-start-btn');
   btn.disabled = true;
   try {
@@ -6351,12 +6379,13 @@ async function loadRecordingList() {
   try {
     const data = await fetchJSON('/api/recording/list');
     const container = document.getElementById('rec-recent-list');
-    if (!container || !data || !data.recordings || data.recordings.length === 0) {
-      if (container) container.innerHTML = '';
+    if (!container) return;
+    if (!data || !data.recordings || data.recordings.length === 0) {
+      container.innerHTML = '<div class="rec-popover-empty">No recordings yet</div>';
       return;
     }
-    let html = '<div class="rec-recent-title">Recent</div>';
-    data.recordings.slice(0, 3).forEach(function(r) {
+    let html = '';
+    data.recordings.slice(0, 5).forEach(function(r) {
       const dur = r.duration_seconds;
       const durStr = dur > 0 ? Math.floor(dur / 60) + 'm' : '< 1m';
       const evts = r.event_count;
@@ -6394,19 +6423,25 @@ async function loadSpecificDemo(filename) {
 
 function updateRecordingBtnState(botRunning) {
   const btn = document.getElementById('rec-start-btn');
-  if (!btn) return;
-  btn.disabled = !botRunning;
-  btn.title = botRunning ? 'Start recording' : 'Start the bot first';
+  if (btn) {
+    btn.disabled = !botRunning;
+    btn.title = botRunning ? 'Record session' : 'Start the bot first';
+  }
+  const popBtn = document.getElementById('rec-popover-start-btn');
+  if (popBtn) {
+    popBtn.disabled = !botRunning;
+    popBtn.textContent = botRunning ? 'Start Recording' : 'Bot not running';
+  }
 }
 
-// Init recording panel on page load
+// Init floating recording button on page load
 (async function initRecording() {
   if (DEMO_MODE) return;
   try {
     const resp = await fetch('/api/recording/status');
     if (!resp.ok) return; // Not in desktop mode (standalone)
-    const panel = document.getElementById('rec-panel');
-    if (panel) panel.style.display = '';
+    const float = document.getElementById('rec-float');
+    if (float) float.style.display = '';
     const data = await resp.json();
     if (data.recording) {
       recStartedAt = data.started_at || (Date.now() / 1000);
@@ -6416,10 +6451,9 @@ function updateRecordingBtnState(botRunning) {
       recPollInterval = setInterval(pollRecordingStatus, 2000);
     } else {
       setRecordingState('idle');
-      loadRecordingList();
     }
   } catch (_) {
-    // Not desktop mode, panel stays hidden
+    // Not desktop mode, float stays hidden
   }
 })();
 
@@ -8412,6 +8446,40 @@ async function btDeleteSelected() {
 <footer class="app-footer">
   The Daily Melt <span id="app-version">v--</span>
 </footer>
+
+<!-- Floating Session Recording Button (desktop mode only) -->
+<div class="rec-float" id="rec-float">
+  <!-- Idle: circle button -->
+  <div id="rec-state-idle">
+    <button class="rec-float-btn" id="rec-start-btn" onclick="recIdleClick()" title="Record session">
+      <div class="rec-inner"></div>
+      <span class="rec-tip">Record this session as a demo file for playback</span>
+    </button>
+    <div class="rec-popover" id="rec-popover">
+      <div class="rec-popover-title">Recordings</div>
+      <div id="rec-recent-list"><div class="rec-popover-empty">No recordings yet</div></div>
+      <div style="margin-top:8px; text-align:center;">
+        <button class="rec-btn-sm" onclick="startRecording()" id="rec-popover-start-btn" style="border-color:#dc2626;color:#dc2626;">Start Recording</button>
+      </div>
+    </div>
+  </div>
+  <!-- Active: live indicator -->
+  <div id="rec-state-active" class="rec-live-indicator">
+    <div class="rec-live-top"><div class="rec-live-dot"></div> LIVE REC</div>
+    <div class="rec-live-elapsed" id="rec-elapsed">00:00</div>
+    <div class="rec-live-events" id="rec-event-count">0 events captured</div>
+    <button class="rec-stop-btn" onclick="stopRecording()"><span class="rec-stop-icon"></span> STOP</button>
+  </div>
+  <!-- Stopped: saved flash -->
+  <div id="rec-state-stopped" class="rec-saved-indicator">
+    <div class="rec-saved-check">&#10003;</div>
+    <div class="rec-saved-label">Saved</div>
+    <div class="rec-saved-detail" id="rec-saved-msg"></div>
+    <div class="rec-saved-actions">
+      <button class="rec-btn-sm green" onclick="loadLastRecordingAsDemo()">Load as Demo</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>
