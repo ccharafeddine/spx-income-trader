@@ -430,6 +430,9 @@ class PortfolioManager:
 
     def update_account_size(self, new_size: float):
         """Update account size and recalculate dollar limits"""
+        if not isinstance(new_size, (int, float)) or new_size != new_size:  # NaN check
+            logger.warning(f"update_account_size received invalid value: {new_size}, ignoring")
+            return
         self.account_size = new_size
         self.max_daily_loss = self.account_size * (self.max_daily_loss_pct / 100)
         self.drawdown_manager.update_account_size(new_size)

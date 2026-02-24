@@ -273,7 +273,7 @@ def _sortino_ratio(daily_returns: List[float], risk_free_rate: float, ann_factor
     # Downside deviation
     downside = [min(r, 0) ** 2 for r in excess]
     downside_var = sum(downside) / (len(downside) - 1) if len(downside) > 1 else 0
-    downside_dev = math.sqrt(downside_var)
+    downside_dev = math.sqrt(max(0, downside_var))
 
     if downside_dev == 0:
         return 0

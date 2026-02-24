@@ -121,7 +121,7 @@ class BollingerFilter:
 
         # Population standard deviation
         variance = sum((x - middle) ** 2 for x in window) / self.period
-        std = math.sqrt(variance)
+        std = math.sqrt(max(0, variance))
 
         upper = middle + (self.num_std * std)
         lower = middle - (self.num_std * std)

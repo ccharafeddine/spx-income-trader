@@ -217,8 +217,8 @@ class BacktestEngine:
         profit_target_pct: float = 80.0,
         min_credit: float = 1.00,
         max_contracts: int = 10,
-        daily_contracts: int = 7,
-        swing_contracts: int = 2,
+        daily_contracts: Optional[int] = None,
+        swing_contracts: Optional[int] = None,
         slippage: Optional[float] = None,
         max_daily_loss_pct: float = 2.0,
         progress_callback=None,
@@ -228,8 +228,10 @@ class BacktestEngine:
         self.vix_daily = vix_daily
         self.initial_capital = initial_capital
         self.max_contracts = max_contracts
-        self.daily_contracts = daily_contracts
-        self.swing_contracts = swing_contracts
+        # Default daily/swing caps to max_contracts so position sizing
+        # scales with equity up to the user-supplied ceiling.
+        self.daily_contracts = daily_contracts if daily_contracts is not None else max_contracts
+        self.swing_contracts = swing_contracts if swing_contracts is not None else max_contracts
         self.max_daily_loss_pct = max_daily_loss_pct
         self.progress_callback = progress_callback
 
@@ -336,6 +338,8 @@ class BacktestEngine:
             return 1
 
         current_balance = self.broker.balance
+        if not isinstance(current_balance, (int, float)) or current_balance != current_balance:
+            return 1
         budget = current_balance * (self.max_daily_loss_pct / 100.0)
         contracts = int(math.floor(budget / max_risk_per_contract))
         contracts = max(1, contracts)
