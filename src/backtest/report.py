@@ -110,7 +110,11 @@ def _compute_core_metrics(
     total_days = len(daily_results)
     trading_days_per_year = 252
     years = total_days / trading_days_per_year if total_days > 0 else 1
-    annualized_return = ((final_capital / initial_capital) ** (1 / years) - 1) * 100 if years > 0 else 0
+    ratio = final_capital / initial_capital if initial_capital > 0 else 0
+    if ratio <= 0 or years <= 0:
+        annualized_return = -100.0 if ratio <= 0 else 0
+    else:
+        annualized_return = (ratio ** (1 / years) - 1) * 100
 
     # Daily returns for Sharpe/Sortino
     daily_returns = []
