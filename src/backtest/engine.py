@@ -1124,8 +1124,14 @@ class BacktestEngine:
         )
         self.trades.append(bt_trade)
 
-        # Sanity check: flag abnormally large trade P&L
+        # Sanity check: hard stop if a single trade exceeds starting capital
         trade_pnl = trade.pnl or 0
+        if abs(trade_pnl) > self.initial_capital:
+            raise ValueError(
+                f"Abnormal trade P&L ${trade_pnl:.0f} exceeds initial capital "
+                f"${self.initial_capital:.0f} — likely a contract sizing bug. "
+                f"Contracts: {trade.quantity}, strategy: {strategy_type}"
+            )
         if abs(trade_pnl) > self.initial_capital * 0.20:
             logger.warning(
                 f"Abnormal trade P&L: ${trade_pnl:.0f} on {trade.quantity} contracts "

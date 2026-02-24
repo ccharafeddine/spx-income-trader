@@ -5147,10 +5147,9 @@ def api_backtest_run():
     profit_target = float(data.get('profit_target', 80.0))
     min_credit = float(data.get('min_credit', 1.00))
     max_contracts = int(data.get('max_contracts', 10))
-    # Default daily/swing caps to max_contracts so the UI-supplied
-    # max_contracts is the actual ceiling (backtest UI has no separate controls).
+    # DI scales with max_contracts; TNT stays fixed at 2 (never inherits max_contracts)
     daily_contracts = int(data.get('daily_contracts', max_contracts))
-    swing_contracts = int(data.get('swing_contracts', max_contracts))
+    swing_contracts = int(data.get('swing_contracts', 2))
     slippage_raw = data.get('slippage', None)
     slippage = float(slippage_raw) if slippage_raw else None
     max_daily_loss = float(data.get('max_daily_loss', 2.0))
