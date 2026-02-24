@@ -139,7 +139,7 @@ class DatabaseManager:
             # Get context values or None
             ctx = context or {}
 
-            cursor.execute("""
+            cursor.execute(f"""
                 INSERT OR REPLACE INTO trades (
                     id, entry_time, exit_time, direction, status,
                     strategy_type,
