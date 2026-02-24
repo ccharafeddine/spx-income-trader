@@ -233,9 +233,24 @@ def download_spx_bars(
         df = pd.concat(all_frames)
         df = df[~df.index.duplicated(keep='first')]
         df = df.sort_index()
-        df.to_csv(csv_path)
-        logger.info(f"Saved {len(df)} 30-min bars to {csv_path}")
-        return csv_path
+
+        # Check coverage: if 30m data covers less than 50% of the
+        # requested range, fall back to daily synthesis to avoid
+        # caching a partial result (yfinance only keeps ~60 days).
+        requested_days = (end_date - start_date).days
+        actual_days = len(set(df.index.date))
+        expected_trading_days = max(1, requested_days * 252 / 365)
+        coverage = actual_days / expected_trading_days
+
+        if coverage >= 0.5:
+            df.to_csv(csv_path)
+            logger.info(f"Saved {len(df)} 30-min bars to {csv_path}")
+            return csv_path
+        else:
+            logger.info(
+                f"30-min data only covers {actual_days} of ~{int(expected_trading_days)} "
+                f"expected trading days ({coverage:.0%}), falling back to daily synthesis"
+            )
 
     # Fallback: download daily bars and synthesize 30-min bars
     logger.info("30-min data unavailable from Yahoo Finance, falling back to daily bars")
