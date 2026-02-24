@@ -1271,12 +1271,17 @@ def api_pdt_status():
     try:
         from src.core.pdt_tracker import PDTTracker
 
+        # Read account equity from strategy params (same source as dry-run broker)
+        portfolio_cfg = STRATEGY_PARAMS.get('portfolio', {})
+        account_equity = portfolio_cfg.get('account_size', 0)
+
         tracker = PDTTracker(
             db_path=DATABASE_PATH,
             enabled=pdt_cfg.get('pdt_protection', True),
             threshold=pdt_cfg.get('pdt_threshold', 25000),
             max_day_trades=pdt_cfg.get('pdt_max_day_trades', 3),
             window_days=pdt_cfg.get('pdt_window_days', 5),
+            get_account_equity=lambda: account_equity,
         )
 
         status = tracker.get_pdt_status()
