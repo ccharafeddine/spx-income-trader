@@ -1124,18 +1124,21 @@ class BacktestEngine:
         )
         self.trades.append(bt_trade)
 
-        # Sanity check: hard stop if a single trade exceeds starting capital
+        # Sanity check: flag if a single trade P&L exceeds 3x the daily loss limit
+        # (uses current equity so compounding doesn't trigger false positives;
+        #  floor at 50% of initial capital so tiny max_daily_loss_pct tests don't trip)
         trade_pnl = trade.pnl or 0
-        if abs(trade_pnl) > self.initial_capital:
+        current_equity = self.broker.balance
+        max_acceptable = max(
+            current_equity * (self.max_daily_loss_pct / 100) * 3,
+            self.initial_capital * 0.50,
+        )
+        if abs(trade_pnl) > max_acceptable:
             raise ValueError(
-                f"Abnormal trade P&L ${trade_pnl:.0f} exceeds initial capital "
-                f"${self.initial_capital:.0f} — likely a contract sizing bug. "
+                f"Abnormal trade P&L ${trade_pnl:.0f} exceeds 3x daily loss limit "
+                f"(${max_acceptable:.0f}) on ${current_equity:.0f} equity — "
+                f"likely a contract sizing bug. "
                 f"Contracts: {trade.quantity}, strategy: {strategy_type}"
-            )
-        if abs(trade_pnl) > self.initial_capital * 0.20:
-            logger.warning(
-                f"Abnormal trade P&L: ${trade_pnl:.0f} on {trade.quantity} contracts "
-                f"({strategy_type}) — may indicate sizing bug"
             )
 
         logger.debug(
