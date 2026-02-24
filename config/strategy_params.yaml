@@ -29,7 +29,7 @@ portfolio:
   # Dynamic Position Sizing
   position_sizing:
     method: "percent_risk"     # "percent_risk" or "kelly"
-    risk_per_trade_pct: 2.0    # Risk 2% of account per trade
+    risk_per_trade_pct: 3.0    # Risk 3% of account per trade
     min_contracts: 1           # Never less than 1 contract
     max_contracts: 20          # Cap regardless of account size
     # percent_risk: Sizes position to risk X% of account

@@ -6441,7 +6441,7 @@ function updateRecordingBtnState(botRunning) {
     const resp = await fetch('/api/recording/status');
     if (!resp.ok) return; // Not in desktop mode (standalone)
     const float = document.getElementById('rec-float');
-    if (float) float.style.display = '';
+    if (float) float.style.display = 'block';
     const data = await resp.json();
     if (data.recording) {
       recStartedAt = data.started_at || (Date.now() / 1000);
