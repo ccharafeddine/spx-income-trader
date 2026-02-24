@@ -228,10 +228,9 @@ class BacktestEngine:
         self.vix_daily = vix_daily
         self.initial_capital = initial_capital
         self.max_contracts = max_contracts
-        # Default daily/swing caps to max_contracts so position sizing
-        # scales with equity up to the user-supplied ceiling.
+        # DI scales with UI max_contracts; TNT stays fixed at 2 unless explicit.
         self.daily_contracts = daily_contracts if daily_contracts is not None else max_contracts
-        self.swing_contracts = swing_contracts if swing_contracts is not None else max_contracts
+        self.swing_contracts = swing_contracts if swing_contracts is not None else 2
         self.max_daily_loss_pct = max_daily_loss_pct
         self.progress_callback = progress_callback
 
@@ -1124,6 +1123,14 @@ class BacktestEngine:
             daily_move_pct=round(((self._spx_close - self._spx_open) / self._spx_open) * 100, 4) if self._spx_open > 0 else None,
         )
         self.trades.append(bt_trade)
+
+        # Sanity check: flag abnormally large trade P&L
+        trade_pnl = trade.pnl or 0
+        if abs(trade_pnl) > self.initial_capital * 0.20:
+            logger.warning(
+                f"Abnormal trade P&L: ${trade_pnl:.0f} on {trade.quantity} contracts "
+                f"({strategy_type}) — may indicate sizing bug"
+            )
 
         logger.debug(
             f"[BT] {trading_day} {strategy_type.upper()} EXPIRED: "
