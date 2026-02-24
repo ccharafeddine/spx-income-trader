@@ -277,3 +277,132 @@ class TestBars5minEndpoint:
                 data = resp.get_json()
                 assert data['success'] is True
                 assert data['bars'] == []
+
+
+class TestBotBarsIntegration:
+    """Bot in-memory bars served through chart endpoints."""
+
+    def test_5min_bot_bars_returned(self):
+        """When desktop getter provides bars, endpoint returns them."""
+        from dashboard.app import app
+
+        mock_bars = [
+            {'time': '10:00', 'open': 5800, 'high': 5810, 'low': 5795, 'close': 5805},
+            {'time': '10:05', 'open': 5805, 'high': 5815, 'low': 5800, 'close': 5812},
+        ]
+        app._desktop_get_bot_bars_5min = lambda: mock_bars
+        try:
+            with app.test_client() as c:
+                resp = c.get('/api/chart/bars5min')
+                data = resp.get_json()
+                assert data['success'] is True
+                assert len(data['bars']) == 2
+                assert data['bars'][0]['time'] == '10:00'
+                assert data['bars'][1]['open'] == 5805
+        finally:
+            if hasattr(app, '_desktop_get_bot_bars_5min'):
+                del app._desktop_get_bot_bars_5min
+
+    def test_5min_bot_bars_skip_yahoo(self):
+        """Bot bars take priority -- Yahoo is not called."""
+        from dashboard.app import app
+
+        mock_bars = [
+            {'time': '10:00', 'open': 5800, 'high': 5810, 'low': 5795, 'close': 5805},
+        ]
+        app._desktop_get_bot_bars_5min = lambda: mock_bars
+        try:
+            with patch('dashboard.app.yahoo') as mock_yahoo:
+                with app.test_client() as c:
+                    resp = c.get('/api/chart/bars5min')
+                    data = resp.get_json()
+                    assert len(data['bars']) == 1
+                    mock_yahoo.get_intraday_bars.assert_not_called()
+        finally:
+            if hasattr(app, '_desktop_get_bot_bars_5min'):
+                del app._desktop_get_bot_bars_5min
+
+    def test_empty_bot_bars_falls_to_yahoo(self):
+        """Empty list from getter falls through to Yahoo fallback."""
+        from dashboard.app import app
+
+        app._desktop_get_bot_bars_5min = lambda: []
+        try:
+            with patch('dashboard.app.yahoo') as mock_yahoo:
+                mock_yahoo.get_intraday_bars.return_value = [
+                    {'timestamp': datetime(2026, 2, 20, 10, 0), 'open': 5800,
+                     'high': 5810, 'low': 5795, 'close': 5805},
+                ]
+                with app.test_client() as c:
+                    resp = c.get('/api/chart/bars5min')
+                    data = resp.get_json()
+                    assert len(data['bars']) == 1
+                    mock_yahoo.get_intraday_bars.assert_called_once()
+        finally:
+            if hasattr(app, '_desktop_get_bot_bars_5min'):
+                del app._desktop_get_bot_bars_5min
+
+    def test_none_bot_bars_falls_to_yahoo(self):
+        """None from getter (bot not running) falls through to Yahoo."""
+        from dashboard.app import app
+
+        app._desktop_get_bot_bars_5min = lambda: None
+        try:
+            with patch('dashboard.app.yahoo') as mock_yahoo:
+                mock_yahoo.get_intraday_bars.return_value = [
+                    {'timestamp': datetime(2026, 2, 20, 10, 0), 'open': 5800,
+                     'high': 5810, 'low': 5795, 'close': 5805},
+                ]
+                with app.test_client() as c:
+                    resp = c.get('/api/chart/bars5min')
+                    data = resp.get_json()
+                    assert len(data['bars']) == 1
+        finally:
+            if hasattr(app, '_desktop_get_bot_bars_5min'):
+                del app._desktop_get_bot_bars_5min
+
+    def test_30min_bot_bars_in_today(self):
+        """Bot 30m bars appear in /api/today response."""
+        from dashboard.app import app
+
+        mock_bars = [
+            {'time': '10:00', 'open': 5800, 'high': 5810, 'low': 5795, 'close': 5805},
+        ]
+        app._desktop_get_bot_bars = lambda: mock_bars
+        try:
+            with patch('dashboard.app.yahoo') as mock_yahoo, \
+                 patch('dashboard.app.parse_todays_log') as mock_log, \
+                 patch('dashboard.app.get_db_connection') as mock_db, \
+                 patch('dashboard.app.classify_trades') as mock_ct, \
+                 patch('dashboard.app.load_signals') as mock_sig:
+                mock_yahoo.get_intraday_bars.return_value = []
+                mock_yahoo.get_spx_quote.return_value = {'price': 5800, 'previous_close': 5790}
+                mock_log.return_value = {'bars': [], 'pulses': [], 'building_bar': None}
+                mock_sig.return_value = []
+                mock_ct.return_value = ([], [])
+                mock_db.return_value = MagicMock()
+
+                with app.test_client() as c:
+                    resp = c.get('/api/today')
+                    data = resp.get_json()
+                    assert data['bot_bars'] is not None
+                    assert len(data['bot_bars']) == 1
+                    assert data['bot_bars'][0]['time'] == '10:00'
+        finally:
+            if hasattr(app, '_desktop_get_bot_bars'):
+                del app._desktop_get_bot_bars
+
+
+class TestBuildingBarIncluded:
+    """The in-progress (building) bar is included in bot bars."""
+
+    def test_building_bar_in_5min_aggregator(self, agg):
+        """Building bar shows in get_current_bar_info after first tick."""
+        agg.add_price(_ts(10, 0), 5800.0)
+        agg.add_price(_ts(10, 1), 5810.0)
+        # No completed bars yet (boundary not crossed)
+        assert len(agg.get_bars()) == 0
+        # But there IS a building bar
+        assert agg.current_bar_start is not None
+        assert agg.open_price == 5800.0
+        assert agg.high_price == 5810.0

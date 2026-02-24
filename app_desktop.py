@@ -609,11 +609,39 @@ class DesktopApp:
             if not bot_thread.is_alive():
                 break  # Bot stopped normally
 
-    def get_bot_bars(self):
-        """Return completed bars from the bot's in-memory BarBuilder.
+    def _bars_to_dicts(self, aggregator):
+        """Convert completed + building bars from an aggregator to dicts.
 
-        Returns a list of dicts with time/open/high/low/close, or None
-        if the bot is not running.
+        Returns list of {time, open, high, low, close} dicts, including
+        the in-progress bar (partial candle) so the chart has data before
+        the first bar boundary is crossed.
+        """
+        bars = aggregator.get_bars()
+        result = []
+        for b in bars:
+            result.append({
+                'time': b.timestamp.strftime('%H:%M'),
+                'open': b.open,
+                'high': b.high,
+                'low': b.low,
+                'close': b.close,
+            })
+        # Append the bar currently being built (partial candle)
+        if aggregator.current_bar_start is not None:
+            result.append({
+                'time': aggregator.current_bar_start.strftime('%H:%M'),
+                'open': aggregator.open_price,
+                'high': aggregator.high_price,
+                'low': aggregator.low_price,
+                'close': aggregator.close_price,
+            })
+        return result
+
+    def get_bot_bars(self):
+        """Return bars from the bot's in-memory BarBuilder.
+
+        Includes completed bars plus the current building bar (partial
+        candle), or None if the bot is not running.
         """
         with self._bot_lock:
             if self._bot is None:
@@ -622,25 +650,16 @@ class DesktopApp:
                 bb = getattr(self._bot, 'bar_builder', None)
                 if bb is None:
                     return None
-                bars = bb.get_bars()
-                result = []
-                for b in bars:
-                    result.append({
-                        'time': b.timestamp.strftime('%H:%M'),
-                        'open': b.open,
-                        'high': b.high,
-                        'low': b.low,
-                        'close': b.close,
-                    })
-                return result
-            except Exception:
+                return self._bars_to_dicts(bb)
+            except Exception as e:
+                logger.warning(f"Error reading bot 30m bars: {e}")
                 return None
 
     def get_bot_bars_5min(self):
-        """Return completed 5-min bars from the bot's in-memory aggregator.
+        """Return bars from the bot's in-memory 5-min aggregator.
 
-        Returns a list of dicts with time/open/high/low/close, or None
-        if the bot is not running.
+        Includes completed bars plus the current building bar (partial
+        candle), or None if the bot is not running.
         """
         with self._bot_lock:
             if self._bot is None:
@@ -649,18 +668,9 @@ class DesktopApp:
                 agg = getattr(self._bot, 'bar_aggregator_5min', None)
                 if agg is None:
                     return None
-                bars = agg.get_bars()
-                result = []
-                for b in bars:
-                    result.append({
-                        'time': b.timestamp.strftime('%H:%M'),
-                        'open': b.open,
-                        'high': b.high,
-                        'low': b.low,
-                        'close': b.close,
-                    })
-                return result
-            except Exception:
+                return self._bars_to_dicts(agg)
+            except Exception as e:
+                logger.warning(f"Error reading bot 5m bars: {e}")
                 return None
 
     def get_bot_status(self):

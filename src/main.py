@@ -750,15 +750,25 @@ class TradingBot:
                 # Notify on closed trades
                 if self.notifier:
                     for closed in self.position_manager.recently_closed_trades:
-                        self.notifier.send(
-                            f"Trade Closed: {closed['direction'].upper()}",
-                            f"P&L: ${closed['pnl']:+.2f} ({closed['pnl_pct']:+.1f}%)\n"
-                            f"Strikes: {closed['strikes']}\n"
-                            f"Reason: {closed['reason']}\n"
-                            f"Duration: {closed['duration']}\n"
-                            f"Daily Total: ${self.portfolio.daily_realized_pnl:+.2f}",
-                            level='info'
-                        )
+                        if closed.get('is_reconciliation'):
+                            subject = f"Startup Reconciliation: {closed['direction'].upper()}"
+                            body_lines = [
+                                f"P&L: ${closed['pnl']:+.2f} ({closed['pnl_pct']:+.1f}%)",
+                                f"Strikes: {closed['strikes']}",
+                                f"Reason: {closed['reason']}",
+                            ]
+                            if closed['duration']:
+                                body_lines.append(f"Duration: {closed['duration']}")
+                        else:
+                            subject = f"Trade Closed: {closed['direction'].upper()}"
+                            body_lines = [
+                                f"P&L: ${closed['pnl']:+.2f} ({closed['pnl_pct']:+.1f}%)",
+                                f"Strikes: {closed['strikes']}",
+                                f"Reason: {closed['reason']}",
+                                f"Duration: {closed['duration']}",
+                                f"Daily Total: ${self.portfolio.daily_realized_pnl:+.2f}",
+                            ]
+                        self.notifier.send(subject, "\n".join(body_lines), level='info')
                 self.position_manager.recently_closed_trades.clear()
 
                 # Update market state: build bars, feed parallel strategies
@@ -1126,12 +1136,19 @@ class TradingBot:
             if self.notifier:
                 try:
                     dm = self.portfolio.drawdown_manager
+                    # Use live broker balance instead of config account_size
+                    try:
+                        live_equity = self.broker.get_account_balance().get(
+                            'net_account_value', self.portfolio.account_size
+                        )
+                    except Exception:
+                        live_equity = self.portfolio.account_size
                     self.notifier.send_eod_summary({
                         'trades_count': self._journal_trades_entered,
                         'daily_pnl': self.portfolio.daily_realized_pnl,
                         'weekly_pnl': dm.weekly_realized_pnl if dm else 0.0,
                         'monthly_pnl': dm.monthly_realized_pnl if dm else 0.0,
-                        'equity': self.portfolio.account_size,
+                        'equity': live_equity,
                         'no_trade_reason': no_trade_summary if self._journal_trades_entered == 0 else None,
                     })
                 except Exception as eod_err:

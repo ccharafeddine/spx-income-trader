@@ -657,6 +657,30 @@ class PositionManager:
             self.db.update_daily_stats(exp_date)
             resolved += 1
 
+            # Calculate duration from entry_time to exit_time
+            entry_raw = row.get('entry_time')
+            duration = ''
+            if entry_raw:
+                try:
+                    entry_dt = datetime.fromisoformat(str(entry_raw))
+                    dur = exit_time - entry_dt
+                    hours, remainder = divmod(int(dur.total_seconds()), 3600)
+                    minutes = remainder // 60
+                    duration = f"{hours}h {minutes}m" if hours else f"{minutes}m"
+                except (ValueError, TypeError):
+                    pass
+
+            # Queue notification with clear startup reconciliation label
+            self.recently_closed_trades.append({
+                'direction': direction,
+                'pnl': pnl,
+                'pnl_pct': pnl_pct,
+                'reason': exit_reason,
+                'strikes': f"{short_strike}/{long_strike}",
+                'duration': duration,
+                'is_reconciliation': True,
+            })
+
             logger.info(
                 f"Resolved orphaned trade {trade_id[:8]}: {direction} "
                 f"{short_strike}/{long_strike}, P&L=${pnl:+.2f} ({pnl_pct:+.1f}%) - {source}"

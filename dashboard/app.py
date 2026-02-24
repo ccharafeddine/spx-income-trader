@@ -1688,6 +1688,10 @@ def api_chart_bars5min():
     """Return 5-minute bars from the bot's in-memory aggregator."""
     get_bars_5min = getattr(app, '_desktop_get_bot_bars_5min', None)
     bars = get_bars_5min() if get_bars_5min else None
+    logger.debug(
+        f"Chart bars5min: getter={'set' if get_bars_5min else 'None'}, "
+        f"bars={len(bars) if bars else 'None'}"
+    )
 
     if not bars:
         # Fallback: Yahoo Finance 5-min intraday bars
