@@ -36,6 +36,7 @@ def main():
     parser.add_argument('--spread-width', type=float, default=5.0)
     parser.add_argument('--min-credit', type=float, default=1.00)
     parser.add_argument('--slippage', type=float, default=0.02)
+    parser.add_argument('--max-daily-loss', type=float, default=2.0)
     args = parser.parse_args()
 
     start_date = date.fromisoformat(args.start)
@@ -75,7 +76,10 @@ def main():
         spread_width=args.spread_width,
         min_credit=args.min_credit,
         max_contracts=args.max_contracts,
+        daily_contracts=args.max_contracts,
+        swing_contracts=args.max_contracts,
         slippage=args.slippage,
+        max_daily_loss_pct=args.max_daily_loss,
     )
 
     results = engine.run()
