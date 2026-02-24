@@ -354,7 +354,7 @@ class DryRunBroker(BrokerInterface):
             put_intrinsic = max(0, strike - current_price)
 
             # Time value approximation
-            time_factor = (dte ** 0.5) * implied_vol * current_price * 0.4
+            time_factor = (max(dte, 0) ** 0.5) * implied_vol * current_price * 0.4
 
             # ATM options have most time value
             atm_factor = 1 - min(abs(moneyness) * 5, 0.9)

@@ -5134,6 +5134,7 @@ def api_backtest_run():
             }), 409
 
     data = request.json or {}
+    logger.info(f"Backtest requested: {data}")
     start_date_str = data.get('start_date', '2024-01-01')
     end_date_str = data.get('end_date', '2025-12-31')
     capital = float(data.get('capital', 50000))

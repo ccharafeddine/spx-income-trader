@@ -199,8 +199,8 @@ class RegimeAnalyzer:
         var_x = sum((x - mean_x) ** 2 for x in xs) / n
         var_y = sum((y - mean_y) ** 2 for y in ys) / n
 
-        std_x = var_x ** 0.5
-        std_y = var_y ** 0.5
+        std_x = max(0, var_x) ** 0.5
+        std_y = max(0, var_y) ** 0.5
 
         if std_x == 0 or std_y == 0:
             correlation = 0.0
