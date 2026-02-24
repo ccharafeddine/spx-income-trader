@@ -26,15 +26,12 @@ portfolio:
   # At $100k: 2% = $2000 max loss
   # Scales automatically with account growth
 
-  # Dynamic Position Sizing
-  position_sizing:
-    method: "percent_risk"     # "percent_risk" or "kelly"
-    risk_per_trade_pct: 3.0    # Risk 3% of account per trade
-    min_contracts: 1           # Never less than 1 contract
-    max_contracts: 20          # Cap regardless of account size
-    # percent_risk: Sizes position to risk X% of account
-    # kelly: Optimal sizing based on historical win rate (needs 10+ trades)
-    # Each strategy's max_contracts_override acts as an additional ceiling
+  # Position Sizing
+  daily_contracts: 7           # Max contracts for Daily Income (budget-driven cap)
+  swing_contracts: 2           # Fixed contracts for swing strategies (TNT/BNB/ORB)
+  spread_width: 5.0            # Default spread width ($) for DI contract calculation
+  min_contracts: 1             # Never less than 1 contract
+  max_contracts: 10            # Hard cap regardless of account size
 
   # Layered Drawdown Circuit Breakers
   # Longer-horizon loss limits beyond the daily circuit breaker.
@@ -73,9 +70,6 @@ strategy:
 
   # Profit target as % of max profit
   profit_target_pct: 80.0
-
-  # Per-strategy ceiling for position sizing (caps percent_risk/kelly result)
-  max_contracts_override: 5
 
 risk:
   # Maximum position size (contracts)
@@ -156,9 +150,6 @@ tag_n_turn:
   # Position type: credit spreads vs directional options
   use_credit_spreads: true
 
-  # Position sizing for swings (separate from daily)
-  max_contracts_override: 2  # Smaller size for multi-day risk
-
   # For credit spreads (when use_credit_spreads: true)
   spread_width: 10.0  # Wider spreads for multi-day
   min_credit: 2.00
@@ -192,8 +183,6 @@ orb:
   # Minutes breakout must hold before entry
   confirmation_minutes: 3
 
-  # Position sizing
-  max_contracts_override: 3
 
 # ============================================
 # PDT (Pattern Day Trader) RULE PROTECTION

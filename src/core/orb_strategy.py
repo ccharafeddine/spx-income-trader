@@ -57,8 +57,6 @@ class ORBStrategy:
         self.min_threshold = config.get('min_threshold', 10.0)
         self.min_range_points = config.get('min_range_points', 8.0)
         self.confirmation_minutes = config.get('confirmation_minutes', 3)
-        self.max_contracts_override = config.get('max_contracts_override', 3)
-
         # State
         self.opening_range: Optional[ORBRange] = None
         self.triggered_today = False

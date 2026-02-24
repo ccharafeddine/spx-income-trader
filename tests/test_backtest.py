@@ -655,7 +655,7 @@ class TestMultiStrategyEngine:
         assert tnt.max_hold_days == 7
         assert tnt.spread_width == 10.0
         assert tnt.min_credit == 2.00
-        assert tnt.max_contracts_override == 2
+        assert tnt.spread_width == 10.0
 
     def test_orb_config_defaults(self):
         """ORB should use correct default config values."""
@@ -667,7 +667,7 @@ class TestMultiStrategyEngine:
         assert orb.min_threshold == 10.0
         assert orb.min_range_points == 8.0
         assert orb.confirmation_minutes == 3
-        assert orb.max_contracts_override == 3
+        assert orb.confirmation_minutes == 3
 
 
 # ---------------------------------------------------------------

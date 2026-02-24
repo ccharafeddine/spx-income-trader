@@ -75,7 +75,6 @@ class TagNTurnStrategy:
         # Position parameters
         self.max_hold_days = config.get('max_hold_days', 7)
         self.use_credit_spreads = config.get('use_credit_spreads', True)
-        self.max_contracts_override = config.get('max_contracts_override', 2)
         self.spread_width = config.get('spread_width', 10.0)
         self.min_credit = config.get('min_credit', 2.00)
         self.min_dte = config.get('min_dte', 3)

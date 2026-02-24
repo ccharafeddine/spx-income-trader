@@ -1378,11 +1378,20 @@ def api_status():
     tnt_cfg = STRATEGY_PARAMS.get('tag_n_turn', {})
     bnb_cfg = STRATEGY_PARAMS.get('bnb', {})
     orb_cfg = STRATEGY_PARAMS.get('orb', {})
+    pcfg = STRATEGY_PARAMS.get('portfolio', {})
+    daily_contracts = pcfg.get('daily_contracts', 7)
+    spread_width = strat.get('spread_width', 5.0)
+    max_risk = spread_width * 100
+    account_size = pcfg.get('account_size', 50000)
+    budget = account_size * (pcfg.get('max_daily_loss_pct', 2.0) / 100)
+    raw = max(1, int(math.floor(budget / max_risk)))
+    calculated = min(raw, daily_contracts, pcfg.get('max_contracts', 10))
     params_summary = {
         'pulse_threshold': strat.get('pulse_threshold', 10),
-        'spread_width': strat.get('spread_width', 5),
+        'spread_width': spread_width,
         'profit_target_pct': strat.get('profit_target_pct', 80),
-        'contracts': strat.get('max_contracts_override', 5),
+        'contracts': calculated,
+        'contracts_display': f"{calculated} / {daily_contracts}",
     }
 
     # Tag 'n Turn status (read from persistence file if enabled)
@@ -1505,6 +1514,17 @@ def api_status():
     except Exception:
         pass
 
+    # Position sizing summary (mirrors PortfolioManager.get_position_sizing_summary)
+    position_sizing = {
+        'max_contracts': pcfg.get('max_contracts', 10),
+        'min_contracts': pcfg.get('min_contracts', 1),
+        'daily_contracts': daily_contracts,
+        'swing_contracts': pcfg.get('swing_contracts', 2),
+        'spread_width': spread_width,
+        'calculated_di_contracts': calculated,
+        'di_contracts_display': f"{calculated} / {daily_contracts}",
+    }
+
     return jsonify({
         'version': APP_VERSION,
         'bot': bot,
@@ -1519,6 +1539,7 @@ def api_status():
         'vix': vix_data,
         'heartbeat': log_data['last_heartbeat'],
         'strategy': params_summary,
+        'position_sizing': position_sizing,
         'account': account,
         'today_summary': today_summary,
         'tag_n_turn': tag_n_turn_status,
@@ -2086,11 +2107,18 @@ def api_journal():
     max_daily_loss_pct = portfolio.get('max_daily_loss_pct', 2.0)
     max_daily_loss_dollars = account_size * (max_daily_loss_pct / 100)
 
+    j_daily_contracts = portfolio.get('daily_contracts', 7)
+    j_spread_width = strat.get('spread_width', 5.0)
+    j_max_risk = j_spread_width * 100
+    j_budget = account_size * (max_daily_loss_pct / 100)
+    j_raw = max(1, int(math.floor(j_budget / j_max_risk)))
+    j_calculated = min(j_raw, j_daily_contracts, portfolio.get('max_contracts', 10))
     strategy_params = {
         'pulse_threshold': strat.get('pulse_threshold', 10),
-        'spread_width': strat.get('spread_width', 5),
+        'spread_width': j_spread_width,
         'profit_target_pct': strat.get('profit_target_pct', 80),
-        'contracts': strat.get('max_contracts_override', 5),
+        'contracts': j_calculated,
+        'contracts_display': f"{j_calculated} / {j_daily_contracts}",
         'min_credit': MIN_CREDIT_THRESHOLD,
         'morning_start': timing.get('morning_start', '09:30'),
         'morning_end': timing.get('morning_end', '11:30'),
@@ -4578,7 +4606,7 @@ def api_validate_live():
     checks = []
     settings = _load_settings()
     portfolio_cfg = settings.get('portfolio', {})
-    sizing_cfg = portfolio_cfg.get('position_sizing', {})
+    sizing_cfg = portfolio_cfg  # position sizing fields are now at portfolio level
     active_broker = settings.get('broker', {}).get('active', 'dry_run')
 
     # --- Check 1: Credentials (broker-aware) ---
@@ -4802,19 +4830,18 @@ ALLOWED_SETTINGS_PATHS = {
     'strategy.pulse_threshold',
     'strategy.spread_width',
     'strategy.profit_target_pct',
-    'strategy.max_contracts_override',
+    'portfolio.daily_contracts',
+    'portfolio.swing_contracts',
     'timing.morning_start',
     'timing.morning_end',
     'timing.afternoon_start',
     'timing.afternoon_end',
     'timing.afternoon_enabled',
-    'portfolio.risk_per_trade_pct',
     'portfolio.min_contracts',
     'portfolio.max_contracts',
     'portfolio.max_daily_loss_pct',
     'portfolio.max_daily_risk_pct',
     'portfolio.max_total_positions',
-    'portfolio.position_sizing.max_contracts',
     'portfolio.drawdown_limits.weekly.max_loss_pct',
     'portfolio.drawdown_limits.monthly.max_loss_pct',
     'tag_n_turn.enabled',
@@ -4822,7 +4849,6 @@ ALLOWED_SETTINGS_PATHS = {
     'tag_n_turn.bb_std',
     'tag_n_turn.min_dte',
     'tag_n_turn.max_dte',
-    'tag_n_turn.max_contracts_override',
     'orb.enabled',
     'orb.range_minutes',
     'bnb.enabled',
@@ -4873,6 +4899,11 @@ def _save_runtime_settings(changes: dict) -> bool:
     # Save
     RUNTIME_SETTINGS_FILE.write_text(json.dumps(overrides, indent=2))
 
+    # Update in-memory STRATEGY_PARAMS so /api/status reflects changes immediately
+    merged = _load_settings()
+    STRATEGY_PARAMS.clear()
+    STRATEGY_PARAMS.update(merged)
+
     # Notify bot to reload settings
     _notify_bot_settings_changed()
 
@@ -4918,6 +4949,20 @@ def api_update_settings():
     if not changes:
         return jsonify({'success': False, 'error': 'No changes provided'})
 
+    # Validate contract limits before saving
+    current = _load_settings().get('portfolio', {})
+    projected_max = int(changes.get('portfolio.max_contracts', current.get('max_contracts', 10)))
+    projected_daily = int(changes.get('portfolio.daily_contracts', current.get('daily_contracts', 7)))
+    projected_swing = int(changes.get('portfolio.swing_contracts', current.get('swing_contracts', 2)))
+
+    errors = []
+    if projected_daily > projected_max:
+        errors.append(f"daily_contracts ({projected_daily}) cannot exceed max_contracts ({projected_max})")
+    if projected_swing > projected_max:
+        errors.append(f"swing_contracts ({projected_swing}) cannot exceed max_contracts ({projected_max})")
+    if errors:
+        return jsonify({'success': False, 'error': '; '.join(errors)}), 400
+
     try:
         _save_runtime_settings(changes)
         return jsonify({'success': True})
@@ -4934,6 +4979,10 @@ def api_reset_settings():
     try:
         if RUNTIME_SETTINGS_FILE.exists():
             RUNTIME_SETTINGS_FILE.unlink()
+        # Reload in-memory STRATEGY_PARAMS from YAML defaults
+        merged = _load_settings()
+        STRATEGY_PARAMS.clear()
+        STRATEGY_PARAMS.update(merged)
         _notify_bot_settings_changed()
         return jsonify({'success': True})
     except Exception as e:
@@ -5092,7 +5141,9 @@ def api_backtest_run():
     spread_width = float(data.get('spread_width', 5.0))
     profit_target = float(data.get('profit_target', 80.0))
     min_credit = float(data.get('min_credit', 1.00))
-    max_contracts = int(data.get('max_contracts', 5))
+    max_contracts = int(data.get('max_contracts', 10))
+    daily_contracts = int(data.get('daily_contracts', 7))
+    swing_contracts = int(data.get('swing_contracts', 2))
     slippage_raw = data.get('slippage', None)
     slippage = float(slippage_raw) if slippage_raw else None
     max_daily_loss = float(data.get('max_daily_loss', 2.0))
@@ -5166,6 +5217,8 @@ def api_backtest_run():
                 profit_target_pct=profit_target,
                 min_credit=min_credit,
                 max_contracts=max_contracts,
+                daily_contracts=daily_contracts,
+                swing_contracts=swing_contracts,
                 slippage=slippage,
                 max_daily_loss_pct=max_daily_loss,
                 progress_callback=progress_cb,

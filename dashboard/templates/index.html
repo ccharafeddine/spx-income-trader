@@ -2660,19 +2660,20 @@ header::after {
       <div class="section-title">Position Sizing</div>
       <div class="setting-row">
         <label>Max Contracts</label>
-        <input type="number" id="set-max-contracts" min="1" max="20" step="1" value="20" style="width:60px"
-               onchange="updateSetting('portfolio.position_sizing.max_contracts', parseInt(this.value))">
+        <input type="number" id="set-max-contracts" min="1" max="50" step="1" value="10" style="width:60px"
+               onchange="updateSetting('portfolio.max_contracts', +this.value); validateContractLimits()">
       </div>
       <div class="setting-row">
         <label>Daily Contracts</label>
-        <input type="number" id="set-daily-contracts" min="1" max="10" value="5"
-               onchange="updateSetting('strategy.max_contracts_override', parseInt(this.value))">
+        <input type="number" id="set-daily-contracts" min="1" max="50" step="1" value="7" style="width:60px"
+               onchange="updateSetting('portfolio.daily_contracts', +this.value); validateContractLimits()">
       </div>
       <div class="setting-row">
         <label>Swing Contracts</label>
-        <input type="number" id="set-tnt-contracts" min="1" max="10" value="2"
-               onchange="updateSetting('tag_n_turn.max_contracts_override', parseInt(this.value))">
+        <input type="number" id="set-swing-contracts" min="1" max="50" step="1" value="2" style="width:60px"
+               onchange="updateSetting('portfolio.swing_contracts', +this.value); validateContractLimits()">
       </div>
+      <div id="contract-limit-error" style="display:none; color:var(--red); font-size:12px; margin-top:4px;"></div>
       <div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06);">
         <div style="font-size:12px; color:var(--text-dim); margin-bottom:6px;">
           Account: <strong id="sidebar-acct-balance">-</strong>
@@ -4320,13 +4321,15 @@ async function updateStatus() {
   const pg = document.getElementById('params-grid');
   if (d.strategy) {
     const p = d.strategy;
+    const sizing = d.position_sizing || {};
+    const contractsDisplay = sizing.di_contracts_display || p.contracts_display || p.contracts || '-';
     const dte0 = d.portfolio?.dte0_trades_today || 0;
     const tnt = d.portfolio?.tnt_trades_today || 0;
     pg.innerHTML =
       '<span class="status-label">Pulse</span><span class="status-value">' + p.pulse_threshold + '%</span>' +
       '<span class="status-label">Width</span><span class="status-value">$' + p.spread_width + '</span>' +
       '<span class="status-label">Target</span><span class="status-value">' + p.profit_target_pct + '%</span>' +
-      '<span class="status-label">Contracts</span><span class="status-value">' + p.contracts + '</span>' +
+      '<span class="status-label">Contracts</span><span class="status-value" title="Calculated contracts / Daily cap">' + contractsDisplay + '</span>' +
       '<span class="status-label">0DTE</span><span class="status-value">' + dte0 + '/1 (DI/ORB/B&B)</span>' +
       '<span class="status-label">Swing</span><span class="status-value">' + tnt + '/1 (TNT)</span>';
   }
@@ -6910,10 +6913,10 @@ async function loadCurrentSettings() {
     });
 
   // Position sizing
-  const sizing = data.portfolio?.position_sizing || {};
-  document.getElementById('set-max-contracts').value = sizing.max_contracts ?? 20;
-  document.getElementById('set-daily-contracts').value = data.strategy?.max_contracts_override ?? 5;
-  document.getElementById('set-tnt-contracts').value = data.tag_n_turn?.max_contracts_override ?? 2;
+  document.getElementById('set-max-contracts').value = data.portfolio?.max_contracts ?? 10;
+  document.getElementById('set-daily-contracts').value = data.portfolio?.daily_contracts ?? 7;
+  document.getElementById('set-swing-contracts').value = data.portfolio?.swing_contracts ?? 2;
+  validateContractLimits();
 
   // Account balance in sidebar
   const portfolio = data.portfolio || {};
@@ -7013,7 +7016,24 @@ async function saveSidebarBalance() {
   setTimeout(() => { resultEl.textContent = ''; }, 3000);
 }
 
+function validateContractLimits() {
+  const maxC = +document.getElementById('set-max-contracts').value || 10;
+  const dailyC = +document.getElementById('set-daily-contracts').value || 7;
+  const swingC = +document.getElementById('set-swing-contracts').value || 2;
+  const err = document.getElementById('contract-limit-error');
+  if (dailyC > maxC || swingC > maxC) {
+    err.textContent = 'Daily and Swing contracts cannot exceed Max Contracts (' + maxC + ')';
+    err.style.display = 'block';
+  } else {
+    err.style.display = 'none';
+  }
+}
+
 async function saveSettings() {
+  if (document.getElementById('contract-limit-error').style.display !== 'none') {
+    showToast('Fix contract limit errors before saving', 'error');
+    return;
+  }
   if (Object.keys(pendingChanges).length === 0) {
     showToast('No changes to save', 'info');
     return;
@@ -7028,10 +7048,16 @@ async function saveSettings() {
 
     const result = await response.json();
     if (response.ok && result.success) {
-      showToast('Settings saved successfully');
+      console.log('[Settings] Saved:', JSON.stringify(pendingChanges));
+      const saved = {...pendingChanges};
       pendingChanges = {};
-      loadCurrentSettings();
+      loadCurrentSettings().then(() => {
+        const readBack = document.getElementById('set-daily-contracts')?.value;
+        console.log('[Settings] Read back daily contracts:', readBack, '| wrote:', JSON.stringify(saved));
+      });
       updateRiskStatus();
+      updateStatus(); // Refresh Parameters panel immediately
+      showToast('Settings saved successfully');
     } else {
       showToast('Error: ' + (result.error || 'Unknown error'), 'error');
     }
@@ -7050,6 +7076,7 @@ async function resetToDefaults() {
       showToast('Settings reset to defaults');
       pendingChanges = {};
       loadCurrentSettings();
+      updateStatus(); // Refresh Parameters panel immediately
     } else {
       showToast('Error resetting: ' + (result.error || 'Unknown'), 'error');
     }

@@ -216,7 +216,9 @@ class BacktestEngine:
         spread_width: float = 5.0,
         profit_target_pct: float = 80.0,
         min_credit: float = 1.00,
-        max_contracts: int = 5,
+        max_contracts: int = 10,
+        daily_contracts: int = 7,
+        swing_contracts: int = 2,
         slippage: Optional[float] = None,
         max_daily_loss_pct: float = 2.0,
         progress_callback=None,
@@ -226,6 +228,8 @@ class BacktestEngine:
         self.vix_daily = vix_daily
         self.initial_capital = initial_capital
         self.max_contracts = max_contracts
+        self.daily_contracts = daily_contracts
+        self.swing_contracts = swing_contracts
         self.max_daily_loss_pct = max_daily_loss_pct
         self.progress_callback = progress_callback
 
@@ -317,34 +321,31 @@ class BacktestEngine:
             self._half_day_cache[year] = _nyse_half_days(year)
         return trading_day in self._half_day_cache[year]
 
-    def _calculate_position_size(
+    def _calculate_di_position_size(
         self,
         max_risk_per_contract: float,
-        max_contracts_override: Optional[int] = None,
     ) -> int:
         """
-        Calculate position size based on current account balance and risk budget.
+        Calculate DI position size from daily loss budget.
 
-        Mirrors PortfolioManager._calculate_percent_risk_size():
-            contracts = floor(account_balance * risk_pct / max_risk_per_contract)
-
-        Clamps to [1, self.max_contracts] then applies per-strategy override.
+        Mirrors PortfolioManager.calculate_position_size() for DAILY_INCOME:
+            contracts = floor(daily_loss_budget / max_risk_per_contract)
+            capped by daily_contracts and max_contracts
         """
         if max_risk_per_contract <= 0:
             return 1
 
         current_balance = self.broker.balance
-        risk_budget = current_balance * (self.max_daily_loss_pct / 100.0)
-        contracts = int(math.floor(risk_budget / max_risk_per_contract))
-
-        # Clamp to configured bounds
-        contracts = max(1, min(contracts, self.max_contracts))
-
-        # Apply per-strategy ceiling if provided
-        if max_contracts_override is not None and max_contracts_override > 0:
-            contracts = min(contracts, max_contracts_override)
-
+        budget = current_balance * (self.max_daily_loss_pct / 100.0)
+        contracts = int(math.floor(budget / max_risk_per_contract))
+        contracts = max(1, contracts)
+        contracts = min(contracts, self.daily_contracts)
+        contracts = min(contracts, self.max_contracts)
         return contracts
+
+    def _get_swing_contracts(self) -> int:
+        """Fixed swing contract count (TNT/ORB/BnB), clamped by max_contracts."""
+        return max(1, min(self.swing_contracts, self.max_contracts))
 
     def _init_strategies(self, strategies: Dict):
         """Initialize parallel strategy instances for backtest."""
@@ -362,7 +363,6 @@ class BacktestEngine:
                 'pulse_threshold': tnt_cfg.get('pulse_threshold', 10.0),
                 'max_hold_days': tnt_cfg.get('max_hold_days', 7),
                 'use_credit_spreads': True,
-                'max_contracts_override': tnt_cfg.get('max_contracts_override', 2),
                 'spread_width': tnt_cfg.get('spread_width', 10.0),
                 'min_credit': tnt_cfg.get('min_credit', 2.00),
                 'min_dte': tnt_cfg.get('min_dte', 3),
@@ -392,7 +392,6 @@ class BacktestEngine:
                 'min_threshold': orb_cfg.get('min_threshold', 10.0),
                 'min_range_points': orb_cfg.get('min_range_points', 8.0),
                 'confirmation_minutes': orb_cfg.get('confirmation_minutes', 3),
-                'max_contracts_override': orb_cfg.get('max_contracts_override', 3),
             }
             self._orb_strat = ORBStrategy(cfg, persistence_path=tmp / 'orb.json')
 
@@ -579,7 +578,6 @@ class BacktestEngine:
                         ok = self._execute_0dte_entry(
                             bar, bar_dt, orb_signal['direction'], vix,
                             strategy_type='orb',
-                            quantity=self._orb_strat.max_contracts_override,
                         )
                         if not ok:
                             self._orb_strat.rollback_entry()
@@ -712,7 +710,6 @@ class BacktestEngine:
         vix: float,
         strategy_type: str = 'daily_income',
         setup_bar: Optional[Bar] = None,
-        quantity: Optional[int] = None,
         spread_width: Optional[float] = None,
         min_credit: Optional[float] = None,
     ) -> bool:
@@ -749,10 +746,10 @@ class BacktestEngine:
 
         # Position sizing: scale with current account balance
         max_risk_per_contract = spread.max_risk  # spread_width * 100 minus credit
-        qty = self._calculate_position_size(
-            max_risk_per_contract=max_risk_per_contract,
-            max_contracts_override=quantity,  # per-strategy cap (B&B/ORB override)
-        )
+        if strategy_type in ('orb', 'bnb'):
+            qty = self._get_swing_contracts()
+        else:
+            qty = self._calculate_di_position_size(max_risk_per_contract)
         order_id = self.broker.place_spread_order(spread, qty)
         order_status = self.broker.get_order_status(order_id)
 
@@ -824,8 +821,6 @@ class BacktestEngine:
         dte_mid = (tnt_cfg.get('min_dte', 3) + tnt_cfg.get('max_dte', 7)) / 2
         tnt_spread_width = tnt_cfg.get('spread_width', 10.0)
         tnt_min_credit = tnt_cfg.get('min_credit', 2.00)
-        tnt_qty = tnt_cfg.get('max_contracts_override', 2)
-
         # Temporarily set DTE on broker for realistic TNT option pricing
         saved_dte = self.broker._current_dte
         self.broker._current_dte = dte_mid
@@ -854,12 +849,8 @@ class BacktestEngine:
             self._tnt_strat._reset_to_idle("Spread construction failed")
             return False
 
-        # Position sizing: scale with current account balance
-        max_risk_per_contract = spread.max_risk
-        tnt_qty = self._calculate_position_size(
-            max_risk_per_contract=max_risk_per_contract,
-            max_contracts_override=tnt_cfg.get('max_contracts_override'),
-        )
+        # Position sizing: fixed swing contracts
+        tnt_qty = self._get_swing_contracts()
 
         order_id = self.broker.place_spread_order(spread, tnt_qty)
         order_status = self.broker.get_order_status(order_id)

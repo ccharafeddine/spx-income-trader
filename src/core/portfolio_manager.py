@@ -25,7 +25,7 @@ The percentage-based limit scales with account size:
 import json
 import logging
 import math
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -34,12 +34,6 @@ from typing import Dict, List, Optional, Tuple
 from src.core.drawdown_manager import DrawdownManager
 
 logger = logging.getLogger(__name__)
-
-
-class PositionSizingMethod(Enum):
-    """Position sizing calculation methods"""
-    PERCENT_RISK = "percent_risk"
-    KELLY = "kelly"
 
 
 class StrategyType(Enum):
@@ -95,8 +89,9 @@ class PortfolioManager:
         strategy_priority: Optional[List[str]] = None,
         persistence_path: Optional[Path] = None,
         # Position sizing parameters
-        sizing_method: str = "percent_risk",
-        risk_per_trade_pct: float = 2.0,
+        daily_contracts: int = 7,
+        swing_contracts: int = 2,
+        spread_width: float = 5.0,
         min_contracts: int = 1,
         max_contracts: int = 20,
         # Layered drawdown limits (weekly/monthly)
@@ -109,12 +104,9 @@ class PortfolioManager:
         self.max_daily_loss_pct = max_daily_loss_pct
 
         # Position sizing configuration
-        try:
-            self.sizing_method = PositionSizingMethod(sizing_method)
-        except ValueError:
-            logger.warning(f"Unknown sizing method '{sizing_method}', defaulting to percent_risk")
-            self.sizing_method = PositionSizingMethod.PERCENT_RISK
-        self.risk_per_trade_pct = risk_per_trade_pct
+        self.daily_contracts = daily_contracts
+        self.swing_contracts = swing_contracts
+        self.spread_width = spread_width
         self.min_contracts = min_contracts
         self.max_contracts = max_contracts
 
@@ -166,8 +158,8 @@ class PortfolioManager:
             f"max_loss={max_daily_loss_pct}% (${self.max_daily_loss:.0f})"
         )
         logger.info(
-            f"Position sizing: method={self.sizing_method.value}, "
-            f"risk_per_trade={self.risk_per_trade_pct}%, "
+            f"Position sizing: daily_contracts={self.daily_contracts}, "
+            f"swing_contracts={self.swing_contracts}, "
             f"contracts={self.min_contracts}-{self.max_contracts}"
         )
 
@@ -454,167 +446,59 @@ class PortfolioManager:
         self,
         strategy: StrategyType,
         max_risk_per_contract: float,
-        max_contracts_override: Optional[int] = None,
     ) -> int:
         """
-        Calculate position size based on configured method.
+        Calculate position size based on strategy type.
+
+        DI: budget-driven (daily_loss_budget / max_risk), capped by daily_contracts.
+        All others (TNT, BNB, ORB): fixed swing_contracts.
 
         Args:
             strategy: Strategy requesting position sizing
             max_risk_per_contract: Maximum risk per contract in dollars
-            max_contracts_override: Per-strategy ceiling (applied after global clamp)
 
         Returns:
-            Number of contracts to trade (clamped to min/max and override)
+            Number of contracts to trade
         """
         if max_risk_per_contract <= 0:
             logger.warning("Invalid max_risk_per_contract, using minimum contracts")
             return self.min_contracts
 
-        if self.sizing_method == PositionSizingMethod.PERCENT_RISK:
-            contracts = self._calculate_percent_risk_size(max_risk_per_contract)
-        elif self.sizing_method == PositionSizingMethod.KELLY:
-            contracts = self._calculate_kelly_size(strategy, max_risk_per_contract)
-        else:
-            contracts = self.min_contracts
-
-        # Clamp to global configured bounds
-        contracts = max(self.min_contracts, min(contracts, self.max_contracts))
-
-        # Apply per-strategy ceiling if provided
-        if max_contracts_override is not None and max_contracts_override > 0:
-            if contracts > max_contracts_override:
-                logger.info(
-                    f"Position capped by strategy override: "
-                    f"{contracts} -> {max_contracts_override}"
-                )
-                contracts = max_contracts_override
+        if strategy == StrategyType.DAILY_INCOME:
+            daily_budget = self.account_size * (self.max_daily_loss_pct / 100)
+            contracts = int(math.floor(daily_budget / max_risk_per_contract))
+            contracts = max(self.min_contracts, contracts)
+            contracts = min(contracts, self.daily_contracts)
+            contracts = min(contracts, self.max_contracts)
+        else:  # TAG_N_TURN, BNB, ORB
+            contracts = min(self.swing_contracts, self.max_contracts)
+            contracts = max(self.min_contracts, contracts)
 
         logger.info(
-            f"Position sizing ({self.sizing_method.value}): "
-            f"{contracts} contracts for {strategy.value}, "
+            f"Position sizing: {contracts} contracts for {strategy.value}, "
             f"risk_per_contract=${max_risk_per_contract:.2f}, "
             f"total_risk=${contracts * max_risk_per_contract:.2f}"
         )
 
         return contracts
 
-    def _calculate_percent_risk_size(self, max_risk_per_contract: float) -> int:
-        """
-        Calculate contracts based on risking X% of account per trade.
-
-        Formula: contracts = (account_size * risk_pct) / max_risk_per_contract
-
-        Example:
-            $50k account, 2% risk = $1000 risk budget
-            $200 risk per contract = 5 contracts
-        """
-        risk_budget = self.account_size * (self.risk_per_trade_pct / 100)
-        contracts = risk_budget / max_risk_per_contract
-        return int(math.floor(contracts))
-
-    def _calculate_kelly_size(
-        self,
-        strategy: StrategyType,
-        max_risk_per_contract: float,
-    ) -> int:
-        """
-        Calculate contracts using Kelly Criterion for optimal sizing.
-
-        Kelly Formula: f* = (bp - q) / b
-        Where:
-            b = odds (avg_win / avg_loss)
-            p = probability of winning (win_rate)
-            q = probability of losing (1 - win_rate)
-
-        We use half-Kelly for safety (divide result by 2).
-        Falls back to percent_risk if insufficient trade history.
-        """
-        win_rate, avg_win, avg_loss, trade_count = self._get_historical_stats(strategy)
-
-        # Need at least 10 trades for meaningful Kelly calculation
-        if trade_count < 10:
-            logger.debug(
-                f"Kelly: Insufficient history ({trade_count} trades), "
-                f"falling back to percent_risk"
-            )
-            return self._calculate_percent_risk_size(max_risk_per_contract)
-
-        # Avoid division by zero
-        if avg_loss <= 0 or avg_win <= 0:
-            return self._calculate_percent_risk_size(max_risk_per_contract)
-
-        # Kelly calculation
-        b = avg_win / avg_loss  # Odds ratio
-        p = win_rate
-        q = 1 - win_rate
-
-        kelly_fraction = (b * p - q) / b
-
-        # Use half-Kelly for safety
-        kelly_fraction = kelly_fraction / 2
-
-        # Kelly can be negative (don't trade) or very high (too risky)
-        if kelly_fraction <= 0:
-            logger.warning(f"Kelly suggests no trade (negative edge)")
-            return self.min_contracts
-
-        # Cap Kelly at risk_per_trade_pct
-        kelly_fraction = min(kelly_fraction, self.risk_per_trade_pct / 100)
-
-        risk_budget = self.account_size * kelly_fraction
-        contracts = risk_budget / max_risk_per_contract
-
-        logger.debug(
-            f"Kelly sizing: win_rate={win_rate:.1%}, "
-            f"avg_win=${avg_win:.2f}, avg_loss=${avg_loss:.2f}, "
-            f"half_kelly={kelly_fraction:.2%}, contracts={int(contracts)}"
-        )
-
-        return int(math.floor(contracts))
-
-    def _get_historical_stats(
-        self,
-        strategy: StrategyType,
-    ) -> Tuple[float, float, float, int]:
-        """
-        Get historical trading statistics for Kelly calculation.
-
-        Returns:
-            (win_rate, avg_win, avg_loss, trade_count)
-        """
-        try:
-            # Import here to avoid circular imports
-            from database.db_manager import DatabaseManager
-
-            from config.settings import DATABASE_PATH
-            db_path = Path(DATABASE_PATH)
-            db = DatabaseManager(str(db_path))
-            stats = db.get_strategy_stats(strategy.value)
-
-            if not stats or stats.get('total_trades', 0) == 0:
-                return (0.5, 0.0, 0.0, 0)
-
-            win_rate = stats.get('win_rate', 0.5)
-            avg_win = stats.get('avg_win', 0.0)
-            avg_loss = abs(stats.get('avg_loss', 0.0))
-            trade_count = stats.get('total_trades', 0)
-
-            return (win_rate, avg_win, avg_loss, trade_count)
-
-        except Exception as e:
-            logger.debug(f"Could not load historical stats: {e}")
-            return (0.5, 0.0, 0.0, 0)
+    def get_calculated_di_contracts(self) -> tuple[int, int]:
+        """Return (calculated DI contracts, daily cap) for display."""
+        max_risk = self.spread_width * 100
+        budget = self.account_size * (self.max_daily_loss_pct / 100)
+        raw = max(self.min_contracts, int(math.floor(budget / max_risk)))
+        calculated = min(raw, self.daily_contracts, self.max_contracts)
+        return calculated, self.daily_contracts
 
     def get_position_sizing_summary(self) -> dict:
         """Return position sizing configuration for dashboard/API"""
+        calculated, daily_cap = self.get_calculated_di_contracts()
         return {
-            'method': self.sizing_method.value,
-            'risk_per_trade_pct': self.risk_per_trade_pct,
-            'min_contracts': self.min_contracts,
             'max_contracts': self.max_contracts,
-            'account_size': self.account_size,
-            'risk_budget_per_trade': round(
-                self.account_size * (self.risk_per_trade_pct / 100), 2
-            ),
+            'min_contracts': self.min_contracts,
+            'daily_contracts': self.daily_contracts,
+            'swing_contracts': self.swing_contracts,
+            'spread_width': self.spread_width,
+            'calculated_di_contracts': calculated,
+            'di_contracts_display': f"{calculated} / {daily_cap}",
         }

@@ -1514,64 +1514,66 @@ class TestMaxContractsEnforcement:
             account_size=50000,
             max_contracts=1,
             min_contracts=1,
-            risk_per_trade_pct=2.0,
+            daily_contracts=7,
+            swing_contracts=3,
         )
 
         result = pm.calculate_position_size(
             strategy=StrategyType.ORB,
             max_risk_per_contract=200.0,
-            max_contracts_override=3,
         )
 
         assert result == 1, f"max_contracts=1 must stick, got {result}"
 
     def test_max_contracts_1_sticks_for_di(self):
-        """If user sets max_contracts=1, DI override of 5 does NOT override it."""
+        """If user sets max_contracts=1, daily_contracts=7 does NOT override it."""
         from src.core.portfolio_manager import PortfolioManager, StrategyType
 
         pm = PortfolioManager(
             account_size=50000,
             max_contracts=1,
             min_contracts=1,
-            risk_per_trade_pct=2.0,
+            daily_contracts=7,
+            swing_contracts=2,
         )
 
         result = pm.calculate_position_size(
             strategy=StrategyType.DAILY_INCOME,
             max_risk_per_contract=200.0,
-            max_contracts_override=5,
         )
 
         assert result == 1, f"max_contracts=1 must stick, got {result}"
 
     def test_max_contracts_1_sticks_for_tnt(self):
-        """If user sets max_contracts=1, TNT override of 2 does NOT override it."""
+        """If user sets max_contracts=1, swing_contracts=2 does NOT override it."""
         from src.core.portfolio_manager import PortfolioManager, StrategyType
 
         pm = PortfolioManager(
             account_size=50000,
             max_contracts=1,
             min_contracts=1,
-            risk_per_trade_pct=2.0,
+            daily_contracts=7,
+            swing_contracts=2,
         )
 
         result = pm.calculate_position_size(
             strategy=StrategyType.TAG_N_TURN,
             max_risk_per_contract=200.0,
-            max_contracts_override=2,
         )
 
         assert result == 1, f"max_contracts=1 must stick, got {result}"
 
     def test_small_account_produces_1_contract(self):
-        """Small account with 2% risk should produce 1 contract, not 0."""
+        """Small account with 2% loss limit should produce 1 contract, not 0."""
         from src.core.portfolio_manager import PortfolioManager, StrategyType
 
         pm = PortfolioManager(
             account_size=5000,
+            max_daily_loss_pct=2.0,
             max_contracts=20,
             min_contracts=1,
-            risk_per_trade_pct=2.0,
+            daily_contracts=7,
+            swing_contracts=2,
         )
 
         # $5k * 2% = $100 budget / $500 risk = 0.2 -> floor(0.2) = 0
@@ -1579,7 +1581,6 @@ class TestMaxContractsEnforcement:
         result = pm.calculate_position_size(
             strategy=StrategyType.DAILY_INCOME,
             max_risk_per_contract=500.0,
-            max_contracts_override=5,
         )
 
         assert result == 1, f"min_contracts=1 must be the floor, got {result}"

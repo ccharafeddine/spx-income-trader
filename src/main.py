@@ -241,7 +241,7 @@ class TradingBot:
 
         # Portfolio Manager (coordinates all strategies)
         portfolio_cfg = STRATEGY_PARAMS.get('portfolio', {})
-        sizing_cfg = portfolio_cfg.get('position_sizing', {})
+        strat_cfg = STRATEGY_PARAMS.get('strategy', {})
         self.portfolio = PortfolioManager(
             account_size=portfolio_cfg.get('account_size', 50000.0),
             max_total_positions=portfolio_cfg.get('max_total_positions', 2),
@@ -250,10 +250,11 @@ class TradingBot:
             max_daily_loss_pct=portfolio_cfg.get('max_daily_loss_pct', 2.0),
             strategy_priority=portfolio_cfg.get('priority'),
             # Position sizing parameters
-            sizing_method=sizing_cfg.get('method', 'percent_risk'),
-            risk_per_trade_pct=sizing_cfg.get('risk_per_trade_pct', 2.0),
-            min_contracts=sizing_cfg.get('min_contracts', 1),
-            max_contracts=sizing_cfg.get('max_contracts', 20),
+            daily_contracts=portfolio_cfg.get('daily_contracts', 7),
+            swing_contracts=portfolio_cfg.get('swing_contracts', 2),
+            spread_width=strat_cfg.get('spread_width', 5.0),
+            min_contracts=portfolio_cfg.get('min_contracts', 1),
+            max_contracts=portfolio_cfg.get('max_contracts', 10),
             # Layered drawdown limits (weekly/monthly)
             drawdown_limits=portfolio_cfg.get('drawdown_limits'),
         )
@@ -1719,13 +1720,10 @@ class TradingBot:
                 return False
 
             # 3. Position sizing
-            strategy_cfg = STRATEGY_PARAMS.get(strategy_name, {})
-            override = strategy_cfg.get('max_contracts_override')
             max_risk_per_contract = spread.max_risk
             quantity = self.portfolio.calculate_position_size(
                 strategy=strategy_type,
                 max_risk_per_contract=max_risk_per_contract,
-                max_contracts_override=override,
             )
 
             # 4. Portfolio risk gate
@@ -2104,11 +2102,9 @@ class TradingBot:
             # Calculate position size based on configured method
             # max_risk per contract = (spread_width - credit) * 100
             max_risk_per_contract = spread.max_risk
-            override = STRATEGY_PARAMS['strategy'].get('max_contracts_override')
             quantity = self.portfolio.calculate_position_size(
                 strategy=StrategyType.DAILY_INCOME,
                 max_risk_per_contract=max_risk_per_contract,
-                max_contracts_override=override,
             )
 
             # Check portfolio risk limits before entry
@@ -2123,9 +2119,8 @@ class TradingBot:
                 self._record_rejection('daily_income', 'portfolio_risk_blocked', deny_reason)
                 return
 
-            sizing_method = self.portfolio.sizing_method.value
             logger.info(
-                f"Position sizing: {sizing_method} -> {quantity} contracts "
+                f"Position sizing: {quantity} contracts "
                 f"(risk ${max_risk_per_contract:.2f} per contract, "
                 f"max risk ${quantity * max_risk_per_contract:.2f}, "
                 f"account ${self.portfolio.account_size:,.0f})"
@@ -2188,7 +2183,7 @@ class TradingBot:
                     "max_risk": spread.max_risk * actual_qty,
                     "underlying_price": current_price,
                     "expiration": spread.expiration.isoformat() if spread.expiration else None,
-                    "sizing_method": sizing_method,
+                    "sizing_method": "budget",
                 })
 
                 # Clear pending setup now that we've entered

@@ -1,233 +1,150 @@
 """
-Tests for max_contracts_override in position sizing.
+Tests for budget-based position sizing.
 
-Tests cover:
-- Override caps calculated size when lower
-- Override higher than global max (global max wins)
-- Override lower than calculated (override wins)
-- No override provided (no effect on result)
-- Override with different sizing methods (percent_risk, kelly)
-- Zero and negative override values are ignored
+Verifies:
+- DI: floor(daily_loss_budget / max_risk), capped by daily_contracts then max_contracts
+- Swing: fixed swing_contracts, capped by max_contracts
+- min_contracts floor
+- get_calculated_di_contracts() helper
+- get_position_sizing_summary() display format
 """
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.core.portfolio_manager import (
-    PortfolioManager,
-    PositionSizingMethod,
-    StrategyType,
-)
+from src.core.portfolio_manager import PortfolioManager, StrategyType
 
 
 # ============================================================================
-# FIXTURES
+# DI Budget Sizing
 # ============================================================================
 
-@pytest.fixture
-def portfolio():
-    """Create a PortfolioManager with percent_risk sizing and known parameters."""
-    return PortfolioManager(
-        account_size=50000.0,
-        sizing_method="percent_risk",
-        risk_per_trade_pct=2.0,   # $1000 risk budget
-        min_contracts=1,
-        max_contracts=20,
-    )
+class TestDIBudgetSizing:
+
+    def test_scenario_a_small_account(self):
+        """$50k, 3%, $5 spread, daily_cap=7, max=10 -> 3."""
+        pm = PortfolioManager(account_size=50000, max_daily_loss_pct=3.0,
+                              spread_width=5.0, daily_contracts=7, max_contracts=10)
+        assert pm.calculate_position_size(StrategyType.DAILY_INCOME, 500) == 3
+
+    def test_scenario_b_capped_by_daily(self):
+        """$200k -> 12 raw -> capped at daily_contracts=7."""
+        pm = PortfolioManager(account_size=200000, max_daily_loss_pct=3.0,
+                              spread_width=5.0, daily_contracts=7, max_contracts=10)
+        assert pm.calculate_position_size(StrategyType.DAILY_INCOME, 500) == 7
+
+    def test_scenario_c_capped_by_max(self):
+        """$500k, daily_contracts=50 -> 30 raw -> capped at max_contracts=10."""
+        pm = PortfolioManager(account_size=500000, max_daily_loss_pct=3.0,
+                              spread_width=5.0, daily_contracts=50, max_contracts=10)
+        assert pm.calculate_position_size(StrategyType.DAILY_INCOME, 500) == 10
+
+    def test_daily_cap_tighter_than_max(self):
+        """$500k -> 30 raw, daily_contracts=7, max=10 -> 7 (daily wins)."""
+        pm = PortfolioManager(account_size=500000, max_daily_loss_pct=3.0,
+                              spread_width=5.0, daily_contracts=7, max_contracts=10)
+        assert pm.calculate_position_size(StrategyType.DAILY_INCOME, 500) == 7
+
+    def test_min_contracts_floor(self):
+        """Tiny budget should still return min_contracts."""
+        pm = PortfolioManager(account_size=1000, max_daily_loss_pct=1.0,
+                              daily_contracts=7, max_contracts=10, min_contracts=1)
+        result = pm.calculate_position_size(StrategyType.DAILY_INCOME, 500)
+        assert result >= 1
+
+    def test_invalid_risk_returns_min(self):
+        """Zero or negative risk per contract returns min_contracts."""
+        pm = PortfolioManager(daily_contracts=7, max_contracts=10)
+        assert pm.calculate_position_size(StrategyType.DAILY_INCOME, 0) == 1
+        assert pm.calculate_position_size(StrategyType.DAILY_INCOME, -100) == 1
 
 
 # ============================================================================
-# Override Capping
+# Swing Sizing
 # ============================================================================
 
-class TestOverrideCapping:
-    """Test that max_contracts_override caps calculated position size."""
+class TestSwingSizing:
 
-    def test_override_caps_calculated_size(self, portfolio):
-        """Calculated=5 contracts, override=3 -> capped to 3."""
-        # $1000 budget / $200 risk = 5 contracts
-        result = portfolio.calculate_position_size(
-            strategy=StrategyType.DAILY_INCOME,
-            max_risk_per_contract=200.0,
-            max_contracts_override=3,
-        )
-        assert result == 3
+    def test_tnt_uses_swing_contracts(self):
+        pm = PortfolioManager(swing_contracts=2, max_contracts=10)
+        assert pm.calculate_position_size(StrategyType.TAG_N_TURN, 500) == 2
 
-    def test_override_equal_to_calculated(self, portfolio):
-        """Calculated=5, override=5 -> no cap needed, returns 5."""
-        result = portfolio.calculate_position_size(
-            strategy=StrategyType.DAILY_INCOME,
-            max_risk_per_contract=200.0,
-            max_contracts_override=5,
-        )
-        assert result == 5
+    def test_tnt_respects_global_max(self):
+        pm = PortfolioManager(swing_contracts=15, max_contracts=10)
+        assert pm.calculate_position_size(StrategyType.TAG_N_TURN, 500) == 10
 
-    def test_override_higher_than_calculated(self, portfolio):
-        """Calculated=5, override=10 -> override has no effect, returns 5."""
-        result = portfolio.calculate_position_size(
-            strategy=StrategyType.DAILY_INCOME,
-            max_risk_per_contract=200.0,
-            max_contracts_override=10,
-        )
-        assert result == 5
+    def test_bnb_uses_swing_contracts(self):
+        pm = PortfolioManager(swing_contracts=3, max_contracts=20)
+        assert pm.calculate_position_size(StrategyType.BNB, 500) == 3
+
+    def test_orb_uses_swing_contracts(self):
+        pm = PortfolioManager(swing_contracts=3, max_contracts=20)
+        assert pm.calculate_position_size(StrategyType.ORB, 500) == 3
+
+    def test_swing_min_contracts_floor(self):
+        """swing_contracts=0 still gets clamped to min_contracts=1."""
+        pm = PortfolioManager(swing_contracts=0, min_contracts=1, max_contracts=20)
+        assert pm.calculate_position_size(StrategyType.TAG_N_TURN, 500) == 1
 
 
-class TestOverrideVsGlobalMax:
-    """Test interaction between override and global max_contracts."""
+# ============================================================================
+# Display Helpers
+# ============================================================================
 
-    def test_global_max_wins_when_lower_than_override(self):
-        """Global max=3, override=10 -> global max wins at 3."""
-        pm = PortfolioManager(
-            account_size=100000.0,   # Large account
-            sizing_method="percent_risk",
-            risk_per_trade_pct=2.0,  # $2000 risk budget
-            min_contracts=1,
-            max_contracts=3,         # Global ceiling at 3
-        )
-        # $2000 / $100 risk = 20 contracts -> clamped to global 3
-        result = pm.calculate_position_size(
-            strategy=StrategyType.DAILY_INCOME,
-            max_risk_per_contract=100.0,
-            max_contracts_override=10,
-        )
-        assert result == 3
+class TestDIDisplayHelper:
 
-    def test_override_wins_when_lower_than_global_max(self):
-        """Global max=20, override=2 -> override wins at 2."""
-        pm = PortfolioManager(
-            account_size=100000.0,
-            sizing_method="percent_risk",
-            risk_per_trade_pct=2.0,
-            min_contracts=1,
-            max_contracts=20,
-        )
-        # $2000 / $100 = 20 contracts -> clamped to global 20 -> then override 2
-        result = pm.calculate_position_size(
-            strategy=StrategyType.DAILY_INCOME,
-            max_risk_per_contract=100.0,
-            max_contracts_override=2,
-        )
-        assert result == 2
+    def test_di_display_format(self):
+        pm = PortfolioManager(account_size=50000, max_daily_loss_pct=3.0,
+                              spread_width=5.0, daily_contracts=7, max_contracts=10)
+        calculated, cap = pm.get_calculated_di_contracts()
+        assert calculated == 3
+        assert cap == 7
+        summary = pm.get_position_sizing_summary()
+        assert summary['di_contracts_display'] == "3 / 7"
 
-    def test_both_constraints_applied_in_order(self):
-        """Global clamp first, then override. Global=5, override=3."""
-        pm = PortfolioManager(
-            account_size=100000.0,
-            sizing_method="percent_risk",
-            risk_per_trade_pct=2.0,
-            min_contracts=1,
-            max_contracts=5,
-        )
-        # $2000 / $100 = 20 -> clamped to 5 -> then capped to 3
-        result = pm.calculate_position_size(
-            strategy=StrategyType.DAILY_INCOME,
-            max_risk_per_contract=100.0,
-            max_contracts_override=3,
-        )
-        assert result == 3
+    def test_large_account_display(self):
+        """$200k, 3% -> 12 raw -> capped at daily=7 -> '7 / 7'."""
+        pm = PortfolioManager(account_size=200000, max_daily_loss_pct=3.0,
+                              spread_width=5.0, daily_contracts=7, max_contracts=10)
+        calculated, cap = pm.get_calculated_di_contracts()
+        assert calculated == 7
+        assert cap == 7
+
+    def test_max_contracts_caps_display(self):
+        """max_contracts=3 caps below daily_contracts=7 -> '3 / 7'."""
+        pm = PortfolioManager(account_size=200000, max_daily_loss_pct=3.0,
+                              spread_width=5.0, daily_contracts=7, max_contracts=3)
+        calculated, cap = pm.get_calculated_di_contracts()
+        assert calculated == 3
+        assert cap == 7
 
 
-class TestNoOverride:
-    """Test behavior when no override is provided."""
+# ============================================================================
+# Summary Dict
+# ============================================================================
 
-    def test_none_override_has_no_effect(self, portfolio):
-        """Default None override does not change result."""
-        result = portfolio.calculate_position_size(
-            strategy=StrategyType.DAILY_INCOME,
-            max_risk_per_contract=200.0,
-        )
-        # $1000 / $200 = 5 contracts
-        assert result == 5
+class TestPositionSizingSummary:
 
-    def test_explicit_none_override(self, portfolio):
-        """Explicitly passing None has no effect."""
-        result = portfolio.calculate_position_size(
-            strategy=StrategyType.DAILY_INCOME,
-            max_risk_per_contract=200.0,
-            max_contracts_override=None,
-        )
-        assert result == 5
+    def test_summary_keys(self):
+        pm = PortfolioManager(account_size=50000, max_daily_loss_pct=2.0,
+                              daily_contracts=7, swing_contracts=2,
+                              spread_width=5.0, min_contracts=1, max_contracts=20)
+        s = pm.get_position_sizing_summary()
+        assert s['daily_contracts'] == 7
+        assert s['swing_contracts'] == 2
+        assert s['spread_width'] == 5.0
+        assert s['max_contracts'] == 20
+        assert s['min_contracts'] == 1
+        assert 'calculated_di_contracts' in s
+        assert 'di_contracts_display' in s
 
-    def test_zero_override_ignored(self, portfolio):
-        """Override of 0 is treated as not provided."""
-        result = portfolio.calculate_position_size(
-            strategy=StrategyType.DAILY_INCOME,
-            max_risk_per_contract=200.0,
-            max_contracts_override=0,
-        )
-        assert result == 5
-
-    def test_negative_override_ignored(self, portfolio):
-        """Negative override is treated as not provided."""
-        result = portfolio.calculate_position_size(
-            strategy=StrategyType.DAILY_INCOME,
-            max_risk_per_contract=200.0,
-            max_contracts_override=-1,
-        )
-        assert result == 5
-
-
-class TestOverrideWithKelly:
-    """Test override works with kelly sizing method too."""
-
-    def test_kelly_result_capped_by_override(self):
-        pm = PortfolioManager(
-            account_size=50000.0,
-            sizing_method="kelly",
-            risk_per_trade_pct=2.0,
-            min_contracts=1,
-            max_contracts=20,
-        )
-        # Mock historical stats to return known values
-        # Kelly formula with these values produces a specific contract count
-        with patch.object(pm, '_get_historical_stats',
-                          return_value=(0.65, 150.0, 100.0, 50)):
-            result = pm.calculate_position_size(
-                strategy=StrategyType.DAILY_INCOME,
-                max_risk_per_contract=200.0,
-                max_contracts_override=2,
-            )
-        assert result <= 2
-
-
-class TestPerStrategyOverrides:
-    """Test that different strategies can have different overrides."""
-
-    def test_different_overrides_per_strategy(self, portfolio):
-        """Daily income capped at 5, TNT capped at 2."""
-        di_result = portfolio.calculate_position_size(
-            strategy=StrategyType.DAILY_INCOME,
-            max_risk_per_contract=100.0,  # $1000/$100 = 10 -> cap 5
-            max_contracts_override=5,
-        )
-        tnt_result = portfolio.calculate_position_size(
-            strategy=StrategyType.TAG_N_TURN,
-            max_risk_per_contract=100.0,  # $1000/$100 = 10 -> cap 2
-            max_contracts_override=2,
-        )
-        assert di_result == 5
-        assert tnt_result == 2
-
-
-class TestFixedContractsRemoved:
-    """Test that fixed_contracts sizing method is properly removed."""
-
-    def test_fixed_contracts_method_not_in_enum(self):
-        """fixed_contracts should not be a valid sizing method."""
-        with pytest.raises(ValueError):
-            PositionSizingMethod("fixed_contracts")
-
-    def test_stale_config_falls_back_to_percent_risk(self):
-        """Old config with fixed_contracts falls back gracefully."""
-        pm = PortfolioManager(
-            account_size=50000.0,
-            sizing_method="fixed_contracts",  # Old value
-            min_contracts=1,
-            max_contracts=20,
-        )
-        assert pm.sizing_method == PositionSizingMethod.PERCENT_RISK
+    def test_summary_display_value(self):
+        pm = PortfolioManager(account_size=50000, max_daily_loss_pct=2.0,
+                              spread_width=5.0, daily_contracts=7, max_contracts=20)
+        s = pm.get_position_sizing_summary()
+        # $50k * 2% = $1000 / ($5*100) = 2 contracts
+        assert s['di_contracts_display'] == "2 / 7"

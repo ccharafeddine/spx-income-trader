@@ -45,7 +45,7 @@ def _etrade_settings(**overrides):
     """Build a settings dict with E*TRADE as active broker."""
     base = {
         'broker': {'active': 'etrade'},
-        'portfolio': {'account_size': 50000, 'position_sizing': {'max_contracts': 1}},
+        'portfolio': {'account_size': 50000, 'max_contracts': 1},
     }
     base.update(overrides)
     return base
@@ -58,7 +58,7 @@ def _schwab_settings(**overrides):
             'active': 'schwab',
             'schwab': {'app_key': 'key', 'app_secret': 'secret', 'account_number': 'acct'},
         },
-        'portfolio': {'account_size': 50000, 'position_sizing': {'max_contracts': 1}},
+        'portfolio': {'account_size': 50000, 'max_contracts': 1},
     }
     base.update(overrides)
     return base
@@ -168,7 +168,7 @@ def test_all_checks_pass(mock_settings, mock_creds, client):
         'sandbox': False,
     }
     mock_settings.return_value = _etrade_settings(
-        portfolio={'account_size': 50000, 'position_sizing': {'max_contracts': 2}}
+        portfolio={'account_size': 50000, 'max_contracts': 2}
     )
 
     mock_broker = MagicMock()
@@ -196,7 +196,7 @@ def test_warnings_only_allows_proceed(mock_settings, mock_creds, client):
     mock_settings.return_value = _etrade_settings(
         portfolio={
             'account_size': 50000,
-            'position_sizing': {'max_contracts': 10},  # warning: >2
+            'max_contracts': 10,  # warning: >2
         }
     )
 
@@ -226,7 +226,7 @@ def test_warnings_only_allows_proceed(mock_settings, mock_creds, client):
 @patch('dashboard.app._load_settings')
 def test_schwab_all_checks_pass(mock_settings, mock_schwab_cfg, client):
     mock_settings.return_value = _schwab_settings(
-        portfolio={'account_size': 50000, 'position_sizing': {'max_contracts': 1}}
+        portfolio={'account_size': 50000, 'max_contracts': 1}
     )
 
     mock_broker = MagicMock()
@@ -249,7 +249,7 @@ def test_schwab_all_checks_pass(mock_settings, mock_schwab_cfg, client):
 def test_schwab_missing_creds_blocks(mock_settings, mock_schwab_cfg, client):
     mock_settings.return_value = {
         'broker': {'active': 'schwab', 'schwab': {}},
-        'portfolio': {'account_size': 50000, 'position_sizing': {'max_contracts': 1}},
+        'portfolio': {'account_size': 50000, 'max_contracts': 1},
     }
 
     data = _post_validate(client)
@@ -266,7 +266,7 @@ def test_schwab_missing_creds_blocks(mock_settings, mock_schwab_cfg, client):
 def test_dry_run_blocks_live(mock_settings, client):
     mock_settings.return_value = {
         'broker': {'active': 'dry_run'},
-        'portfolio': {'account_size': 50000, 'position_sizing': {'max_contracts': 1}},
+        'portfolio': {'account_size': 50000, 'max_contracts': 1},
     }
 
     data = _post_validate(client)
