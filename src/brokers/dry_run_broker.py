@@ -31,6 +31,63 @@ from config.settings import BASE_DIR
 logger = logging.getLogger(__name__)
 
 
+class BidAskModel:
+    """Models realistic bid-ask spreads based on VIX and time of day.
+
+    Returns half-spread (slippage per leg) that varies with market
+    conditions.  Multiply by 2 for total round-trip spread slippage.
+    """
+
+    # Empirically observed SPX 0DTE spread widths by VIX regime
+    VIX_MULTIPLIERS = {
+        'low':      1.0,   # VIX < 15:  baseline
+        'normal':   1.3,   # VIX 15-20: 30% wider
+        'elevated': 1.8,   # VIX 20-30: 80% wider
+        'high':     2.5,   # VIX > 30:  150% wider
+    }
+
+    # Time of day adjustments (0DTE liquidity patterns)
+    TIME_MULTIPLIERS = {
+        'open':      1.4,  # 09:30-10:00: wide, market just opened
+        'morning':   1.0,  # 10:00-11:30: tightest spreads
+        'midday':    1.1,  # 11:30-13:00: slightly wider
+        'afternoon': 1.2,  # 13:00-15:00: widening
+        'close':     1.6,  # 15:00-16:00: widest, low liquidity
+    }
+
+    BASE_SPREAD = 0.02  # $0.02 per leg baseline
+
+    def get_spread(self, vix: float, hour: int, minute: int) -> float:
+        """Return half-spread (slippage per leg) based on conditions."""
+        # VIX regime
+        if vix < 15:
+            vix_mult = self.VIX_MULTIPLIERS['low']
+        elif vix < 20:
+            vix_mult = self.VIX_MULTIPLIERS['normal']
+        elif vix < 30:
+            vix_mult = self.VIX_MULTIPLIERS['elevated']
+        else:
+            vix_mult = self.VIX_MULTIPLIERS['high']
+
+        # Time of day
+        t = hour * 60 + minute
+        if t < 570:       # before 9:30
+            time_mult = self.TIME_MULTIPLIERS['open']
+        elif t < 600:     # 9:30-10:00
+            time_mult = self.TIME_MULTIPLIERS['open']
+        elif t < 690:     # 10:00-11:30
+            time_mult = self.TIME_MULTIPLIERS['morning']
+        elif t < 780:     # 11:30-13:00
+            time_mult = self.TIME_MULTIPLIERS['midday']
+        elif t < 900:     # 13:00-15:00
+            time_mult = self.TIME_MULTIPLIERS['afternoon']
+        else:             # 15:00-16:00
+            time_mult = self.TIME_MULTIPLIERS['close']
+
+        spread = self.BASE_SPREAD * vix_mult * time_mult
+        return round(spread, 4)
+
+
 class DryRunBroker(BrokerInterface):
     """
     Broker for dry-run testing with real market data.
@@ -67,6 +124,9 @@ class DryRunBroker(BrokerInterface):
         # Options chain simulation parameters
         self.spread_width = 0.20  # Bid-ask spread
         self.strike_interval = 5  # SPX strikes are $5 apart
+
+        # VIX-aware bid-ask slippage model
+        self.bid_ask_model = BidAskModel()
 
         # Track which pricing source was used for the last chain
         self._last_chain_source = None  # 'real' or 'synthetic'
@@ -383,6 +443,32 @@ class DryRunBroker(BrokerInterface):
         logger.debug(f"Generated synthetic chain with {len(chain)} strikes around ${atm_strike}")
         return chain
 
+    def _get_current_slippage(self) -> tuple:
+        """Return (per_leg_slippage, vix_value) based on current conditions.
+
+        Falls back to BidAskModel.BASE_SPREAD if VIX is unavailable.
+        """
+        vix = None
+        try:
+            vix_quote = self.market_data.get_vix_quote()
+            if vix_quote:
+                vix = vix_quote.get('price')
+        except Exception:
+            pass
+
+        now = datetime.now(self.tz)
+        if vix is not None:
+            per_leg = self.bid_ask_model.get_spread(vix, now.hour, now.minute)
+        else:
+            per_leg = BidAskModel.BASE_SPREAD
+            logger.warning("VIX unavailable for bid-ask model, using baseline $%.4f/leg", per_leg)
+
+        logger.debug(
+            "Bid-ask spread: $%.4f/leg (VIX=%s, time=%d:%02d)",
+            per_leg, f"{vix:.1f}" if vix else "N/A", now.hour, now.minute,
+        )
+        return per_leg, vix
+
     def place_spread_order(
         self,
         spread: CreditSpread,
@@ -398,17 +484,11 @@ class DryRunBroker(BrokerInterface):
         self.order_counter += 1
         order_id = f"DRY-{datetime.now().strftime('%Y%m%d%H%M%S')}-{self.order_counter}"
 
-        # Calculate fill price (simulated)
-        fill_price = limit_price if limit_price else spread.credit_received
-
-        # Capture VIX at signal time
-        vix_at_signal = None
-        try:
-            vix_quote = self.market_data.get_vix_quote()
-            if vix_quote:
-                vix_at_signal = vix_quote.get('price')
-        except Exception:
-            pass
+        # Calculate fill price with dynamic bid-ask slippage
+        raw_price = limit_price if limit_price else spread.credit_received
+        per_leg, vix_at_signal = self._get_current_slippage()
+        slippage = per_leg * 2  # both legs of the spread
+        fill_price = max(0.01, raw_price - slippage)
 
         # Log the signal
         signal_data = {
@@ -496,6 +576,11 @@ class DryRunBroker(BrokerInterface):
         """SIMULATE closing a spread."""
         self.order_counter += 1
         order_id = f"DRY-CLOSE-{datetime.now().strftime('%Y%m%d%H%M%S')}-{self.order_counter}"
+
+        # Apply dynamic bid-ask slippage to debit
+        per_leg, _ = self._get_current_slippage()
+        slippage = per_leg * 2
+        limit_price = limit_price + slippage
 
         # Log the signal
         signal_data = {

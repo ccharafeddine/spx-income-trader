@@ -14,6 +14,7 @@ from typing import Dict, Optional
 import pytz
 
 from src.brokers.base import BrokerInterface
+from src.brokers.dry_run_broker import BidAskModel
 from src.models.spread import CreditSpread, TradeDirection
 
 logger = logging.getLogger(__name__)
@@ -32,14 +33,6 @@ class BacktestBroker(BrokerInterface):
     - Tracks simulated account balance
     """
 
-    # VIX-aware slippage tiers (per-leg)
-    _VIX_SLIPPAGE_TIERS = [
-        (15, 0.05),   # VIX < 15
-        (20, 0.08),   # VIX 15-20
-        (30, 0.12),   # VIX 20-30
-        (float('inf'), 0.20),  # VIX > 30
-    ]
-
     def __init__(
         self,
         initial_capital: float = 50000.0,
@@ -47,7 +40,8 @@ class BacktestBroker(BrokerInterface):
     ):
         self.initial_capital = initial_capital
         self.balance = initial_capital
-        self._flat_slippage = slippage  # None = use VIX model
+        self._flat_slippage = slippage  # None = use BidAskModel
+        self._bid_ask_model = BidAskModel()
 
         # Current market state (set externally by engine each bar)
         self._current_price: float = 0.0
@@ -86,16 +80,19 @@ class BacktestBroker(BrokerInterface):
         """Return total per-contract slippage (both legs combined).
 
         Flat override: used as-is (backward compat).
-        VIX model: per-leg value * 2 (short + long leg).
+        BidAskModel: per-leg value * 2 (short + long leg), using VIX + time.
         """
         if self._flat_slippage is not None:
             return self._flat_slippage
 
         vix = self._current_vix
-        for threshold, per_leg in self._VIX_SLIPPAGE_TIERS:
-            if vix < threshold:
-                return per_leg * 2
-        return 0.40  # fallback (0.20 * 2)
+        if self._current_dt:
+            hour = self._current_dt.hour
+            minute = self._current_dt.minute
+        else:
+            hour, minute = 10, 30  # default to morning if no dt
+        per_leg = self._bid_ask_model.get_spread(vix, hour, minute)
+        return per_leg * 2
 
     def get_current_price(self, symbol: str) -> float:
         """Return the current bar's close price."""

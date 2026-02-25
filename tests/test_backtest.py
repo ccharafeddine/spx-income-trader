@@ -756,44 +756,44 @@ class TestVIXAwareSlippage:
         assert broker._get_slippage() == 0.02
 
     def test_vix_model_low_vix(self):
-        """VIX < 15 should give $0.10 total slippage ($0.05/leg * 2)."""
+        """VIX < 15 at 10:00 (morning): $0.02/leg * 1.0 * 1.0 * 2 = $0.04."""
         from src.backtest.sim_broker import BacktestBroker
         broker = BacktestBroker(initial_capital=50000, slippage=None)
         broker.set_market_state(
             price=5000.0, bar_high=5010.0, bar_low=4990.0,
             vix=12.0, dt=ET.localize(datetime(2024, 1, 2, 10, 0)),
         )
-        assert broker._get_slippage() == 0.10
+        assert broker._get_slippage() == pytest.approx(0.04)
 
     def test_vix_model_high_vix(self):
-        """VIX > 30 should give $0.40 total slippage ($0.20/leg * 2)."""
+        """VIX > 30 at 10:00 (morning): $0.02 * 2.5 * 1.0 * 2 = $0.10."""
         from src.backtest.sim_broker import BacktestBroker
         broker = BacktestBroker(initial_capital=50000, slippage=None)
         broker.set_market_state(
             price=5000.0, bar_high=5010.0, bar_low=4990.0,
             vix=35.0, dt=ET.localize(datetime(2024, 1, 2, 10, 0)),
         )
-        assert broker._get_slippage() == 0.40
+        assert broker._get_slippage() == pytest.approx(0.10)
 
     def test_vix_model_normal_vix(self):
-        """VIX 15-20 should give $0.16 total slippage ($0.08/leg * 2)."""
+        """VIX 15-20 at 10:00 (morning): $0.02 * 1.3 * 1.0 * 2 = $0.052."""
         from src.backtest.sim_broker import BacktestBroker
         broker = BacktestBroker(initial_capital=50000, slippage=None)
         broker.set_market_state(
             price=5000.0, bar_high=5010.0, bar_low=4990.0,
             vix=18.0, dt=ET.localize(datetime(2024, 1, 2, 10, 0)),
         )
-        assert broker._get_slippage() == 0.16
+        assert broker._get_slippage() == pytest.approx(0.052)
 
     def test_vix_model_elevated_vix(self):
-        """VIX 20-30 should give $0.24 total slippage ($0.12/leg * 2)."""
+        """VIX 20-30 at 10:00 (morning): $0.02 * 1.8 * 1.0 * 2 = $0.072."""
         from src.backtest.sim_broker import BacktestBroker
         broker = BacktestBroker(initial_capital=50000, slippage=None)
         broker.set_market_state(
             price=5000.0, bar_high=5010.0, bar_low=4990.0,
             vix=25.0, dt=ET.localize(datetime(2024, 1, 2, 10, 0)),
         )
-        assert broker._get_slippage() == 0.24
+        assert broker._get_slippage() == pytest.approx(0.072)
 
     def test_slippage_applied_both_legs_on_entry(self):
         """Entry fill should subtract total slippage (per-leg * 2)."""
@@ -803,7 +803,7 @@ class TestVIXAwareSlippage:
         broker = BacktestBroker(initial_capital=50000, slippage=None)
         broker.set_market_state(
             price=5000.0, bar_high=5010.0, bar_low=4990.0,
-            vix=12.0,  # $0.05/leg -> $0.10 total
+            vix=12.0,  # $0.02/leg -> $0.04 total at 10:00
             dt=ET.localize(datetime(2024, 1, 2, 10, 0)),
         )
         spread = CreditSpread(
@@ -817,8 +817,8 @@ class TestVIXAwareSlippage:
         )
         order_id = broker.place_spread_order(spread, 1)
         status = broker.get_order_status(order_id)
-        # 1.50 - (0.05*2) = 1.40
-        assert abs(status['fill_price'] - 1.40) < 0.01
+        # 1.50 - 0.04 = 1.46
+        assert abs(status['fill_price'] - 1.46) < 0.01
 
     def test_default_slippage_is_none(self):
         """BacktestBroker() with no slippage arg should default to VIX model."""
@@ -900,7 +900,7 @@ class TestCreditFlagging:
             slippage=None,
         )
         results = engine.run()
-        assert results['slippage_model'] == 'vix_aware'
+        assert results['slippage_model'] == 'vix_time_aware'
         assert results['half_day_calendar'] is True
         assert 'slippage_detail' in results
 
@@ -921,7 +921,7 @@ class TestCreditFlagging:
         report = generate_report(results)
 
         assert 'assumptions' in report
-        assert report['assumptions']['slippage_model'] == 'vix_aware'
+        assert report['assumptions']['slippage_model'] == 'vix_time_aware'
         assert report['assumptions']['half_day_calendar'] is True
         assert 'fill_model' in report['assumptions']
         assert 'pricing_model' in report['assumptions']

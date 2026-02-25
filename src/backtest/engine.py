@@ -237,8 +237,8 @@ class BacktestEngine:
         # Slippage metadata
         self._slippage_param = slippage
         if slippage is None:
-            self._slippage_model = 'vix_aware'
-            self._slippage_detail = 'VIX-aware per-leg: $0.05-$0.20'
+            self._slippage_model = 'vix_time_aware'
+            self._slippage_detail = 'VIX + time-of-day per-leg: $0.02-$0.08'
         else:
             self._slippage_model = 'flat'
             self._slippage_detail = f'${slippage:.2f}/leg (${slippage * 2:.2f}/contract)'
