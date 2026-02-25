@@ -220,6 +220,7 @@ class BacktestEngine:
         daily_contracts: Optional[int] = None,
         swing_contracts: Optional[int] = None,
         slippage: Optional[float] = None,
+        fill_quality_factor: float = 1.0,
         max_daily_loss_pct: float = 2.0,
         progress_callback=None,
         strategies: Optional[Dict] = None,
@@ -234,6 +235,9 @@ class BacktestEngine:
         self.max_daily_loss_pct = max_daily_loss_pct
         self.progress_callback = progress_callback
 
+        # Fill quality factor (1.0 = theoretical mid, <1.0 = reduced entry credit)
+        self._fill_quality_factor = fill_quality_factor
+
         # Slippage metadata
         self._slippage_param = slippage
         if slippage is None:
@@ -247,6 +251,7 @@ class BacktestEngine:
         self.broker = BacktestBroker(
             initial_capital=initial_capital,
             slippage=slippage,
+            fill_quality_factor=fill_quality_factor,
         )
 
         # Initialize DI strategy (SAME class as live trading)
@@ -468,6 +473,7 @@ class BacktestEngine:
             'slippage_model': self._slippage_model,
             'slippage_detail': self._slippage_detail,
             'half_day_calendar': True,
+            'fill_quality_factor': self._fill_quality_factor,
             'flagged_credit_count': self._flagged_credit_count,
             'direction_filter_skips': self._direction_filter_skips,
         }

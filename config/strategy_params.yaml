@@ -229,3 +229,9 @@ notifications:
     enabled: false
     url: ""
     min_level: "warning"
+
+# ============================================
+# BACKTEST DEFAULTS
+# ============================================
+backtest:
+  fill_quality_factor: 1.0   # 1.0 = theoretical mid, 0.90 = 10% worse fills

@@ -37,11 +37,13 @@ class BacktestBroker(BrokerInterface):
         self,
         initial_capital: float = 50000.0,
         slippage: Optional[float] = None,
+        fill_quality_factor: float = 1.0,
     ):
         self.initial_capital = initial_capital
         self.balance = initial_capital
         self._flat_slippage = slippage  # None = use BidAskModel
         self._bid_ask_model = BidAskModel()
+        self._fill_quality_factor = fill_quality_factor
 
         # Current market state (set externally by engine each bar)
         self._current_price: float = 0.0
@@ -171,6 +173,8 @@ class BacktestBroker(BrokerInterface):
         fill_price = limit_price if limit_price else spread.credit_received
         # Apply slippage (total for both legs)
         fill_price = max(0.01, fill_price - self._get_slippage())
+        # Apply fill quality factor (entry credit only, not exits)
+        fill_price = max(0.01, fill_price * self._fill_quality_factor)
 
         credit = fill_price * quantity * 100
         self.balance += credit

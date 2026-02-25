@@ -5152,6 +5152,7 @@ def api_backtest_run():
     swing_contracts = int(data.get('swing_contracts', 2))
     slippage_raw = data.get('slippage', None)
     slippage = float(slippage_raw) if slippage_raw else None
+    fill_quality_factor = float(data.get('fill_quality_factor', 1.0))
     max_daily_loss = float(data.get('max_daily_loss', 2.0))
     strategies = data.get('strategies', None)
 
@@ -5180,6 +5181,7 @@ def api_backtest_run():
         'min_credit': min_credit,
         'max_contracts': max_contracts,
         'slippage': slippage,
+        'fill_quality_factor': fill_quality_factor,
         'max_daily_loss': max_daily_loss,
         'strategies': strategies,
     }
@@ -5226,6 +5228,7 @@ def api_backtest_run():
                 daily_contracts=daily_contracts,
                 swing_contracts=swing_contracts,
                 slippage=slippage,
+                fill_quality_factor=fill_quality_factor,
                 max_daily_loss_pct=max_daily_loss,
                 progress_callback=progress_cb,
                 strategies=strategies,

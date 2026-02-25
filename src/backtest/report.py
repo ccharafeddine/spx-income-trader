@@ -85,6 +85,7 @@ def generate_report(
         'slippage_detail': results.get('slippage_detail', '$0.02/contract'),
         'fill_model': 'Instant full fill at theoretical mid',
         'pricing_model': 'Black-Scholes synthetic chain (VIX as IV)',
+        'fill_quality_factor': results.get('fill_quality_factor', 1.0),
         'half_day_calendar': results.get('half_day_calendar', False),
         'flagged_credit_count': results.get('flagged_credit_count', 0),
     }
