@@ -114,6 +114,60 @@ class BarAggregator5Min:
 
         return bar
 
+    def backfill(self, bars: List[Bar]) -> int:
+        """Seed the aggregator with historical 5-minute bars.
+
+        Bars should be sorted oldest-first. Only bars whose interval has
+        fully elapsed (end <= now) are added. Bars outside market hours
+        are skipped. Returns the number of bars injected.
+        """
+        if not bars:
+            return 0
+
+        now = datetime.now(self.tz)
+        count = 0
+
+        for bar in bars:
+            ts = bar.timestamp
+            if ts.tzinfo is None:
+                ts = self.tz.localize(ts)
+            else:
+                ts = ts.astimezone(self.tz)
+
+            t = ts.time()
+            if t < MARKET_OPEN or t >= MARKET_CLOSE:
+                continue
+
+            # Only add bars whose interval has fully elapsed
+            bar_end = ts + timedelta(minutes=self.interval_minutes)
+            if bar_end > now:
+                continue
+
+            self.completed_bars.append(Bar(
+                timestamp=ts,
+                open=bar.open,
+                high=bar.high,
+                low=bar.low,
+                close=bar.close,
+                volume=getattr(bar, 'volume', 0),
+            ))
+            count += 1
+
+        # Evict oldest if over limit
+        if len(self.completed_bars) > MAX_BARS:
+            self.completed_bars = self.completed_bars[-MAX_BARS:]
+
+        # Set current_bar_end so next live tick starts a new bar correctly
+        if self.completed_bars:
+            last = self.completed_bars[-1]
+            last_ts = last.timestamp
+            if last_ts.tzinfo is None:
+                last_ts = self.tz.localize(last_ts)
+            self.current_bar_end = last_ts + timedelta(minutes=self.interval_minutes)
+
+        logger.info(f"Backfilled {count} 5-min bars from history")
+        return count
+
     def get_bars(self, count: int = None) -> List[Bar]:
         """Get completed bars (most recent last)."""
         if count is None:

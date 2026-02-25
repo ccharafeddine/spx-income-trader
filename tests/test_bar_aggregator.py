@@ -16,11 +16,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from unittest.mock import patch, MagicMock
 
 from src.core.bar_aggregator_5min import BarAggregator5Min, MAX_BARS
+from src.models.bar import Bar
 
 ET = pytz.timezone("America/New_York")
 
@@ -406,3 +407,128 @@ class TestBuildingBarIncluded:
         assert agg.current_bar_start is not None
         assert agg.open_price == 5800.0
         assert agg.high_price == 5810.0
+
+
+class TestBackfill:
+    """Backfill aggregator with historical bars."""
+
+    def test_backfill_populates_completed_bars(self, agg):
+        """Backfilling with valid bars populates completed_bars."""
+        now = datetime.now(ET)
+        bars = []
+        for i in range(5):
+            ts = ET.localize(datetime(now.year, now.month, now.day, 10, i * 5))
+            # Only include bars far enough in the past to have fully elapsed
+            bar_end = ts + timedelta(minutes=5)
+            if bar_end > now:
+                break
+            bars.append(Bar(
+                timestamp=ts,
+                open=5800.0 + i,
+                high=5810.0 + i,
+                low=5790.0 + i,
+                close=5805.0 + i,
+                volume=100 + i,
+            ))
+
+        if not bars:
+            pytest.skip("No fully-elapsed 5-min bars available at current time")
+
+        count = agg.backfill(bars)
+        assert count == len(bars)
+        assert len(agg.get_bars()) == len(bars)
+        # Bars are ordered oldest-first
+        assert agg.get_bars()[0].open == bars[0].open
+        assert agg.get_bars()[-1].close == bars[-1].close
+
+    def test_backfill_skips_future_bars(self, agg):
+        """Bars whose interval hasn't elapsed yet are excluded."""
+        now = datetime.now(ET)
+        # Bar far in the past (should be included)
+        past_ts = ET.localize(datetime(now.year, now.month, now.day, 9, 30))
+        # Bar in the future (should be excluded)
+        future_ts = now + timedelta(hours=1)
+
+        bars = [
+            Bar(timestamp=past_ts, open=5800, high=5810, low=5790, close=5805, volume=100),
+            Bar(timestamp=future_ts, open=5900, high=5910, low=5890, close=5905, volume=200),
+        ]
+
+        # Only the past bar's interval has elapsed
+        past_end = past_ts + timedelta(minutes=5)
+        if past_end > now:
+            pytest.skip("Cannot test past bar at current time")
+
+        count = agg.backfill(bars)
+        assert count == 1
+        assert len(agg.get_bars()) == 1
+        assert agg.get_bars()[0].open == 5800
+
+    def test_backfill_respects_max_bars(self, agg):
+        """Backfilling more than MAX_BARS keeps only the newest."""
+        # Use a fixed past date so all bars are fully elapsed
+        with patch('src.core.bar_aggregator_5min.datetime') as mock_dt:
+            mock_dt.now.return_value = ET.localize(datetime(2026, 2, 20, 15, 55))
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+            bars = []
+            for i in range(30):
+                h = 9 + (30 + i * 5) // 60
+                m = (30 + i * 5) % 60
+                if h >= 16:
+                    break
+                ts = ET.localize(datetime(2026, 2, 20, h, m))
+                bars.append(Bar(
+                    timestamp=ts,
+                    open=5800.0 + i,
+                    high=5810.0 + i,
+                    low=5790.0 + i,
+                    close=5805.0 + i,
+                    volume=100,
+                ))
+
+            count = agg.backfill(bars)
+            assert count == len(bars)
+            stored = agg.get_bars()
+            assert len(stored) <= MAX_BARS
+            # Should keep the newest bars
+            assert stored[-1].open == bars[-1].open
+
+
+class TestLabelOverlapResolution:
+    """Overlapping chart labels at the same candle get offset."""
+
+    def test_overlapping_labels_get_directional_offset(self):
+        """When entry marker and price tag share x, later label is offset."""
+        from dashboard.chart_utils import resolve_label_overlaps
+
+        annotations = [
+            # Paper-anchored watermark (should be ignored)
+            {'x': 0.5, 'y': 0.5, 'xref': 'paper', 'yref': 'paper',
+             'showarrow': False, 'ay': 0},
+            # Open position entry at 10:00 (bearish)
+            {'x': '10:00', 'y': 5800, 'xref': 'x', 'yref': 'y',
+             'showarrow': True, 'ay': -22, '_direction': 'bearish'},
+            # Closed trade entry also at 10:00 (bullish)
+            {'x': '10:00', 'y': 5810, 'xref': 'x', 'yref': 'y',
+             'showarrow': True, 'ay': -18, '_direction': 'bullish'},
+            # Entry at different candle, on a pulse bar (bearish)
+            {'x': '10:30', 'y': 5820, 'xref': 'x', 'yref': 'y',
+             'showarrow': True, 'ay': -22, '_direction': 'bearish'},
+            # Lone entry at 11:00, no collision, no pulse
+            {'x': '11:00', 'y': 5830, 'xref': 'x', 'yref': 'y',
+             'showarrow': True, 'ay': -22, '_direction': 'bullish'},
+        ]
+
+        resolve_label_overlaps(annotations, pulse_x_set={'10:30'})
+
+        # Paper-anchored annotation untouched
+        assert annotations[0]['ay'] == 0
+        # First at 10:00: unchanged (keeps original position)
+        assert annotations[1]['ay'] == -22
+        # Second at 10:00: bullish -> -15px offset
+        assert annotations[2]['ay'] == -18 + (-15)
+        # Single at pulse bar 10:30: bearish -> +15px offset
+        assert annotations[3]['ay'] == -22 + 15
+        # No collision at 11:00: unchanged
+        assert annotations[4]['ay'] == -22

@@ -4842,6 +4842,7 @@ function renderChart(d) {
             font: {color: markerColor, size: 10, family: 'DM Sans'},
             bgcolor: 'rgba(10,14,23,0.9)', bordercolor: markerColor,
             borderwidth: 1, borderpad: 3, arrowcolor: markerColor,
+            _direction: isBullish ? 'bullish' : 'bearish',
           });
         }
       }
@@ -4858,6 +4859,7 @@ function renderChart(d) {
     (d.trades || []).forEach(trade => {
       const pnl = trade.pnl || 0;
       const isWinner = pnl >= 0;
+      const isBullishTrade = trade.direction === 'bullish';
       const markerColor = isWinner ? '#10b981' : '#ef4444';
 
       const entryTimeStr = trade.entry_time ? trade.entry_time.substring(11, 16) : null;
@@ -4880,6 +4882,7 @@ function renderChart(d) {
         font: {color: markerColor, size: 9, family: 'DM Sans'},
         bgcolor: 'rgba(10,14,23,0.9)', bordercolor: markerColor,
         borderwidth: 1, borderpad: 2, arrowcolor: markerColor,
+        _direction: isBullishTrade ? 'bullish' : 'bearish',
       });
 
       // Exit X marker and connecting line
@@ -4905,6 +4908,7 @@ function renderChart(d) {
             font: {color: markerColor, size: 9, family: 'DM Sans'},
             bgcolor: 'rgba(10,14,23,0.9)', bordercolor: markerColor,
             borderwidth: 1, borderpad: 2, arrowcolor: markerColor,
+            _direction: isBullishTrade ? 'bullish' : 'bearish',
           });
 
           // Include exit price in y-range
@@ -4919,6 +4923,32 @@ function renderChart(d) {
       if (yRangeMin != null) {
         yRangeMin = Math.min(yRangeMin, entryPrice - 3);
         yRangeMax = Math.max(yRangeMax, entryPrice + 3);
+      }
+    });
+
+    // --- Resolve overlapping entry/price labels at the same candle ---
+    const _markerByX = new Map();
+    annotations.forEach((ann, idx) => {
+      if (ann.xref === 'x' && ann.yref === 'y' && ann.showarrow) {
+        const key = String(ann.x);
+        if (!_markerByX.has(key)) _markerByX.set(key, []);
+        _markerByX.get(key).push(idx);
+      }
+    });
+    _markerByX.forEach((indices, xKey) => {
+      // Multiple labels at same candle -> offset later ones
+      if (indices.length > 1) {
+        for (let i = 1; i < indices.length; i++) {
+          const ann = annotations[indices[i]];
+          const isBearish = ann._direction === 'bearish';
+          ann.ay += isBearish ? 15 : -15;
+        }
+      }
+      // Single label on a pulse bar -> also offset
+      if (chartTimeframe === '30m' && pulseTimes.has(xKey) && indices.length === 1) {
+        const ann = annotations[indices[0]];
+        const isBearish = ann._direction === 'bearish';
+        ann.ay += isBearish ? 15 : -15;
       }
     });
 

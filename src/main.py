@@ -545,6 +545,31 @@ class TradingBot:
             except Exception as e:
                 logger.warning(f"Tag 'n Turn seed failed: {e}")
 
+        # Backfill 5-min chart with today's bars from Yahoo Finance
+        try:
+            from src.data.yahoo_finance import YahooFinanceProvider
+            yahoo = YahooFinanceProvider()
+            bars_5m = yahoo.get_intraday_bars(interval='5m', period='1d')
+            if bars_5m:
+                from src.models.bar import Bar as BarModel
+                bar_objects = [
+                    BarModel(
+                        timestamp=b['timestamp'],
+                        open=b['open'],
+                        high=b['high'],
+                        low=b['low'],
+                        close=b['close'],
+                        volume=b.get('volume', 0),
+                    )
+                    for b in bars_5m
+                ]
+                filled = self.bar_aggregator_5min.backfill(bar_objects)
+                logger.info(f"5-min chart: backfilled {filled} bars from Yahoo Finance")
+            else:
+                logger.debug("No 5-min intraday bars available from Yahoo for backfill")
+        except Exception as e:
+            logger.warning(f"5-min chart backfill failed (will build from live data): {e}")
+
         try:
             self._run_main_loop()
         except KeyboardInterrupt:
