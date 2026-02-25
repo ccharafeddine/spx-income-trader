@@ -57,17 +57,17 @@ def _black_scholes_price(S, K, T, r, sigma, option_type):
 
 
 def _merton_jump_price(S, K, T, r, sigma, option_type,
-                       lam=0.75, mu_j=-0.02, sigma_j=0.03,
+                       lam=0.3, mu_j=-0.015, sigma_j=0.02,
                        n_terms=10):
     """Merton jump-diffusion option price.
 
     Adds a Poisson jump process on top of Black-Scholes diffusion,
     producing fatter tails and more realistic OTM pricing for 0DTE.
 
-    Parameters calibrated for SPX 0DTE:
-      lam=0.75:    ~0.75 jumps/year (roughly 1 per quarter)
-      mu_j=-0.02:  average jump size -2% (negative skew for equities)
-      sigma_j=0.03: jump size std dev 3% (range roughly -8% to +4%)
+    Parameters calibrated for SPX 0DTE (conservative):
+      lam=0.3:     ~0.3 jumps/year (roughly 1 per 3 years)
+      mu_j=-0.015: average jump size -1.5% (negative skew for equities)
+      sigma_j=0.02: jump size std dev 2% (tight jump distribution)
       n_terms=10:  Poisson series terms (sufficient accuracy)
     """
     if T <= 0:
