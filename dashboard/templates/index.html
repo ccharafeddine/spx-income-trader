@@ -4869,6 +4869,9 @@ function renderChart(d) {
 
       if (!entryTimeStr || !entryPrice) return;
 
+      // Skip active/open trades — already rendered by the open positions loop
+      if (!exitTimeStr || !exitPrice) return;
+
       const entryIdx = _findClosestBarIdx(sortedTimestamps, sortedCloses, entryTimeStr);
       if (entryIdx < 0) return;
       const entryX = sortedTimestamps[entryIdx];
