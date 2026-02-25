@@ -731,6 +731,7 @@ header {
       <select class="form-select" id="active-broker-select" onchange="onBrokerChanged()">
         <option value="schwab" {% if active_broker == 'schwab' %}selected{% endif %}>Charles Schwab</option>
         <option value="etrade" {% if active_broker == 'etrade' %}selected{% endif %}>E*TRADE</option>
+        <option value="ibkr" {% if active_broker == 'ibkr' %}selected{% endif %}>Interactive Brokers</option>
         <option value="dry_run" {% if active_broker == 'dry_run' or not active_broker %}selected{% endif %}>Dry Run (No Broker)</option>
       </select>
     </div>
@@ -975,6 +976,43 @@ header {
     </div>
   </div>
 
+  <!-- IBKR Connection Status -->
+  <div class="panel broker-section" id="ibkr-section" style="display:none;">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">Interactive Brokers Connection</div>
+        <div class="panel-subtitle">TWS / IB Gateway connection status</div>
+      </div>
+      <span class="status-badge" id="ibkr-status-badge">Checking...</span>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:16px;">
+      <span class="dot" id="ibkr-conn-dot"></span>
+      <span id="ibkr-conn-text">Checking connection...</span>
+    </div>
+
+    <div class="pdt-grid">
+      <div class="pdt-stat">
+        <div class="value" id="ibkr-host">-</div>
+        <div class="label">Host</div>
+      </div>
+      <div class="pdt-stat">
+        <div class="value" id="ibkr-port">-</div>
+        <div class="label">Port</div>
+      </div>
+      <div class="pdt-stat">
+        <div class="value" id="ibkr-paper">-</div>
+        <div class="label">Paper Trading</div>
+      </div>
+    </div>
+
+    <div style="margin-top:16px; display:flex; gap:12px;">
+      <button type="button" class="btn btn-primary" id="ibkr-connect-btn" onclick="ibkrConnect()">Connect</button>
+      <button type="button" class="btn btn-secondary" id="ibkr-disconnect-btn" onclick="ibkrDisconnect()">Disconnect</button>
+    </div>
+    <div id="ibkr-result" style="margin-top:12px; padding:12px; border-radius:6px; font-size:13px; display:none;"></div>
+  </div>
+
   <!-- PDT Protection -->
   <div class="panel">
     <div class="panel-header">
@@ -1122,6 +1160,7 @@ function showBrokerSections(broker) {
   document.getElementById('schwab-token-section').style.display = 'none';
   document.getElementById('etrade-creds-section').style.display = 'none';
   document.getElementById('etrade-conn-section').style.display = 'none';
+  document.getElementById('ibkr-section').style.display = 'none';
 
   if (broker === 'schwab') {
     document.getElementById('schwab-section').style.display = '';
@@ -1131,12 +1170,15 @@ function showBrokerSections(broker) {
     document.getElementById('etrade-creds-section').style.display = '';
     document.getElementById('etrade-conn-section').style.display = '';
     loadETradeStatus();
+  } else if (broker === 'ibkr') {
+    document.getElementById('ibkr-section').style.display = '';
+    loadIbkrStatus();
   }
   // dry_run: nothing shown
 
   // Update badge
   const badge = document.getElementById('broker-badge');
-  const labels = {schwab: 'Schwab', etrade: 'E*TRADE', dry_run: 'Dry Run'};
+  const labels = {schwab: 'Schwab', etrade: 'E*TRADE', ibkr: 'IBKR', dry_run: 'Dry Run'};
   badge.textContent = labels[broker] || broker;
 }
 
@@ -1782,6 +1824,116 @@ if (activeBroker === 'etrade') {
 // Refresh Schwab token status periodically if Schwab is active
 if (activeBroker === 'schwab') {
   setInterval(loadSchwabTokenStatus, 60000);
+}
+
+// ---------------------------------------------------------------------------
+// IBKR Connection Management
+// ---------------------------------------------------------------------------
+
+async function loadIbkrStatus() {
+  try {
+    const response = await fetch('/auth/ibkr/status');
+    const data = await response.json();
+    const badge = document.getElementById('ibkr-status-badge');
+    const dot = document.getElementById('ibkr-conn-dot');
+    const text = document.getElementById('ibkr-conn-text');
+
+    if (!data.configured) {
+      badge.textContent = 'Not Configured';
+      badge.className = 'status-badge';
+      dot.className = 'dot';
+      text.textContent = 'IBKR not configured. Go to Setup to configure.';
+      return;
+    }
+
+    document.getElementById('ibkr-host').textContent = data.host || '-';
+    document.getElementById('ibkr-port').textContent = data.port || '-';
+    document.getElementById('ibkr-paper').textContent = data.paper_trading ? 'Yes' : 'No';
+
+    if (data.connected) {
+      badge.textContent = 'Connected';
+      badge.className = 'status-badge success';
+      dot.className = 'dot green';
+      text.textContent = 'Connected to TWS/Gateway at ' + data.host + ':' + data.port;
+    } else {
+      badge.textContent = 'Disconnected';
+      badge.className = 'status-badge';
+      dot.className = 'dot red';
+      text.textContent = 'Not connected. Click Connect to establish connection.';
+    }
+  } catch (error) {
+    console.error('Failed to load IBKR status:', error);
+  }
+}
+
+async function ibkrConnect() {
+  const btn = document.getElementById('ibkr-connect-btn');
+  const resultDiv = document.getElementById('ibkr-result');
+  btn.disabled = true;
+  btn.textContent = 'Connecting...';
+
+  try {
+    const response = await fetch('/auth/ibkr/connect', {
+      method: 'POST',
+      headers: API_HEADERS,
+    });
+    const data = await response.json();
+
+    if (data.success) {
+      resultDiv.style.background = 'var(--green-dim)';
+      resultDiv.style.border = '1px solid var(--green)';
+      resultDiv.style.color = 'var(--green)';
+      resultDiv.textContent = data.message;
+    } else {
+      resultDiv.style.background = 'var(--red-dim)';
+      resultDiv.style.border = '1px solid var(--red)';
+      resultDiv.style.color = 'var(--red)';
+      resultDiv.textContent = data.error || 'Connection failed.';
+    }
+    resultDiv.style.display = 'block';
+    loadIbkrStatus();
+  } catch (error) {
+    resultDiv.style.background = 'var(--red-dim)';
+    resultDiv.style.border = '1px solid var(--red)';
+    resultDiv.style.color = 'var(--red)';
+    resultDiv.textContent = 'Error: ' + error.message;
+    resultDiv.style.display = 'block';
+  }
+  btn.disabled = false;
+  btn.textContent = 'Connect';
+}
+
+async function ibkrDisconnect() {
+  const btn = document.getElementById('ibkr-disconnect-btn');
+  const resultDiv = document.getElementById('ibkr-result');
+  btn.disabled = true;
+
+  try {
+    const response = await fetch('/auth/ibkr/disconnect', {
+      method: 'POST',
+      headers: API_HEADERS,
+    });
+    const data = await response.json();
+    resultDiv.style.background = 'var(--green-dim)';
+    resultDiv.style.border = '1px solid var(--green)';
+    resultDiv.style.color = 'var(--green)';
+    resultDiv.textContent = data.message;
+    resultDiv.style.display = 'block';
+    loadIbkrStatus();
+  } catch (error) {
+    resultDiv.style.background = 'var(--red-dim)';
+    resultDiv.style.border = '1px solid var(--red)';
+    resultDiv.style.color = 'var(--red)';
+    resultDiv.textContent = 'Error: ' + error.message;
+    resultDiv.style.display = 'block';
+  }
+  btn.disabled = false;
+}
+
+// Load IBKR status on page load if IBKR is active
+if (activeBroker === 'ibkr') {
+  loadIbkrStatus();
+  setInterval(loadIbkrStatus, 30000);
 }
 
 // ---------------------------------------------------------------------------

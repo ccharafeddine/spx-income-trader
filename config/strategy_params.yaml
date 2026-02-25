@@ -2,13 +2,18 @@
 # BROKER CONFIGURATION
 # ============================================
 broker:
-  active: "dry_run"          # Options: "dry_run", "etrade", "schwab"
+  active: "dry_run"          # Options: "dry_run", "etrade", "schwab", "ibkr"
   schwab:
     app_key: ""              # From developer.schwab.com - fill in after approval
     app_secret: ""           # From developer.schwab.com - fill in after approval
     callback_url: "https://127.0.0.1"
     token_path: "database/schwab_token.json"
     account_number: ""       # Your Schwab account number
+  ibkr:
+    host: "127.0.0.1"
+    port: 7496
+    client_id: 1
+    paper_trading: false
 
 # ============================================
 # PORTFOLIO-WIDE SETTINGS

@@ -2459,6 +2459,10 @@ def main():
                     hrs = token_status.get('hours_remaining', 0)
                     logger.warning(f"Schwab token expiring in {hrs:.1f} hours - re-auth soon")
                 logger.info("Schwab authentication verified")
+            elif active_broker == 'ibkr':
+                # IBKR broker via factory (connects to TWS/Gateway)
+                broker = get_broker(STRATEGY_PARAMS)
+                logger.info("IBKR connection established via broker factory")
             else:
                 # E*TRADE broker (original flow)
                 etrade_auth = ETradeAuth()

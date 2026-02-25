@@ -18,7 +18,7 @@ def get_broker(config: dict) -> BrokerInterface:
 
     Args:
         config: Full strategy_params config dict. Reads:
-            - broker.active: 'dry_run', 'etrade', or 'schwab'
+            - broker.active: 'dry_run', 'etrade', 'schwab', or 'ibkr'
             - broker.schwab.*: Schwab-specific config
             - portfolio.account_size: For DryRunBroker
 
@@ -59,6 +59,19 @@ def get_broker(config: dict) -> BrokerInterface:
             token_path=schwab_cfg.get('token_path'),
         )
         return SchwabBroker(config=schwab_cfg, auth=auth)
+
+    elif active == 'ibkr':
+        from .ibkr_broker import IBKRBroker
+        ibkr_cfg = broker_cfg.get('ibkr', {})
+        logger.info("Creating IBKRBroker")
+        broker = IBKRBroker(
+            host=ibkr_cfg.get('host', '127.0.0.1'),
+            port=ibkr_cfg.get('port', 7496),
+            client_id=ibkr_cfg.get('client_id', 1),
+            paper_trading=ibkr_cfg.get('paper_trading', False),
+        )
+        broker.connect()
+        return broker
 
     else:
         raise ValueError(f"Unknown broker: {active}")

@@ -358,6 +358,12 @@ body {
         <div class="broker-desc">Legacy E*TRADE / Morgan Stanley integration. Requires E*TRADE API keys.</div>
       </div>
 
+      <div class="broker-card" id="card-ibkr" onclick="selectBroker('ibkr')">
+        <div class="broker-radio"></div>
+        <div class="broker-name">Interactive Brokers</div>
+        <div class="broker-desc">Connect via TWS or IB Gateway. Requires TWS/Gateway running locally. Supports paper trading.</div>
+      </div>
+
       <div class="broker-card" id="card-dry_run" onclick="selectBroker('dry_run')">
         <div class="broker-radio"></div>
         <div class="broker-name">Dry Run</div>
@@ -442,6 +448,44 @@ body {
       </div>
     </form>
 
+    <!-- IBKR Form -->
+    <form method="POST" action="/setup" id="ibkr-form" class="credential-form">
+      <input type="hidden" name="broker_type" value="ibkr">
+
+      <div class="form-group">
+        <label class="form-label" for="ibkr_host">Host</label>
+        <input type="text" class="form-input" id="ibkr_host" name="ibkr_host"
+               placeholder="127.0.0.1" value="127.0.0.1">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="ibkr_port">Port</label>
+        <input type="number" class="form-input" id="ibkr_port" name="ibkr_port"
+               placeholder="7496" value="7496">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="ibkr_client_id">Client ID</label>
+        <input type="number" class="form-input" id="ibkr_client_id" name="ibkr_client_id"
+               placeholder="1" value="1">
+      </div>
+
+      <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
+        <input type="checkbox" id="ibkr_paper_trading" name="ibkr_paper_trading"
+               onchange="updateIbkrPort(this)" style="width: 18px; height: 18px; accent-color: var(--cyan);">
+        <label for="ibkr_paper_trading" style="font-size: 14px; color: var(--text); cursor: pointer; text-transform: none; letter-spacing: 0;">
+          Paper Trading
+        </label>
+      </div>
+
+      <button type="submit" class="btn btn-primary">Save & Continue</button>
+
+      <div class="info-box">
+        <strong>Setup:</strong> TWS or IB Gateway must be running.
+        Enable API connections in TWS: File &gt; Global Configuration &gt; API &gt; Settings.
+      </div>
+    </form>
+
     <!-- Dry Run Form -->
     <form method="POST" action="/setup" id="dry_run-form" class="credential-form">
       <input type="hidden" name="broker_type" value="dry_run">
@@ -481,6 +525,15 @@ function selectBroker(broker) {
   // Show secure badge for broker forms
   const badge = document.getElementById('secure-badge');
   badge.style.display = (broker === 'schwab' || broker === 'etrade') ? '' : 'none';
+}
+
+function updateIbkrPort(checkbox) {
+  const portInput = document.getElementById('ibkr_port');
+  if (checkbox.checked) {
+    portInput.value = '7497';
+  } else {
+    portInput.value = '7496';
+  }
 }
 </script>
 

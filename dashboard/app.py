@@ -38,7 +38,7 @@ from config.settings import (
     DASHBOARD_PORT, DASHBOARD_HOST, STRATEGY_PARAMS,
     ETRADE_CONFIG, is_etrade_configured, save_etrade_credentials, clear_etrade_credentials,
     get_trading_mode, save_trading_mode, get_etrade_credentials,
-    is_schwab_configured, is_any_broker_configured, load_strategy_params,
+    is_schwab_configured, is_ibkr_configured, is_any_broker_configured, load_strategy_params,
     save_schwab_credentials, clear_schwab_credentials, get_schwab_credentials,
 )
 from src.data.yahoo_finance import YahooFinanceProvider
@@ -70,8 +70,8 @@ def validate_api_token():
     if request.method in ('GET', 'HEAD', 'OPTIONS'):
         return None
 
-    # Allow setup form POST (no token embedded yet), static, and OAuth callbacks
-    csrf_exempt = ['/setup', '/auth/etrade/', '/auth/schwab/']
+    # Allow setup form POST (no token embedded yet), static, and OAuth/auth callbacks
+    csrf_exempt = ['/setup', '/auth/etrade/', '/auth/schwab/', '/auth/ibkr/']
     if any(request.path.startswith(p) for p in csrf_exempt):
         return None
 
@@ -87,7 +87,8 @@ def check_setup_required():
     """Redirect to setup if no broker is configured."""
     # Allow setup, static, auth, and broker API routes without credentials
     allowed_paths = ['/setup', '/static', '/api/setup/status', '/auth/etrade/',
-                     '/auth/schwab/', '/api/schwab-auth-status', '/api/broker/']
+                     '/auth/schwab/', '/auth/ibkr/', '/api/schwab-auth-status',
+                     '/api/broker/']
     if any(request.path.startswith(p) for p in allowed_paths):
         return None
 
@@ -720,6 +721,22 @@ def setup():
                     return redirect(url_for('index'))
                 else:
                     error = 'Failed to save credentials. Make sure keyring is installed.'
+
+        elif broker_type == 'ibkr':
+            ibkr_host = request.form.get('ibkr_host', '127.0.0.1').strip()
+            ibkr_port = request.form.get('ibkr_port', '7496').strip()
+            ibkr_client_id = request.form.get('ibkr_client_id', '1').strip()
+            ibkr_paper = request.form.get('ibkr_paper_trading') == 'on'
+
+            if not ibkr_port.isdigit():
+                error = 'Port must be a number.'
+            else:
+                if _save_ibkr_settings(ibkr_host, int(ibkr_port), int(ibkr_client_id), ibkr_paper):
+                    _set_active_broker('ibkr')
+                    return redirect(url_for('index'))
+                else:
+                    error = 'Failed to save IBKR settings.'
+
         else:
             error = 'Please select a broker.'
 
@@ -891,9 +908,41 @@ def _save_schwab_credentials(app_key: str, app_secret: str, account_number: str,
         return False
 
 
+def _save_ibkr_settings(host: str, port: int, client_id: int,
+                         paper_trading: bool) -> bool:
+    """Save IBKR connection settings to strategy_params.yaml."""
+    try:
+        with open(SETTINGS_FILE, 'r') as f:
+            params = yaml.safe_load(f) or {}
+
+        if 'broker' not in params:
+            params['broker'] = {}
+        if 'ibkr' not in params['broker']:
+            params['broker']['ibkr'] = {}
+
+        params['broker']['ibkr']['host'] = host
+        params['broker']['ibkr']['port'] = port
+        params['broker']['ibkr']['client_id'] = client_id
+        params['broker']['ibkr']['paper_trading'] = paper_trading
+
+        with open(SETTINGS_FILE, 'w') as f:
+            yaml.dump(params, f, default_flow_style=False, sort_keys=False)
+
+        # Update in-memory config
+        STRATEGY_PARAMS.setdefault('broker', {}).setdefault('ibkr', {})
+        STRATEGY_PARAMS['broker']['ibkr']['host'] = host
+        STRATEGY_PARAMS['broker']['ibkr']['port'] = port
+        STRATEGY_PARAMS['broker']['ibkr']['client_id'] = client_id
+        STRATEGY_PARAMS['broker']['ibkr']['paper_trading'] = paper_trading
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save IBKR settings: {e}")
+        return False
+
+
 def _set_active_broker(broker_name: str) -> bool:
     """Set the active broker in strategy_params.yaml."""
-    if broker_name not in ('dry_run', 'etrade', 'schwab'):
+    if broker_name not in ('dry_run', 'etrade', 'schwab', 'ibkr'):
         return False
     try:
         with open(SETTINGS_FILE, 'r') as f:
@@ -1583,6 +1632,82 @@ def api_schwab_auth_status():
             'authenticated': False,
             'token_status': {'valid': False, 'hours_remaining': 0, 'expiring_soon': True},
         })
+
+
+# ---------------------------------------------------------------------------
+# IBKR connection management
+# IBKR doesn't use OAuth - it connects directly to TWS/Gateway running locally.
+# These routes let the dashboard show connection status and trigger connect/disconnect.
+# ---------------------------------------------------------------------------
+
+# Module-level reference to the live IBKRBroker instance (set by connect route)
+_ibkr_broker_instance = None
+
+
+@app.route('/auth/ibkr/status')
+def auth_ibkr_status():
+    """Return IBKR connection status for the settings page."""
+    active = STRATEGY_PARAMS.get('broker', {}).get('active', 'dry_run')
+    if active != 'ibkr':
+        return jsonify({'configured': False, 'connected': False})
+
+    ibkr_cfg = STRATEGY_PARAMS.get('broker', {}).get('ibkr', {})
+    host = ibkr_cfg.get('host', '127.0.0.1')
+    port = ibkr_cfg.get('port', 7496)
+    paper = ibkr_cfg.get('paper_trading', False)
+
+    global _ibkr_broker_instance
+    connected = (_ibkr_broker_instance is not None
+                 and _ibkr_broker_instance.is_connected)
+
+    return jsonify({
+        'configured': is_ibkr_configured(),
+        'connected': connected,
+        'host': host,
+        'port': port,
+        'paper_trading': paper,
+    })
+
+
+@app.route('/auth/ibkr/connect', methods=['POST'])
+def auth_ibkr_connect():
+    """Attempt to connect to TWS/IB Gateway."""
+    global _ibkr_broker_instance
+
+    ibkr_cfg = STRATEGY_PARAMS.get('broker', {}).get('ibkr', {})
+    host = ibkr_cfg.get('host', '127.0.0.1')
+    port = ibkr_cfg.get('port', 7496)
+    client_id = ibkr_cfg.get('client_id', 1)
+    paper = ibkr_cfg.get('paper_trading', False)
+
+    try:
+        from src.brokers.ibkr_broker import IBKRBroker, IBKRError
+        broker = IBKRBroker(host=host, port=port, client_id=client_id,
+                            paper_trading=paper)
+        broker.connect()
+        _ibkr_broker_instance = broker
+        return jsonify({
+            'success': True,
+            'message': f'Connected to IBKR at {host}:{broker.port}',
+        })
+    except Exception as e:
+        logger.error(f"IBKR connect failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/auth/ibkr/disconnect', methods=['POST'])
+def auth_ibkr_disconnect():
+    """Disconnect from TWS/IB Gateway."""
+    global _ibkr_broker_instance
+
+    if _ibkr_broker_instance is not None:
+        try:
+            _ibkr_broker_instance.disconnect()
+        except Exception as e:
+            logger.warning(f"Error during IBKR disconnect: {e}")
+        _ibkr_broker_instance = None
+
+    return jsonify({'success': True, 'message': 'Disconnected from IBKR'})
 
 
 @app.route('/api/today')

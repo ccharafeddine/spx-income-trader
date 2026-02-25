@@ -100,15 +100,24 @@ def is_schwab_configured() -> bool:
     return bool(creds.get('app_key') and creds.get('app_secret'))
 
 
+def is_ibkr_configured() -> bool:
+    """Check if IBKR is configured. IBKR uses TWS/Gateway (no API keys)."""
+    params = load_strategy_params()
+    ibkr_cfg = params.get('broker', {}).get('ibkr', {})
+    return bool(ibkr_cfg.get('port'))
+
+
 def is_any_broker_configured() -> bool:
-    """Check if any broker is configured (Schwab, E*TRADE, or dry_run).
+    """Check if any broker is configured (Schwab, E*TRADE, IBKR, or dry_run).
 
     Returns True if:
     - broker.active is 'dry_run' (always valid)
     - broker.active is 'schwab' and Schwab creds are set
     - broker.active is 'etrade' and E*TRADE creds are set
+    - broker.active is 'ibkr' and IBKR is configured
     - E*TRADE creds exist (backward compat)
     - Schwab creds exist
+    - IBKR is configured
     """
     params = load_strategy_params()
     active = params.get('broker', {}).get('active', '')
@@ -118,8 +127,10 @@ def is_any_broker_configured() -> bool:
         return True
     if active == 'etrade' and is_etrade_configured():
         return True
+    if active == 'ibkr' and is_ibkr_configured():
+        return True
     # Fallback: any broker has creds
-    return is_etrade_configured() or is_schwab_configured()
+    return is_etrade_configured() or is_schwab_configured() or is_ibkr_configured()
 
 
 def get_etrade_credentials() -> dict:
@@ -404,6 +415,8 @@ def validate_settings():
             errors.append("Schwab app_key not configured (set via Settings page or keyring)")
         if not schwab_creds.get('app_secret'):
             errors.append("Schwab app_secret not configured (set via Settings page or keyring)")
+    elif active_broker == 'ibkr':
+        pass  # IBKR uses TWS/Gateway, no API keys to validate
     elif active_broker != 'dry_run':
         errors.append(f"Unknown broker.active value: '{active_broker}'")
 
