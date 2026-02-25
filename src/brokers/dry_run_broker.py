@@ -31,69 +31,6 @@ from config.settings import BASE_DIR
 logger = logging.getLogger(__name__)
 
 
-# -------------------------------------------------------------------
-# Option pricing models (module-level, shared by DryRunBroker & sim)
-# -------------------------------------------------------------------
-
-def _norm_cdf(x):
-    """Standard normal CDF using math.erfc (no scipy dependency)."""
-    return 0.5 * math.erfc(-x / math.sqrt(2))
-
-
-def _black_scholes_price(S, K, T, r, sigma, option_type):
-    """Standard Black-Scholes European option price."""
-    if T <= 0:
-        return max(0, S - K) if option_type == 'call' else max(0, K - S)
-    if sigma <= 0:
-        sigma = 1e-6
-
-    d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
-    d2 = d1 - sigma * math.sqrt(T)
-
-    if option_type == 'call':
-        return S * _norm_cdf(d1) - K * math.exp(-r * T) * _norm_cdf(d2)
-    else:
-        return K * math.exp(-r * T) * _norm_cdf(-d2) - S * _norm_cdf(-d1)
-
-
-def _merton_jump_price(S, K, T, r, sigma, option_type,
-                       lam=0.3, mu_j=-0.015, sigma_j=0.02,
-                       n_terms=10):
-    """Merton jump-diffusion option price.
-
-    Adds a Poisson jump process on top of Black-Scholes diffusion,
-    producing fatter tails and more realistic OTM pricing for 0DTE.
-
-    Parameters calibrated for SPX 0DTE (conservative):
-      lam=0.3:     ~0.3 jumps/year (roughly 1 per 3 years)
-      mu_j=-0.015: average jump size -1.5% (negative skew for equities)
-      sigma_j=0.02: jump size std dev 2% (tight jump distribution)
-      n_terms=10:  Poisson series terms (sufficient accuracy)
-    """
-    if T <= 0:
-        return max(0, S - K) if option_type == 'call' else max(0, K - S)
-
-    price = 0.0
-    # Expected jump contribution to drift
-    k_bar = math.exp(mu_j + 0.5 * sigma_j ** 2) - 1
-    lam_prime = lam * (1 + k_bar)
-
-    for n in range(n_terms):
-        # Poisson weight for n jumps
-        poisson_weight = (math.exp(-lam_prime * T) *
-                          (lam_prime * T) ** n / math.factorial(n))
-
-        # Adjusted parameters for n jumps
-        r_n = r - lam * k_bar + n * mu_j / T
-        sigma_n = math.sqrt(max(sigma ** 2 + n * sigma_j ** 2 / T, 1e-8))
-
-        # BS price with jump-adjusted parameters
-        bs = _black_scholes_price(S, K, T, r_n, sigma_n, option_type)
-        price += poisson_weight * bs
-
-    return max(price, 0.0)
-
-
 class BidAskModel:
     """Models realistic bid-ask spreads based on VIX and time of day.
 
@@ -468,13 +405,27 @@ class DryRunBroker(BrokerInterface):
         strikes = [atm_strike + (i * self.strike_interval) for i in range(-20, 21)]
 
         chain = {}
-        half_spread = self.spread_width / 2
-        r = 0.05  # Risk-free rate
-        T = max(dte / 365.0, 1e-6)  # Convert DTE (days) to years
-
         for strike in strikes:
-            call_mid = _merton_jump_price(current_price, strike, T, r, implied_vol, 'call')
-            put_mid = _merton_jump_price(current_price, strike, T, r, implied_vol, 'put')
+            # Simple option pricing approximation
+            moneyness = (current_price - strike) / current_price
+
+            # Base value from intrinsic
+            call_intrinsic = max(0, current_price - strike)
+            put_intrinsic = max(0, strike - current_price)
+
+            # Time value approximation
+            time_factor = (max(dte, 0) ** 0.5) * implied_vol * current_price * 0.4
+
+            # ATM options have most time value
+            atm_factor = 1 - min(abs(moneyness) * 5, 0.9)
+            time_value = time_factor * atm_factor
+
+            # Calculate option prices
+            call_mid = call_intrinsic + time_value
+            put_mid = put_intrinsic + time_value
+
+            # Apply bid-ask spread
+            half_spread = self.spread_width / 2
 
             chain[strike] = {
                 'call_bid': max(0.05, call_mid - half_spread),
@@ -489,7 +440,7 @@ class DryRunBroker(BrokerInterface):
                 'put_oi': 500,
             }
 
-        logger.debug(f"Generated Merton jump-diffusion chain: {len(chain)} strikes around ${atm_strike}")
+        logger.debug(f"Generated synthetic chain with {len(chain)} strikes around ${atm_strike}")
         return chain
 
     def _get_current_slippage(self) -> tuple:

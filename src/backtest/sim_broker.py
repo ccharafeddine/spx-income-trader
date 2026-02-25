@@ -14,7 +14,7 @@ from typing import Dict, Optional
 import pytz
 
 from src.brokers.base import BrokerInterface
-from src.brokers.dry_run_broker import BidAskModel, _merton_jump_price
+from src.brokers.dry_run_broker import BidAskModel
 from src.models.spread import CreditSpread, TradeDirection
 
 logger = logging.getLogger(__name__)
@@ -128,12 +128,19 @@ class BacktestBroker(BrokerInterface):
 
         chain = {}
         half_spread = self.bid_ask_spread / 2
-        r = 0.05  # Risk-free rate
-        T = max(dte / 365.0, 1e-6)  # Convert DTE (days) to years
 
         for strike in strikes:
-            call_mid = _merton_jump_price(current_price, strike, T, r, implied_vol, 'call')
-            put_mid = _merton_jump_price(current_price, strike, T, r, implied_vol, 'put')
+            moneyness = (current_price - strike) / current_price
+
+            call_intrinsic = max(0, current_price - strike)
+            put_intrinsic = max(0, strike - current_price)
+
+            time_factor = (max(dte, 0) ** 0.5) * implied_vol * current_price * 0.4
+            atm_factor = 1 - min(abs(moneyness) * 5, 0.9)
+            time_value = time_factor * atm_factor
+
+            call_mid = call_intrinsic + time_value
+            put_mid = put_intrinsic + time_value
 
             chain[strike] = {
                 'call_bid': max(0.05, call_mid - half_spread),
