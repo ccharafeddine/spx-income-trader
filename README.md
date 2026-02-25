@@ -52,9 +52,9 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 ## Features
 
 ### Risk Management
-- Dynamic position sizing via percent-risk method (scales with account growth)
-- Per-strategy max contract overrides for fine-grained sizing control
-- Global max contracts ceiling that can never be overridden by strategy-level settings
+- Budget-based position sizing: daily loss budget drives DI contract count, swing strategies use fixed size
+- Per-strategy contract caps (daily_contracts for DI, swing_contracts for TNT/ORB)
+- Global max contracts hard cap that can never be exceeded by any strategy
 - 2% daily loss circuit breaker halts all new entries automatically
 - Weekly and monthly drawdown limits with configurable thresholds
 - Consecutive-loss circuit breaker with configurable pause duration
@@ -125,11 +125,11 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Historical replay engine supporting all four strategies (DI, TNT, ORB, B&B)
 - Strategy selection checkboxes: run any combination of the four strategies
 - Automatic SPX and VIX data download from Yahoo Finance
-- VIX-aware slippage model: scales with volatility regime ($0.02/leg base, $0.04/leg in elevated+ VIX)
+- VIX + time-of-day slippage model (BidAskModel): $0.02/leg base scaled by VIX regime and intraday liquidity
 - NYSE half-day calendar: early close days (1 PM ET) handled automatically
 - Morning bias filter applied during simulation
 - Backtest assumptions panel showing input parameters (date range, capital, strategies, thresholds) and simulation details (slippage model, pricing model, fill assumptions, flagged unusual credits)
-- Configurable parameters: pulse threshold, spread width, profit target, min credit, max contracts, slippage, max daily loss, initial capital
+- Configurable parameters: pulse threshold, spread width, profit target, min credit, max contracts, slippage, fill quality factor, max daily loss, initial capital
 - Position sizing scales with simulated account growth over the backtest period
 - Previous runs list with bulk select and delete
 - Results auto-populate in the Analytics tab dropdown on completion
@@ -304,8 +304,9 @@ All settings are configured via `config/strategy_params.yaml` and the dashboard 
 | `strategy.spread_width` | $5 | Width of credit spreads |
 | `strategy.profit_target_pct` | 80% | Exit when this percentage of max profit is reached |
 | `portfolio.max_daily_loss_pct` | 2% | Circuit breaker: halt all entries for the day |
-| `portfolio.position_sizing.max_contracts` | 20 | Global max contracts per trade (set to 1 for small accounts) |
-| `portfolio.position_sizing.risk_per_trade_pct` | 2% | Account percentage risked per trade |
+| `portfolio.daily_contracts` | 7 | Max contracts for Daily Income (budget-driven cap) |
+| `portfolio.swing_contracts` | 2 | Fixed contracts for swing strategies (TNT) |
+| `portfolio.max_contracts` | 10 | Global hard cap regardless of account size |
 | `timing.morning_start` | 09:30 | Setup window open |
 | `timing.morning_end` | 11:30 | Setup window close |
 | `di_morning_bias_filter` | true | Block counter-trend entries based on intraday direction |
@@ -482,7 +483,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 
 ## Testing
 
-970 tests covering:
+1010 tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays, morning bias filter)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
 - Position management (sizing, P&L calculation, exit triggers, partial fill tracking)
@@ -500,6 +501,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 - Trade reconciliation (DB vs. broker comparison, mismatch detection)
 - Monitoring and observability (Prometheus metrics, health endpoint)
 - Schwab and E*TRADE broker integration
+- VIX + time-of-day bid-ask spread model (BidAskModel) and fill quality factor
 - Slippage tracking and database migrations
 - Database separation (dry-run vs live mode)
 - Analytics computations (BB agreement, trade duration, direction drilldown, P&L attribution, regime analysis, execution quality)
@@ -541,7 +543,8 @@ The dashboard Backtest tab provides:
 - Backtest assumptions panel with input parameters and simulation details (slippage model, pricing model, fill assumptions, flagged credits)
 - Previous runs list with bulk select and delete
 - Completed backtests auto-appear in the Analytics tab dropdown
-- VIX-aware slippage: base $0.02/leg, elevated to $0.04/leg in high-VIX regimes
+- VIX + time-of-day slippage: $0.02/leg base, scaled by VIX regime (1.0-2.5x) and intraday period (1.0-1.6x)
+- Fill quality factor: conservative overlay reducing entry credit (default 1.0, configurable down to stress-test worse fills)
 - PDT-aware simulation: 1pm management activates when initial capital < $25k
 - Morning bias filter applied during simulation
 - BB agreement tracked as analytics metadata on every backtest trade
