@@ -2,7 +2,7 @@
 
 ![CI](https://github.com/ccharafeddine/spx-income-trader/actions/workflows/ci.yml/badge.svg) ![Python 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Automated SPX 0DTE options income trading system. Runs parallel credit spread strategies on the S&P 500 index, autonomously from market open to close, with real-time risk management, a web dashboard, full backtesting, session recording, and multi-broker support (E\*TRADE, Charles Schwab, dry-run simulation). Ships as a standalone desktop app for Windows and macOS.
+Automated SPX 0DTE options income trading system. Runs parallel credit spread strategies on the S&P 500 index, autonomously from market open to close, with real-time risk management, a web dashboard, full backtesting, session recording, and multi-broker support (E\*TRADE, Charles Schwab, Interactive Brokers, dry-run simulation). Ships as a standalone desktop app for Windows and macOS.
 
 ---
 
@@ -70,8 +70,9 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Multi-broker architecture with pluggable broker interface
 - **E\*TRADE**: Full API integration with OAuth flow, token auto-renewal (90-min cycle), order preview/place/confirm pipeline
 - **Charles Schwab**: schwab-py integration with OAuth2 authorization, automatic token refresh, and full options order support
+- **Interactive Brokers**: ib_insync integration via TWS/IB Gateway. Snapshot market data, options chain discovery via reqSecDefOptParams, BAG combo orders for credit spreads, live/paper trading with automatic port selection. Dashboard connect/disconnect controls.
 - **Dry-run mode** (default): Real market data via Yahoo Finance with simulated fills using Black-Scholes pricing. No broker credentials needed.
-- Reactive 401 handling with automatic token refresh and retry on both brokers
+- Reactive 401 handling with automatic token refresh and retry on E\*TRADE and Schwab
 - Proactive token freshness checks before order placement
 - Rate limit (429) protection with exponential backoff
 
@@ -258,6 +259,7 @@ Portfolio Manager (2-slot limits, risk gates, circuit breaker, PDT gate)
 Broker Interface
     |--- E*TRADE Broker (live orders via OAuth API)
     |--- Schwab Broker (live orders via schwab-py OAuth2)
+    |--- IBKR Broker (live orders via ib_insync, TWS/Gateway)
     |--- Dry-Run Broker (real data, simulated fills via Black-Scholes)
     |
     v
@@ -271,7 +273,7 @@ Position Manager (P&L tracking, exit management, partial fill tracking, PDT-cond
     +---> Trade Reconciler (DB vs. broker fill comparison)
 ```
 
-**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, pywebview, PyInstaller/py2app, Prometheus
+**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus
 
 ---
 
@@ -281,7 +283,7 @@ All settings are configured via `config/strategy_params.yaml` and the dashboard 
 
 ### What requires a restart
 - Trading mode (dry-run / live)
-- Active broker (schwab / etrade / dry_run)
+- Active broker (schwab / etrade / ibkr / dry_run)
 - Strategy enable/disable flags (DI, TNT, B&B, ORB)
 - Pulse threshold, spread width, profit target
 - Position sizing parameters (max contracts, risk per trade)
@@ -341,10 +343,11 @@ python app_desktop.py
 
 - **Schwab**: Launch the app, go to Settings, enter your Schwab API credentials, and complete the OAuth2 flow. The bot handles token refresh automatically. Set `broker.active: schwab` in `strategy_params.yaml`.
 - **E\*TRADE**: Configure your consumer key and secret via the Settings page or OS keychain. OAuth token renewal runs on a 90-minute cycle. Set `broker.active: etrade`.
+- **Interactive Brokers**: Start TWS or IB Gateway with API connections enabled (File > Global Configuration > API > Settings). Configure host, port, and client ID via the Setup page or Settings. Paper trading auto-selects port 7497. Set `broker.active: ibkr`.
 - **Dry Run** (default): No broker config needed. Uses real market data with simulated fills.
 
 **Configuration:**
-- `config/strategy_params.yaml` for strategy parameters (thresholds, spread width, profit target, timing windows, broker selection)
+- `config/strategy_params.yaml` for strategy parameters (thresholds, spread width, profit target, timing windows, broker selection, IBKR connection settings)
 - Dashboard Settings page for credentials, trading mode (dry-run/live), and notifications
 - Credentials stored in OS keychain, never in config files
 
@@ -420,6 +423,7 @@ src/
         etrade_auth.py       # E*TRADE OAuth token management
         schwab_broker.py     # Schwab live trading (schwab-py)
         schwab_auth.py       # Schwab OAuth2 token management
+        ibkr_broker.py       # Interactive Brokers live trading (ib_insync)
         dry_run_broker.py    # Simulated execution with real data
     analytics/
         regime_analysis.py   # VIX/direction regime performance and drilldown
@@ -483,7 +487,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 
 ## Testing
 
-1010 tests covering:
+1045 tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays, morning bias filter)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
 - Position management (sizing, P&L calculation, exit triggers, partial fill tracking)
@@ -500,7 +504,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 - Session recording (fixed filename mode, start/stop lifecycle, dashboard list/load routes, path traversal protection)
 - Trade reconciliation (DB vs. broker comparison, mismatch detection)
 - Monitoring and observability (Prometheus metrics, health endpoint)
-- Schwab and E*TRADE broker integration
+- Schwab, E*TRADE, and IBKR broker integration (connect/disconnect, market data, order execution, position value)
 - VIX + time-of-day bid-ask spread model (BidAskModel) and fill quality factor
 - Slippage tracking and database migrations
 - Database separation (dry-run vs live mode)
