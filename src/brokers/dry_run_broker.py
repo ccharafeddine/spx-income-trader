@@ -19,7 +19,6 @@ from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional
 from pathlib import Path
 import pytz
-from scipy.stats import norm as _norm
 
 from .base import BrokerInterface
 from ..models.spread import CreditSpread, TradeDirection
@@ -36,6 +35,11 @@ logger = logging.getLogger(__name__)
 # Option pricing models (module-level, shared by DryRunBroker & sim)
 # -------------------------------------------------------------------
 
+def _norm_cdf(x):
+    """Standard normal CDF using math.erfc (no scipy dependency)."""
+    return 0.5 * math.erfc(-x / math.sqrt(2))
+
+
 def _black_scholes_price(S, K, T, r, sigma, option_type):
     """Standard Black-Scholes European option price."""
     if T <= 0:
@@ -47,9 +51,9 @@ def _black_scholes_price(S, K, T, r, sigma, option_type):
     d2 = d1 - sigma * math.sqrt(T)
 
     if option_type == 'call':
-        return S * _norm.cdf(d1) - K * math.exp(-r * T) * _norm.cdf(d2)
+        return S * _norm_cdf(d1) - K * math.exp(-r * T) * _norm_cdf(d2)
     else:
-        return K * math.exp(-r * T) * _norm.cdf(-d2) - S * _norm.cdf(-d1)
+        return K * math.exp(-r * T) * _norm_cdf(-d2) - S * _norm_cdf(-d1)
 
 
 def _merton_jump_price(S, K, T, r, sigma, option_type,
