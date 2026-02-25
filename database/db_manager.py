@@ -373,7 +373,7 @@ class DatabaseManager:
     def get_strategy_stats(self, strategy_type: str, days: int = 90) -> Dict:
         """
         Get performance statistics for a specific strategy.
-        Used for Kelly position sizing calculations.
+        Used for performance analytics and drawdown tracking.
 
         Args:
             strategy_type: Strategy identifier (e.g., 'daily_income', 'tag_n_turn')

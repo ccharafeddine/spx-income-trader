@@ -36,7 +36,7 @@
 **Daily Income (DI)** - `src/core/strategy.py`
 - Entry: Pulse bar detection (>pulse_threshold% range vs recent bars) + breakout confirmation
 - Exit: 80% profit target, 1pm PDT management, expiration (4PM/1PM half-days)
-- Position sizing: percent_risk-based, clamped [1, max_contracts]
+- Position sizing: budget-based (daily_contracts cap from daily loss budget), clamped [min_contracts, max_contracts]
 - DTE: 0DTE
 - Risk gates: Daily loss circuit breaker, position limits, morning bias filter
 - Independent trader: YES
