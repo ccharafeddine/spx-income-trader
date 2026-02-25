@@ -3597,8 +3597,8 @@ header::after {
             <input type="number" id="bt-contracts" value="5" step="1" class="form-input" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
           </div>
           <div>
-            <label style="display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 3px;">Slippage ($)</label>
-            <input type="number" id="bt-slippage" value="0.02" step="0.01" class="form-input" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
+            <label style="display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 3px;">Slippage ($) <span style="opacity:0.5">blank = auto</span></label>
+            <input type="number" id="bt-slippage" value="" placeholder="Auto (VIX + time)" step="0.01" class="form-input" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; font-size: 12px;">
           </div>
         </div>
 
@@ -8147,7 +8147,7 @@ async function runBacktest() {
     profit_target: parseFloat(document.getElementById('bt-target').value),
     min_credit: parseFloat(document.getElementById('bt-min-credit').value),
     max_contracts: parseInt(document.getElementById('bt-contracts').value),
-    slippage: parseFloat(document.getElementById('bt-slippage').value),
+    slippage: document.getElementById('bt-slippage').value ? parseFloat(document.getElementById('bt-slippage').value) : null,
     max_daily_loss: parseFloat(document.getElementById('bt-max-loss').value),
     strategies: {
       daily_income: { enabled: document.getElementById('bt-strat-di').checked },
@@ -8275,8 +8275,8 @@ function renderBtAssumptions(report, params) {
 
   // Simulation assumptions
   if (a) {
-    const slipLabel = a.slippage_model === 'vix_aware'
-      ? 'VIX-aware (per-leg: $0.05-$0.20)'
+    const slipLabel = a.slippage_model === 'vix_time_aware'
+      ? 'VIX + time-of-day ($0.02-$0.08/leg)'
       : a.slippage_detail || 'Flat';
     const flagged = a.flagged_credit_count || 0;
     const flagColor = flagged > 0 ? '#f59e0b' : '#6b7280';
