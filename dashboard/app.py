@@ -1846,6 +1846,99 @@ def api_chart_bars5min():
     return jsonify({'success': True, 'bars': bars})
 
 
+@app.route('/api/chart/bars1h')
+def api_chart_bars1h():
+    """Return 1-hour bars with Bollinger Band overlay."""
+    from dashboard.chart_utils import compute_bollinger_series
+
+    get_bars_1h = getattr(app, '_desktop_get_bot_bars_1h', None)
+    bars = get_bars_1h() if get_bars_1h else None
+
+    if not bars:
+        # Fallback: Yahoo Finance 1h intraday bars
+        try:
+            intraday = yahoo.get_intraday_bars('1h', '1d') or []
+            bars = []
+            for b in intraday:
+                ts = b['timestamp']
+                if hasattr(ts, 'strftime'):
+                    ts = ts.strftime('%H:%M')
+                else:
+                    ts = str(ts)
+                    m = __import__('re').search(r'(\d{2}:\d{2})', ts)
+                    if m:
+                        ts = m.group(1)
+                bars.append({
+                    'time': ts,
+                    'open': b['open'],
+                    'high': b['high'],
+                    'low': b['low'],
+                    'close': b['close'],
+                })
+        except Exception as e:
+            logger.debug(f"Yahoo 1h bars unavailable: {e}")
+            bars = []
+
+    # Compute Bollinger Bands from closes
+    bb = None
+    if bars:
+        closes = [b['close'] for b in bars]
+        bb = compute_bollinger_series(closes)
+
+    return jsonify({'success': True, 'bars': bars, 'bb': bb})
+
+
+@app.route('/api/chart/bars4h')
+def api_chart_bars4h():
+    """Return 4-hour bars (multi-day) with Bollinger Band overlay."""
+    from dashboard.chart_utils import compute_bollinger_series
+
+    get_bars_4h = getattr(app, '_desktop_get_bot_bars_4h', None)
+    bars = get_bars_4h() if get_bars_4h else None
+
+    if not bars:
+        # Fallback: aggregate Yahoo Finance 1h bars over 5d into 4h
+        try:
+            intraday = yahoo.get_intraday_bars('1h', '5d') or []
+            if intraday:
+                from src.models.bar import Bar as BarModel
+                from src.main import _aggregate_bars_to_higher
+                bar_objects = [
+                    BarModel(
+                        timestamp=b['timestamp'],
+                        open=b['open'], high=b['high'],
+                        low=b['low'], close=b['close'],
+                        volume=b.get('volume', 0),
+                    )
+                    for b in intraday
+                ]
+                agg_bars = _aggregate_bars_to_higher(
+                    bar_objects, 240, pytz.timezone("America/New_York")
+                )
+                bars = []
+                for b in agg_bars:
+                    bars.append({
+                        'time': b.timestamp.strftime('%m/%d %H:%M'),
+                        'open': b.open,
+                        'high': b.high,
+                        'low': b.low,
+                        'close': b.close,
+                    })
+            else:
+                bars = []
+        except Exception as e:
+            logger.debug(f"Yahoo 4h bars unavailable: {e}")
+            bars = []
+
+    # Compute Bollinger Bands from closes
+    bb = None
+    if bars:
+        closes = [b['close'] for b in bars]
+        bb = compute_bollinger_series(closes)
+
+    return jsonify({'success': True, 'bars': bars, 'bb': bb})
+
+
 @app.route('/api/signals')
 def api_signals():
     """Signal log with optional days filter. Excludes signals outside market hours."""

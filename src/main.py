@@ -37,6 +37,7 @@ from src.core.strategy import SPXIncomeStrategy
 from src.core.position_manager import PositionManager
 from src.core.bar_builder import BarBuilder
 from src.core.bar_aggregator_5min import BarAggregator5Min
+from src.core.bar_aggregator_higher import BarAggregatorHigherTF
 from src.core.bollinger_filter import BollingerFilter
 from src.core.tag_n_turn import TagNTurnStrategy
 from src.core.bnb_strategy import BnBStrategy
@@ -63,6 +64,55 @@ class BotAlreadyRunningError(Exception):
 
 
 from src.utils.market_calendar import get_market_close_time
+
+
+def _aggregate_bars_to_higher(bars, target_minutes, tz):
+    """Aggregate a list of Bar objects into higher-timeframe bars.
+
+    Groups bars by aligned boundary and merges OHLC. Returns a list of
+    Bar objects at the target timeframe, sorted oldest-first.
+    """
+    from src.models.bar import Bar as BarModel
+    if not bars:
+        return []
+
+    groups = {}
+    for bar in sorted(bars, key=lambda b: b.timestamp):
+        ts = bar.timestamp
+        if ts.tzinfo is None:
+            ts = tz.localize(ts)
+        else:
+            ts = ts.astimezone(tz)
+        minutes_since_midnight = ts.hour * 60 + ts.minute
+        interval_number = minutes_since_midnight // target_minutes
+        start_minutes = interval_number * target_minutes
+        boundary = ts.replace(
+            hour=start_minutes // 60,
+            minute=start_minutes % 60,
+            second=0, microsecond=0,
+        )
+        key = boundary
+        if key not in groups:
+            groups[key] = {
+                'timestamp': boundary,
+                'open': bar.open, 'high': bar.high,
+                'low': bar.low, 'close': bar.close,
+            }
+        else:
+            g = groups[key]
+            g['high'] = max(g['high'], bar.high)
+            g['low'] = min(g['low'], bar.low)
+            g['close'] = bar.close
+
+    result = []
+    for key in sorted(groups.keys()):
+        g = groups[key]
+        result.append(BarModel(
+            timestamp=g['timestamp'],
+            open=g['open'], high=g['high'],
+            low=g['low'], close=g['close'],
+        ))
+    return result
 
 
 class TradingBot:
@@ -131,6 +181,8 @@ class TradingBot:
         )
         self.bar_builder = BarBuilder(interval_minutes=30)
         self.bar_aggregator_5min = BarAggregator5Min()
+        self.bar_aggregator_1h = BarAggregatorHigherTF(interval_minutes=60, max_bars=14)
+        self.bar_aggregator_4h = BarAggregatorHigherTF(interval_minutes=240, max_bars=10)
         filters_cfg = STRATEGY_PARAMS.get('filters', {})
         self.bollinger_enabled = filters_cfg.get('bollinger_enabled', True)
         self.extreme_move_override_pct = filters_cfg.get('extreme_move_override_pct', 1.5)
@@ -570,6 +622,45 @@ class TradingBot:
         except Exception as e:
             logger.warning(f"5-min chart backfill failed (will build from live data): {e}")
 
+        # Backfill 1h and 4h charts from Yahoo Finance
+        try:
+            from src.data.yahoo_finance import YahooFinanceProvider
+            from src.models.bar import Bar as BarModel
+            yahoo_htf = YahooFinanceProvider()
+
+            # 1h backfill (today)
+            bars_1h = yahoo_htf.get_intraday_bars(interval='1h', period='1d')
+            if bars_1h:
+                bar_objects_1h = [
+                    BarModel(
+                        timestamp=b['timestamp'],
+                        open=b['open'], high=b['high'],
+                        low=b['low'], close=b['close'],
+                        volume=b.get('volume', 0),
+                    )
+                    for b in bars_1h
+                ]
+                filled_1h = self.bar_aggregator_1h.backfill(bar_objects_1h)
+                logger.info(f"1h chart: backfilled {filled_1h} bars from Yahoo Finance")
+
+            # 4h backfill (5 trading days, aggregate from 1h bars)
+            bars_1h_5d = yahoo_htf.get_intraday_bars(interval='1h', period='5d')
+            if bars_1h_5d:
+                bar_objects_5d = [
+                    BarModel(
+                        timestamp=b['timestamp'],
+                        open=b['open'], high=b['high'],
+                        low=b['low'], close=b['close'],
+                        volume=b.get('volume', 0),
+                    )
+                    for b in bars_1h_5d
+                ]
+                agg_4h_bars = _aggregate_bars_to_higher(bar_objects_5d, 240, self.tz)
+                filled_4h = self.bar_aggregator_4h.backfill(agg_4h_bars)
+                logger.info(f"4h chart: backfilled {filled_4h} bars from Yahoo Finance")
+        except Exception as e:
+            logger.warning(f"1h/4h chart backfill failed (will build from live data): {e}")
+
         try:
             self._run_main_loop()
         except KeyboardInterrupt:
@@ -612,6 +703,8 @@ class TradingBot:
                     self.pending_setup = None
                     self.bar_builder.reset()
                     self.bar_aggregator_5min.reset()
+                    self.bar_aggregator_1h.reset()
+                    # 4h aggregator NOT reset (accumulates multi-day)
                     self._last_completed_bar = None
                     self.bollinger.day_open = None  # Reset for new day, will set at market open
                     self.position_manager._day_open = None
@@ -750,9 +843,14 @@ class TradingBot:
                     continue
 
                 # Monitor existing positions ALWAYS (even when daily limits reached)
-                closed_pnl = self.position_manager.monitor_positions()
-                if closed_pnl != 0:
-                    logger.info(f"Trade closed: ${closed_pnl:+.2f}")
+                # Isolated: monitoring failures must not increment consecutive_errors
+                closed_pnl = 0
+                try:
+                    closed_pnl = self.position_manager.monitor_positions()
+                    if closed_pnl != 0:
+                        logger.info(f"Trade closed: ${closed_pnl:+.2f}")
+                except Exception as e:
+                    logger.warning(f"Position monitoring error (non-fatal, will retry): {e}", exc_info=True)
 
                 # Record position updates for demo replay
                 if self.recorder:
@@ -798,7 +896,11 @@ class TradingBot:
 
                 # Update market state: build bars, feed parallel strategies
                 # (runs every cycle during market hours, NOT gated by setup window)
-                self._update_market_state(current_time)
+                # Isolated: data feed / Yahoo failures must not increment consecutive_errors
+                try:
+                    self._update_market_state(current_time)
+                except Exception as e:
+                    logger.warning(f"Market state update error (non-fatal, will retry): {e}", exc_info=True)
 
                 # Global circuit breaker - blocks ALL strategies
                 if not self._check_daily_loss_circuit_breaker():
@@ -875,8 +977,12 @@ class TradingBot:
             except KeyboardInterrupt:
                 raise  # Let this propagate
             except Exception as e:
+                # Only broker API failures (order placement, account balance,
+                # setup evaluation) reach here. Data feed and monitoring errors
+                # are caught in their own try/except blocks above and do NOT
+                # increment this counter.
                 consecutive_errors += 1
-                logger.error(f"Error in main loop ({consecutive_errors}/{max_consecutive_errors}): {e}", 
+                logger.error(f"Broker/strategy error in main loop ({consecutive_errors}/{max_consecutive_errors}): {e}",
                             exc_info=True)
             
                 # Degrade to monitoring-only if too many consecutive errors
@@ -1392,6 +1498,11 @@ class TradingBot:
 
                 # Feed bar to Bollinger filter
                 self.bollinger.add_bar(bar)
+
+                # Feed 30m bar into 1h aggregator; 1h feeds into 4h
+                bar_1h = self.bar_aggregator_1h.add_bar(bar)
+                if bar_1h:
+                    self.bar_aggregator_4h.add_bar(bar_1h)
 
                 # Feed bar to Tag 'n Turn strategy (if enabled)
                 if self.tag_n_turn_enabled and self.tag_n_turn:

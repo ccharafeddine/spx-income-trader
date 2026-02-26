@@ -2839,6 +2839,12 @@ header::after {
     <span id="crash-banner-text">Bot crashed &#8212; restart required</span>
   </div>
 
+  <!-- AUTO-RESTART BANNER (yellow) -->
+  <div class="crash-banner" id="auto-restart-banner" style="background:rgba(234,179,8,0.12); border-color:#eab308; display:none;">
+    <span class="banner-icon" style="color:#eab308;">&#9888;</span>
+    <span id="auto-restart-text" style="color:#eab308;">Auto-restarted after unexpected crash</span>
+  </div>
+
   <!-- TAB NAVIGATION -->
   <div class="tab-bar" role="tablist">
     <button class="tab-btn active" role="tab" aria-selected="true" onclick="switchTab('overview')">Overview</button>
@@ -2943,7 +2949,9 @@ header::after {
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
         <div class="panel-title" style="margin-bottom:0;">Today's Activity</div>
         <div id="chart-tf-toggle" style="display:inline-flex; border:1px solid rgba(255,255,255,0.12); border-radius:4px; overflow:hidden; font-size:11px; font-family:'JetBrains Mono',monospace;">
-          <button id="tf-30m" onclick="setChartTimeframe('30m')" style="padding:3px 10px; background:rgba(255,255,255,0.1); color:#e5e7eb; border:none; cursor:pointer; font-size:11px; font-family:inherit;">30m</button>
+          <button id="tf-4h" onclick="setChartTimeframe('4h')" style="padding:3px 10px; background:transparent; color:#6b7280; border:none; cursor:pointer; font-size:11px; font-family:inherit;">4h</button>
+          <button id="tf-1h" onclick="setChartTimeframe('1h')" style="padding:3px 10px; background:transparent; color:#6b7280; border:none; border-left:1px solid rgba(255,255,255,0.12); cursor:pointer; font-size:11px; font-family:inherit;">1h</button>
+          <button id="tf-30m" onclick="setChartTimeframe('30m')" style="padding:3px 10px; background:rgba(255,255,255,0.1); color:#e5e7eb; border:none; border-left:1px solid rgba(255,255,255,0.12); cursor:pointer; font-size:11px; font-family:inherit;">30m</button>
           <button id="tf-5m" onclick="setChartTimeframe('5m')" style="padding:3px 10px; background:transparent; color:#6b7280; border:none; border-left:1px solid rgba(255,255,255,0.12); cursor:pointer; font-size:11px; font-family:inherit;">5m</button>
         </div>
       </div>
@@ -3813,8 +3821,12 @@ let currentBroker = 'dry_run';
 let prevSpxPrice = null;
 let prevBarCount = 0;
 let prevPulseCount = 0;
-let chartTimeframe = '30m';  // '30m' or '5m'
+let chartTimeframe = '30m';  // '4h', '1h', '30m', or '5m'
 let cached5minBars = null;
+let cached1hBars = null;
+let cached4hBars = null;
+let cached1hBB = null;
+let cached4hBB = null;
 let prevTradeIds = new Set();
 let prevClosedIds = new Set();
 let prevDangerIds = new Set();
@@ -4550,24 +4562,33 @@ async function updateStatus() {
 
 function setChartTimeframe(tf) {
   chartTimeframe = tf;
-  // Update toggle button styles
-  const btn30 = document.getElementById('tf-30m');
-  const btn5 = document.getElementById('tf-5m');
-  if (tf === '30m') {
-    btn30.style.background = 'rgba(255,255,255,0.1)';
-    btn30.style.color = '#e5e7eb';
-    btn5.style.background = 'transparent';
-    btn5.style.color = '#6b7280';
-  } else {
-    btn5.style.background = 'rgba(255,255,255,0.1)';
-    btn5.style.color = '#e5e7eb';
-    btn30.style.background = 'transparent';
-    btn30.style.color = '#6b7280';
-  }
-  // Fetch 5-min bars if switching to 5m and re-render
+  // Update toggle button styles for all 4 buttons
+  ['4h','1h','30m','5m'].forEach(t => {
+    const btn = document.getElementById('tf-' + t);
+    if (t === tf) {
+      btn.style.background = 'rgba(255,255,255,0.1)';
+      btn.style.color = '#e5e7eb';
+    } else {
+      btn.style.background = 'transparent';
+      btn.style.color = '#6b7280';
+    }
+  });
+  // Fetch bars for the selected timeframe and re-render
   if (tf === '5m') {
     fetchJSON('/api/chart/bars5min').then(data => {
       if (data && data.bars) cached5minBars = data.bars;
+      if (latestTodayData) renderChart(latestTodayData);
+    });
+  } else if (tf === '1h') {
+    fetchJSON('/api/chart/bars1h').then(data => {
+      if (data && data.bars) cached1hBars = data.bars;
+      if (data && data.bb) cached1hBB = data.bb;
+      if (latestTodayData) renderChart(latestTodayData);
+    });
+  } else if (tf === '4h') {
+    fetchJSON('/api/chart/bars4h').then(data => {
+      if (data && data.bars) cached4hBars = data.bars;
+      if (data && data.bb) cached4hBB = data.bb;
       if (latestTodayData) renderChart(latestTodayData);
     });
   } else {
@@ -4580,10 +4601,18 @@ async function updateToday() {
   if (!d) return;
   latestTodayData = d;
 
-  // Fetch 5-min bars in parallel when in 5m mode
+  // Fetch bars in parallel when in non-30m mode
   if (chartTimeframe === '5m') {
     const data5m = await fetchJSON('/api/chart/bars5min');
     if (data5m && data5m.bars) cached5minBars = data5m.bars;
+  } else if (chartTimeframe === '1h') {
+    const data1h = await fetchJSON('/api/chart/bars1h');
+    if (data1h && data1h.bars) cached1hBars = data1h.bars;
+    if (data1h && data1h.bb) cached1hBB = data1h.bb;
+  } else if (chartTimeframe === '4h') {
+    const data4h = await fetchJSON('/api/chart/bars4h');
+    if (data4h && data4h.bars) cached4hBars = data4h.bars;
+    if (data4h && data4h.bb) cached4hBB = data4h.bb;
   }
 
   // Stats (in chart footer)
@@ -4638,23 +4667,51 @@ async function updateToday() {
 }
 
 function _findClosestBarIdx(sortedTimestamps, sortedCloses, timeStr) {
-  const eMins = parseInt(timeStr.split(':')[0]) * 60 + parseInt(timeStr.split(':')[1]);
+  // For multi-day timestamps (MM/DD HH:MM), extract minutes-in-day + day offset
+  function toMinutes(s) {
+    // Handle "MM/DD HH:MM" format
+    const mdMatch = s.match(/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2})/);
+    if (mdMatch) {
+      const dayVal = parseInt(mdMatch[1]) * 31 + parseInt(mdMatch[2]);
+      return dayVal * 1440 + parseInt(mdMatch[3]) * 60 + parseInt(mdMatch[4]);
+    }
+    // Handle "HH:MM" format
+    const p = s.split(':');
+    return parseInt(p[0]) * 60 + parseInt(p[1]);
+  }
+  const eMins = toMinutes(timeStr);
   let bestIdx = -1, bestDist = Infinity;
   sortedTimestamps.forEach((t, i) => {
     if (sortedCloses[i] == null) return;
-    const p = t.split(':');
-    const bMins = parseInt(p[0]) * 60 + parseInt(p[1]);
+    const bMins = toMinutes(t);
     const dist = Math.abs(bMins - eMins);
     if (dist < bestDist) { bestDist = dist; bestIdx = i; }
   });
   return bestIdx;
 }
 
+function _entryTimeForTF(isoStr) {
+  // Convert ISO entry_time to the format matching current timeframe's bar labels
+  if (!isoStr) return null;
+  if (chartTimeframe === '4h') {
+    // ISO: "2026-02-20T10:30:00" -> "02/20 10:30"
+    const d = isoStr.substring(5, 7);
+    const dd = isoStr.substring(8, 10);
+    const hm = isoStr.substring(11, 16);
+    return d + '/' + dd + ' ' + hm;
+  }
+  return isoStr.substring(11, 16);  // HH:MM
+}
+
 function renderChart(d) {
-  // Bar data: 30m or 5m depending on toggle
+  // Bar data: select based on active timeframe
   let chartBars;
   if (chartTimeframe === '5m' && cached5minBars && cached5minBars.length) {
     chartBars = cached5minBars;
+  } else if (chartTimeframe === '1h' && cached1hBars && cached1hBars.length) {
+    chartBars = cached1hBars;
+  } else if (chartTimeframe === '4h' && cached4hBars && cached4hBars.length) {
+    chartBars = cached4hBars;
   } else {
     // 30m bars: bot memory > Yahoo > log
     chartBars = (d.bot_bars && d.bot_bars.length) ? d.bot_bars
@@ -4665,8 +4722,14 @@ function renderChart(d) {
   const pulseTimes = new Set(d.pulse_times || []);
 
   if (chartBars && chartBars.length) {
+    const isMultiDay = chartTimeframe === '4h';
     const timestamps = chartBars.map(b => {
       const raw = b.timestamp || b.time || '';
+      if (isMultiDay) {
+        // Keep full MM/DD HH:MM format for 4h bars
+        const md = raw.match(/(\d{2}\/\d{2}\s+\d{2}:\d{2})/);
+        return md ? md[1] : raw;
+      }
       const m = raw.match(/(\d{2}:\d{2})/);
       return m ? m[1] : raw;
     });
@@ -4677,7 +4740,12 @@ function renderChart(d) {
 
     // Pad with session time slots so candles don't balloon
     let sessionTimes;
-    if (chartTimeframe === '5m') {
+    if (chartTimeframe === '4h') {
+      // Multi-day: no padding (bars already have MM/DD HH:MM labels)
+      sessionTimes = [];
+    } else if (chartTimeframe === '1h') {
+      sessionTimes = ['09:00','10:00','11:00','12:00','13:00','14:00','15:00'];
+    } else if (chartTimeframe === '5m') {
       sessionTimes = [];
       for (let h = 9; h <= 15; h++) {
         for (let m = (h === 9 ? 30 : 0); m < 60; m += 5) {
@@ -4741,7 +4809,7 @@ function renderChart(d) {
     const priceSource = sourceLabels[currentBroker] || 'Yahoo Finance';
     annotations.push({
       x: 0.01, y: 0.98, xref: 'paper', yref: 'paper',
-      text: priceSource + (chartTimeframe === '5m' ? ' (5m)' : ''),
+      text: priceSource + (chartTimeframe !== '30m' ? ' (' + chartTimeframe + ')' : ''),
       showarrow: false, xanchor: 'left', yanchor: 'top',
       font: {color: 'rgba(255,255,255,0.25)', size: 11, family: 'DM Sans, sans-serif'},
     });
@@ -4819,7 +4887,7 @@ function renderChart(d) {
       });
 
       // ---- Entry marker: filled circle at exact (time, price) ----
-      const entryTimeStr = pos.entry_time ? pos.entry_time.substring(11, 16) : null;
+      const entryTimeStr = _entryTimeForTF(pos.entry_time);
       const entryPrice = pos.underlying_price_at_entry;
       if (entryTimeStr && entryPrice) {
         const bestIdx = _findClosestBarIdx(sortedTimestamps, sortedCloses, entryTimeStr);
@@ -4862,8 +4930,8 @@ function renderChart(d) {
       const isBullishTrade = trade.direction === 'bullish';
       const markerColor = isWinner ? '#10b981' : '#ef4444';
 
-      const entryTimeStr = trade.entry_time ? trade.entry_time.substring(11, 16) : null;
-      const exitTimeStr = trade.exit_time ? trade.exit_time.substring(11, 16) : null;
+      const entryTimeStr = _entryTimeForTF(trade.entry_time);
+      const exitTimeStr = _entryTimeForTF(trade.exit_time);
       const entryPrice = trade.spx_at_entry || trade.underlying_price_at_entry;
       const exitPrice = trade.spx_at_exit;
 
@@ -4973,7 +5041,28 @@ function renderChart(d) {
       showlegend: false,
     };
 
-    Plotly.react('candle-chart', [candleTrace], layout, {displayModeBar: false, responsive: true});
+    // Bollinger Band overlay for 1h and 4h views
+    const bbTraces = [];
+    const bbData = chartTimeframe === '1h' ? cached1hBB
+                 : chartTimeframe === '4h' ? cached4hBB : null;
+    if (bbData && bbData.length === sortedTimestamps.length) {
+      const bbUpper = bbData.map(b => b ? b.upper : null);
+      const bbMiddle = bbData.map(b => b ? b.middle : null);
+      const bbLower = bbData.map(b => b ? b.lower : null);
+      bbTraces.push(
+        {x: sortedTimestamps, y: bbUpper, type:'scatter', mode:'lines',
+         line:{color:'rgba(59,130,246,0.4)', width:1, dash:'dot'},
+         hoverinfo:'skip', showlegend:false},
+        {x: sortedTimestamps, y: bbMiddle, type:'scatter', mode:'lines',
+         line:{color:'rgba(59,130,246,0.3)', width:1},
+         hoverinfo:'skip', showlegend:false},
+        {x: sortedTimestamps, y: bbLower, type:'scatter', mode:'lines',
+         line:{color:'rgba(59,130,246,0.4)', width:1, dash:'dot'},
+         hoverinfo:'skip', showlegend:false},
+      );
+    }
+
+    Plotly.react('candle-chart', [candleTrace, ...bbTraces], layout, {displayModeBar: false, responsive: true});
   } else {
     document.getElementById('candle-chart').innerHTML = '<div class="empty">No bar data yet (market may be closed)</div>';
   }
@@ -6879,6 +6968,7 @@ checkStalePositions();
 // ---------------------------------------------------------------
 function updateCrashBanner(botStatus) {
   const banner = document.getElementById('crash-banner');
+  const restartBanner = document.getElementById('auto-restart-banner');
   if (botStatus && botStatus.crashed) {
     const timeStr = botStatus.crash_time
       ? ' at ' + new Date(botStatus.crash_time).toLocaleTimeString()
@@ -6886,8 +6976,15 @@ function updateCrashBanner(botStatus) {
     document.getElementById('crash-banner-text').textContent =
       'Bot crashed' + timeStr + ' \u2014 restart required';
     banner.classList.add('visible');
+    restartBanner.style.display = 'none';
   } else {
     banner.classList.remove('visible');
+  }
+  // Show yellow auto-restart badge when bot is running after an auto-restart
+  if (botStatus && botStatus.auto_restarted && botStatus.running) {
+    restartBanner.style.display = '';
+  } else if (!botStatus || !botStatus.auto_restarted) {
+    restartBanner.style.display = 'none';
   }
 }
 

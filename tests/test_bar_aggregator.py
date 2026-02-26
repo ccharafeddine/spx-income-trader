@@ -21,6 +21,7 @@ import pytz
 from unittest.mock import patch, MagicMock
 
 from src.core.bar_aggregator_5min import BarAggregator5Min, MAX_BARS
+from src.core.bar_aggregator_higher import BarAggregatorHigherTF
 from src.models.bar import Bar
 
 ET = pytz.timezone("America/New_York")
@@ -532,3 +533,146 @@ class TestLabelOverlapResolution:
         assert annotations[3]['ay'] == -22 + 15
         # No collision at 11:00: unchanged
         assert annotations[4]['ay'] == -22
+
+
+# ---- Higher Timeframe Aggregation Tests ----
+
+
+@pytest.fixture
+def agg_1h():
+    return BarAggregatorHigherTF(interval_minutes=60, max_bars=14)
+
+
+@pytest.fixture
+def agg_4h():
+    return BarAggregatorHigherTF(interval_minutes=240, max_bars=10)
+
+
+def _bar(hour, minute, o, h, l, c, day=20):
+    """Create a Bar with a specific timestamp for testing."""
+    ts = ET.localize(datetime(2026, 2, day, hour, minute))
+    return Bar(timestamp=ts, open=o, high=h, low=l, close=c)
+
+
+class TestHigherTFAggregation:
+    """1h and 4h aggregation from completed bars."""
+
+    def test_1h_aggregation_from_30m_bars(self, agg_1h):
+        """Feed 4 consecutive 30m bars; expect 2 completed 1h bars."""
+        # 9:30 bar -> belongs to 09:00 boundary
+        agg_1h.add_bar(_bar(9, 30, 5800, 5810, 5795, 5805))
+        # 10:00 bar -> crosses to 10:00 boundary, completes 09:00 bar
+        bar1 = agg_1h.add_bar(_bar(10, 0, 5805, 5815, 5800, 5812))
+        assert bar1 is not None
+        assert bar1.timestamp.strftime('%H:%M') == '09:00'
+        assert bar1.open == 5800
+        assert bar1.high == 5810
+        assert bar1.close == 5805
+
+        # 10:30 bar -> same 10:00 boundary, merged
+        result = agg_1h.add_bar(_bar(10, 30, 5812, 5820, 5808, 5818))
+        assert result is None
+
+        # 11:00 bar -> crosses to 11:00, completes 10:00 bar
+        bar2 = agg_1h.add_bar(_bar(11, 0, 5818, 5825, 5810, 5822))
+        assert bar2 is not None
+        assert bar2.timestamp.strftime('%H:%M') == '10:00'
+        # Merged OHLC from 10:00 and 10:30 bars
+        assert bar2.open == 5805
+        assert bar2.high == 5820
+        assert bar2.low == 5800
+        assert bar2.close == 5818
+
+        bars = agg_1h.get_bars()
+        assert len(bars) == 2
+
+    def test_4h_aggregation_from_1h_bars(self, agg_4h):
+        """Feed 5 consecutive 1h bars; expect 1 completed 4h bar."""
+        # 09:00, 10:00, 11:00 all map to 08:00 boundary (8*60 // 240 = 2)
+        agg_4h.add_bar(_bar(9, 0, 5800, 5810, 5795, 5805))
+        agg_4h.add_bar(_bar(10, 0, 5805, 5820, 5800, 5815))
+        agg_4h.add_bar(_bar(11, 0, 5815, 5830, 5810, 5825))
+
+        # 12:00 crosses to 12:00 boundary, completing 08:00 bar
+        bar = agg_4h.add_bar(_bar(12, 0, 5825, 5835, 5820, 5830))
+        assert bar is not None
+        assert bar.timestamp.strftime('%H:%M') == '08:00'
+        assert bar.open == 5800
+        assert bar.high == 5830
+        assert bar.low == 5795
+        assert bar.close == 5825
+
+        # 13:00 still in 12:00 boundary
+        result = agg_4h.add_bar(_bar(13, 0, 5830, 5840, 5825, 5835))
+        assert result is None
+
+        assert len(agg_4h.get_bars()) == 1
+
+    def test_higher_tf_backfill(self, agg_1h):
+        """Backfill with historical 1h bars populates completed_bars."""
+        with patch('src.core.bar_aggregator_higher.datetime') as mock_dt:
+            mock_dt.now.return_value = ET.localize(datetime(2026, 2, 20, 15, 55))
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+            bars = [
+                _bar(9, 0, 5800, 5810, 5795, 5805),
+                _bar(10, 0, 5805, 5820, 5800, 5815),
+                _bar(11, 0, 5815, 5830, 5810, 5825),
+            ]
+            count = agg_1h.backfill(bars)
+            assert count == 3
+            stored = agg_1h.get_bars()
+            assert len(stored) == 3
+            assert stored[0].open == 5800
+            assert stored[2].close == 5825
+
+    def test_higher_tf_backfill_market_hours_filter(self, agg_1h):
+        """Backfill filters bars outside relaxed market hours."""
+        with patch('src.core.bar_aggregator_higher.datetime') as mock_dt:
+            mock_dt.now.return_value = ET.localize(datetime(2026, 2, 20, 15, 55))
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+            bars = [
+                _bar(7, 0, 5790, 5795, 5785, 5792),   # Before session (7:00 < 9:00 boundary)
+                _bar(9, 0, 5800, 5810, 5795, 5805),    # Valid (09:00 = 1h boundary for market open)
+                _bar(10, 0, 5805, 5820, 5800, 5815),   # Valid
+            ]
+            count = agg_1h.backfill(bars)
+            assert count == 2  # 7:00 bar filtered, 9:00 and 10:00 accepted
+            stored = agg_1h.get_bars()
+            assert stored[0].timestamp.strftime('%H:%M') == '09:00'
+
+    def test_bollinger_series_computation(self):
+        """Bollinger Band computation returns correct structure."""
+        from dashboard.chart_utils import compute_bollinger_series
+
+        # Need at least 20 data points for default period
+        closes = [5800 + i * 2 for i in range(25)]
+        result = compute_bollinger_series(closes)
+
+        assert len(result) == 25
+        # First 19 should be None (insufficient data for period=20)
+        for i in range(19):
+            assert result[i] is None
+        # 20th onwards should have values
+        for i in range(19, 25):
+            assert result[i] is not None
+            assert 'upper' in result[i]
+            assert 'middle' in result[i]
+            assert 'lower' in result[i]
+            assert result[i]['upper'] > result[i]['middle'] > result[i]['lower']
+
+    def test_higher_tf_max_bars_eviction(self):
+        """Feed more bars than max_bars to a 1h aggregator; only newest kept."""
+        agg = BarAggregatorHigherTF(interval_minutes=60, max_bars=3)
+        # Feed 5 bars across different hours -> 4 completed + 1 building
+        agg.add_bar(_bar(9, 30, 5800, 5810, 5795, 5805))
+        agg.add_bar(_bar(10, 0, 5805, 5815, 5800, 5812))  # completes 09:00
+        agg.add_bar(_bar(11, 0, 5812, 5825, 5808, 5820))  # completes 10:00
+        agg.add_bar(_bar(12, 0, 5820, 5830, 5815, 5828))  # completes 11:00
+        agg.add_bar(_bar(13, 0, 5828, 5835, 5822, 5832))  # completes 12:00
+
+        bars = agg.get_bars()
+        assert len(bars) <= 3
+        # Newest bars should be kept
+        assert bars[-1].timestamp.strftime('%H:%M') == '12:00'

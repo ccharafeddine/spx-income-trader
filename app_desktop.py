@@ -172,6 +172,12 @@ class DesktopApp:
         self._bot_crash_time = None
         self._watchdog_thread = None
 
+        # Auto-restart tracking
+        self._auto_restart_times = []   # timestamps of recent auto-restarts
+        self._auto_restarted = False    # True after most recent auto-restart
+        self._stop_requested = False    # True when user clicks Stop
+        self._max_restarts_per_hour = 3
+
         # System tray state
         self._tray_icon = None           # pystray.Icon instance
         self._tray_available = False     # True only when tray started successfully
@@ -207,6 +213,8 @@ class DesktopApp:
         # (more reliable than log file parsing for the current session)
         app._desktop_get_bot_bars = desktop.get_bot_bars
         app._desktop_get_bot_bars_5min = desktop.get_bot_bars_5min
+        app._desktop_get_bot_bars_1h = desktop.get_bot_bars_1h
+        app._desktop_get_bot_bars_4h = desktop.get_bot_bars_4h
 
         @app.route('/api/bot/start', methods=['POST'])
         def api_bot_start():
@@ -436,6 +444,8 @@ class DesktopApp:
             self._bot_crashed = False
             self._bot_crash_error = None
             self._bot_crash_time = None
+            self._stop_requested = False
+            self._auto_restarted = False
             self._bot_thread = threading.Thread(
                 target=self._run_bot,
                 args=(mode,),
@@ -552,6 +562,7 @@ class DesktopApp:
         # Signal stop outside the lock so we never block on I/O while
         # holding _bot_lock.  The bot thread will pick up running=False
         # within ~0.5s (interruptible sleep) and perform its own cleanup.
+        self._stop_requested = True
         logger.info("Stop requested: sending shutdown signal to trading bot")
         bot.running = False
         logger.info("Shutdown signal sent (bot will stop after current iteration)")
@@ -573,18 +584,19 @@ class DesktopApp:
         self._watchdog_thread.start()
 
     def _run_watchdog(self):
-        """Check every 30 seconds if the bot thread is still alive."""
+        """Monitor bot thread; auto-restart on unexpected crash (max 3/hour)."""
         while not self._shutting_down:
             time.sleep(30)
             with self._bot_lock:
                 bot_thread = self._bot_thread
                 bot_instance = self._bot
                 was_running = bot_instance is not None
+                stop_requested = self._stop_requested
 
             if bot_thread is None:
                 break  # No bot thread to watch
 
-            if not bot_thread.is_alive() and was_running:
+            if not bot_thread.is_alive() and was_running and not stop_requested:
                 # Bot thread died while it was supposed to be running
                 self._bot_crashed = True
                 self._bot_crash_time = datetime.now()
@@ -598,29 +610,64 @@ class DesktopApp:
                     notifier = NotificationManager()
                     notifier.send(
                         "Bot Crashed",
-                        "The trading bot stopped unexpectedly. Please review and restart.",
+                        "The trading bot stopped unexpectedly. Attempting auto-restart.",
                     )
                 except Exception as e:
                     logger.warning(f"Watchdog failed to send notification: {e}")
 
                 self._update_tray_icon()
-                break
+
+                # Check restart cap: max 3 per hour
+                now = time.time()
+                cutoff = now - 3600
+                self._auto_restart_times = [t for t in self._auto_restart_times if t > cutoff]
+                if len(self._auto_restart_times) >= self._max_restarts_per_hour:
+                    logger.critical(
+                        f"WATCHDOG: {self._max_restarts_per_hour} auto-restarts in the last hour, "
+                        f"NOT restarting to prevent restart loop"
+                    )
+                    break
+
+                # Wait 30s then auto-restart in the same mode
+                restart_mode = self._bot_mode or 'dry-run'
+                logger.warning(f"WATCHDOG: waiting 30s before auto-restart in {restart_mode} mode")
+                for _ in range(60):
+                    if self._shutting_down or self._stop_requested:
+                        break
+                    time.sleep(0.5)
+
+                if self._shutting_down or self._stop_requested:
+                    break
+
+                logger.warning(f"WATCHDOG: auto-restarting bot in {restart_mode} mode")
+                self._auto_restart_times.append(time.time())
+                self._auto_restarted = True
+                success, err = self.start_bot(restart_mode)
+                if success:
+                    logger.info("WATCHDOG: bot auto-restarted successfully")
+                else:
+                    logger.error(f"WATCHDOG: auto-restart failed: {err}")
+                break  # start_bot launches a new watchdog
 
             if not bot_thread.is_alive():
-                break  # Bot stopped normally
+                break  # Bot stopped normally (user-initiated or clean exit)
 
-    def _bars_to_dicts(self, aggregator):
+    def _bars_to_dicts(self, aggregator, include_date=False):
         """Convert completed + building bars from an aggregator to dicts.
 
         Returns list of {time, open, high, low, close} dicts, including
         the in-progress bar (partial candle) so the chart has data before
         the first bar boundary is crossed.
+
+        When include_date=True, timestamps use MM/DD HH:MM format for
+        multi-day views (4h).
         """
+        fmt = '%m/%d %H:%M' if include_date else '%H:%M'
         bars = aggregator.get_bars()
         result = []
         for b in bars:
             result.append({
-                'time': b.timestamp.strftime('%H:%M'),
+                'time': b.timestamp.strftime(fmt),
                 'open': b.open,
                 'high': b.high,
                 'low': b.low,
@@ -629,7 +676,7 @@ class DesktopApp:
         # Append the bar currently being built (partial candle)
         if aggregator.current_bar_start is not None:
             result.append({
-                'time': aggregator.current_bar_start.strftime('%H:%M'),
+                'time': aggregator.current_bar_start.strftime(fmt),
                 'open': aggregator.open_price,
                 'high': aggregator.high_price,
                 'low': aggregator.low_price,
@@ -673,6 +720,34 @@ class DesktopApp:
                 logger.warning(f"Error reading bot 5m bars: {e}")
                 return None
 
+    def get_bot_bars_1h(self):
+        """Return bars from the bot's in-memory 1h aggregator."""
+        with self._bot_lock:
+            if self._bot is None:
+                return None
+            try:
+                agg = getattr(self._bot, 'bar_aggregator_1h', None)
+                if agg is None:
+                    return None
+                return self._bars_to_dicts(agg)
+            except Exception as e:
+                logger.warning(f"Error reading bot 1h bars: {e}")
+                return None
+
+    def get_bot_bars_4h(self):
+        """Return bars from the bot's in-memory 4h aggregator (multi-day)."""
+        with self._bot_lock:
+            if self._bot is None:
+                return None
+            try:
+                agg = getattr(self._bot, 'bar_aggregator_4h', None)
+                if agg is None:
+                    return None
+                return self._bars_to_dicts(agg, include_date=True)
+            except Exception as e:
+                logger.warning(f"Error reading bot 4h bars: {e}")
+                return None
+
     def get_bot_status(self):
         """Return current bot status as a dict."""
         with self._bot_lock:
@@ -700,6 +775,7 @@ class DesktopApp:
                     'running': True,
                     'stopping': False,
                     'crashed': False,
+                    'auto_restarted': self._auto_restarted,
                     'mode': self._bot_mode,
                     'uptime_seconds': uptime,
                     'trades_today': self._bot.dte0_trades_today + self._bot.tnt_trades_today,

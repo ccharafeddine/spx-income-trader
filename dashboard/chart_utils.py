@@ -1,4 +1,4 @@
-"""Utilities for chart annotation layout and overlap resolution."""
+"""Utilities for chart annotation layout, overlap resolution, and indicators."""
 
 from collections import defaultdict
 from typing import List, Optional, Set
@@ -44,3 +44,34 @@ def resolve_label_overlaps(
             ann = annotations[indices[0]]
             is_bearish = ann.get("_direction") == "bearish"
             ann["ay"] += 15 if is_bearish else -15
+
+
+def compute_bollinger_series(
+    closes: List[float],
+    period: int = 20,
+    num_std: float = 2.0,
+) -> List[Optional[dict]]:
+    """Compute rolling Bollinger Band values for chart overlay.
+
+    Returns a list the same length as *closes*. Each element is either
+    None (insufficient data, fewer than *period* bars) or a dict with
+    keys ``upper``, ``middle``, ``lower``.
+
+    Uses standard 20-period, 2-std BB (industry default for chart
+    overlays). Independent from the strategy's BollingerFilter.
+    """
+    result: List[Optional[dict]] = []
+    for i in range(len(closes)):
+        if i + 1 < period:
+            result.append(None)
+            continue
+        window = closes[i + 1 - period : i + 1]
+        middle = sum(window) / period
+        variance = sum((x - middle) ** 2 for x in window) / period
+        std = variance ** 0.5
+        result.append({
+            'upper': round(middle + num_std * std, 2),
+            'middle': round(middle, 2),
+            'lower': round(middle - num_std * std, 2),
+        })
+    return result

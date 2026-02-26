@@ -5,9 +5,12 @@ Provides real-time (15-min delayed) SPX quotes from Yahoo Finance.
 Used for strategy simulation with real market data.
 
 Note: Yahoo Finance has rate limits. This provider includes:
-- Request caching (30 second minimum between API calls)
+- Request caching (60 second minimum between API calls)
+- Retry with exponential backoff (3 attempts, 2s/4s/8s)
+- Last-known-good cache: returns stale data on total failure
 - Fallback to direct HTTP when yfinance fails
 - Graceful degradation when rate limited
+- Never propagates exceptions to callers
 """
 
 import logging
@@ -17,6 +20,10 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Tuple
 import pytz
 import requests
+
+# Retry configuration
+MAX_RETRIES = 3
+BACKOFF_BASE_SECONDS = 2  # 2s, 4s, 8s
 
 try:
     import yfinance as yf
@@ -49,6 +56,10 @@ class YahooFinanceProvider:
         self._last_request_time = 0
         self._min_request_interval = 5  # Minimum 5 seconds between requests
 
+        # Last-known-good cache: persists across failed fetches so callers
+        # always get a value even during extended Yahoo outages.
+        self._last_known: Dict[str, dict] = {}
+
         # HTTP session for direct API calls
         self._session = requests.Session()
         self._session.headers.update({
@@ -77,7 +88,12 @@ class YahooFinanceProvider:
         return self._get_quote(self.VIX_SYMBOL)
 
     def _get_quote(self, symbol: str) -> Optional[Dict]:
-        """Fetch quote for symbol with caching."""
+        """Fetch quote for symbol with caching, retry, and last-known fallback.
+
+        Retry logic: 3 attempts with exponential backoff (2s, 4s, 8s).
+        On total failure, returns last-known-good value rather than None.
+        Never raises exceptions to callers.
+        """
         now = datetime.now(self.tz)
 
         # Check cache first
@@ -96,18 +112,43 @@ class YahooFinanceProvider:
 
         self._last_request_time = time.time()
 
-        # Try direct HTTP API first (more reliable)
-        quote_data = self._fetch_direct_http(symbol)
+        # Retry loop with exponential backoff
+        quote_data = None
+        for attempt in range(MAX_RETRIES):
+            # Try direct HTTP API first (more reliable)
+            quote_data = self._fetch_direct_http(symbol)
 
-        # Fallback to yfinance if direct HTTP fails
-        if quote_data is None and YFINANCE_AVAILABLE:
-            quote_data = self._fetch_via_yfinance(symbol)
+            # Fallback to yfinance if direct HTTP fails
+            if quote_data is None and YFINANCE_AVAILABLE:
+                quote_data = self._fetch_via_yfinance(symbol)
+
+            if quote_data is not None:
+                break
+
+            # Backoff before next attempt (skip sleep on last attempt)
+            if attempt < MAX_RETRIES - 1:
+                backoff = BACKOFF_BASE_SECONDS * (2 ** attempt)
+                logger.warning(
+                    f"Yahoo Finance {symbol} attempt {attempt + 1}/{MAX_RETRIES} failed, "
+                    f"retrying in {backoff}s"
+                )
+                time.sleep(backoff)
 
         if quote_data:
-            # Cache the result
             self._cache[symbol] = (now, quote_data)
+            self._last_known[symbol] = quote_data
+            return quote_data
 
-        return quote_data
+        # Total failure: return last-known-good value
+        if symbol in self._last_known:
+            logger.warning(
+                f"Yahoo Finance {symbol}: all {MAX_RETRIES} attempts failed, "
+                f"returning last known price ${self._last_known[symbol].get('price', 0):,.2f}"
+            )
+            return self._last_known[symbol]
+
+        logger.warning(f"Yahoo Finance {symbol}: all attempts failed, no last-known value available")
+        return None
 
     def _fetch_direct_http(self, symbol: str) -> Optional[Dict]:
         """Fetch quote using direct HTTP request to Yahoo Finance API."""
@@ -284,7 +325,7 @@ class YahooFinanceProvider:
 
     def get_intraday_bars(self, interval: str = "5m", period: str = "1d") -> Optional[list]:
         """
-        Get intraday bar data for SPX.
+        Get intraday bar data for SPX with retry logic.
 
         Args:
             interval: Bar interval (1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h)
@@ -306,37 +347,51 @@ class YahooFinanceProvider:
                 logger.debug(f"Using cached intraday bars ({interval}/{period})")
                 return cache_data
 
-        try:
-            ticker = yf.Ticker(self.SPX_SYMBOL)
-            hist = ticker.history(period=period, interval=interval, timeout=5)
+        for attempt in range(MAX_RETRIES):
+            try:
+                ticker = yf.Ticker(self.SPX_SYMBOL)
+                hist = ticker.history(period=period, interval=interval, timeout=5)
 
-            if hist is None or hist.empty:
-                # Cache empty result briefly (30s) to avoid hammering Yahoo
-                self._cache[cache_key] = (now, None)
-                return None
+                if hist is None or hist.empty:
+                    # Cache empty result briefly to avoid hammering Yahoo
+                    self._cache[cache_key] = (now, None)
+                    return None
 
-            bars = []
-            for idx, row in hist.iterrows():
-                try:
-                    bars.append({
-                        'timestamp': idx.to_pydatetime(),
-                        'open': float(row['Open']),
-                        'high': float(row['High']),
-                        'low': float(row['Low']),
-                        'close': float(row['Close']),
-                        'volume': int(row.get('Volume', 0))
-                    })
-                except (KeyError, TypeError, ValueError):
-                    continue  # Skip malformed rows
+                bars = []
+                for idx, row in hist.iterrows():
+                    try:
+                        bars.append({
+                            'timestamp': idx.to_pydatetime(),
+                            'open': float(row['Open']),
+                            'high': float(row['High']),
+                            'low': float(row['Low']),
+                            'close': float(row['Close']),
+                            'volume': int(row.get('Volume', 0))
+                        })
+                    except (KeyError, TypeError, ValueError):
+                        continue  # Skip malformed rows
 
-            self._cache[cache_key] = (now, bars)
-            return bars
+                self._cache[cache_key] = (now, bars)
+                self._last_known[cache_key] = bars
+                return bars
 
-        except Exception as e:
-            logger.error(f"Error fetching intraday bars: {e}")
-            # Cache failure briefly to avoid repeated slow calls
-            self._cache[cache_key] = (now, None)
-            return None
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:
+                    backoff = BACKOFF_BASE_SECONDS * (2 ** attempt)
+                    logger.warning(
+                        f"Intraday bars {interval}/{period} attempt {attempt + 1}/{MAX_RETRIES} "
+                        f"failed: {e}, retrying in {backoff}s"
+                    )
+                    time.sleep(backoff)
+                else:
+                    logger.warning(f"Intraday bars {interval}/{period}: all {MAX_RETRIES} attempts failed: {e}")
+
+        # Return last known bars on total failure
+        if cache_key in self._last_known:
+            logger.warning(f"Intraday bars {interval}/{period}: returning last known bars")
+            return self._last_known[cache_key]
+
+        return None
 
     def is_market_open(self) -> bool:
         """Check if US market is currently open."""
