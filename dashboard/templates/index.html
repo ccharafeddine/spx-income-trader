@@ -3832,6 +3832,8 @@ let prevClosedIds = new Set();
 let prevDangerIds = new Set();
 let initialLoad = true;
 let latestTodayData = null;
+let prevOpenPositionCount = -1;
+let prevClosedTodayCount = -1;
 let bellPlayedOpen = false;
 let bellPlayedClose = false;
 let prevMarketOpen = null;
@@ -4600,6 +4602,18 @@ async function updateToday() {
   const d = await fetchJSON('/api/today');
   if (!d) return;
   latestTodayData = d;
+
+  // Detect trade close: open count decreased or closed count increased
+  const openCount = (d.open_positions || []).length;
+  const closedCount = d.closed_today_count || 0;
+  if (prevOpenPositionCount >= 0 && prevClosedTodayCount >= 0) {
+    if (openCount < prevOpenPositionCount || closedCount > prevClosedTodayCount) {
+      loadCalendar();
+      loadAllTimeTotals();
+    }
+  }
+  prevOpenPositionCount = openCount;
+  prevClosedTodayCount = closedCount;
 
   // Fetch bars in parallel when in non-30m mode
   if (chartTimeframe === '5m') {

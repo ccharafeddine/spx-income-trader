@@ -1758,6 +1758,7 @@ def api_today():
     today_trades = []
     today_pnl = 0.0
     open_positions = []
+    closed_today_count = 0
     try:
         conn = get_db_connection()
         open_pos, closed = classify_trades(conn, spx_price)
@@ -1767,6 +1768,7 @@ def api_today():
             if (t.get('entry_time', '') or '').startswith(today_str):
                 today_trades.append(t)
                 today_pnl += t.get('pnl') or 0
+                closed_today_count += 1
         for t in open_pos:
             if (t.get('entry_time', '') or '').startswith(today_str):
                 today_trades.append(t)
@@ -1805,6 +1807,7 @@ def api_today():
         'building_bar': log_data['building_bar'],
         'open_positions': open_positions,
         'prev_close': prev_close,
+        'closed_today_count': closed_today_count,
     })
 
 
