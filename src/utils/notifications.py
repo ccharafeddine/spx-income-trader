@@ -12,15 +12,15 @@ logger = logging.getLogger(__name__)
 LEVEL_PRIORITY = {'info': 0, 'warning': 1, 'critical': 2}
 
 LEVEL_COLORS = {
-    'info':     {'slack': '#10b981', 'discord': 0x10b981},
-    'warning':  {'slack': '#f59e0b', 'discord': 0xf59e0b},
-    'critical': {'slack': '#ef4444', 'discord': 0xef4444},
+    'info':     {'slack': '#10b981', 'discord': 3066993},     # Green
+    'warning':  {'slack': '#f59e0b', 'discord': 16776960},    # Yellow
+    'critical': {'slack': '#ef4444', 'discord': 15158332},    # Red
 }
 
 # Semantic colors for trade results (Discord int format)
-DISCORD_GREEN = 0x10b981
-DISCORD_RED = 0xef4444
-DISCORD_YELLOW = 0xf59e0b
+DISCORD_GREEN = 3066993     # 0x2ECC71
+DISCORD_RED = 15158332      # 0xE74C3C
+DISCORD_YELLOW = 16776960   # 0xFFFF00
 DISCORD_BLUE = 0x3b82f6
 
 
@@ -34,6 +34,7 @@ class NotificationManager:
         self.sms_enabled = SMS_CONFIG['enabled']
         self.email_config = EMAIL_CONFIG
         self.sms_config = SMS_CONFIG
+        self.mode = 'dry-run'  # Set by caller (main.py) after creation
 
         if self.email_enabled:
             logger.info("Email notifications enabled")
@@ -172,6 +173,10 @@ class NotificationManager:
         except Exception as e:
             logger.error(f"Failed to send Slack notification: {e}")
 
+    def _footer_text(self) -> str:
+        """Build footer string with mode."""
+        return f"The Daily Melt \u2022 {self.mode}"
+
     def _send_discord(self, subject: str, message: str, level: str):
         """Send Discord notification via webhook (plain embed, no fields)."""
         url = self.discord_config.get('webhook_url', '')
@@ -182,7 +187,7 @@ class NotificationManager:
                 'description': message,
                 'color': color,
                 'timestamp': datetime.now(timezone.utc).isoformat(),
-                'footer': {'text': 'The Daily Melt'},
+                'footer': {'text': self._footer_text()},
             }]
         }
         try:
@@ -215,7 +220,7 @@ class NotificationManager:
             'description': description,
             'color': color,
             'timestamp': datetime.now(timezone.utc).isoformat(),
-            'footer': {'text': 'The Daily Melt'},
+            'footer': {'text': self._footer_text()},
         }
         if fields:
             embed['fields'] = fields
@@ -258,7 +263,7 @@ class NotificationManager:
 
         Args:
             data: dict with keys: strategy, direction, short_strike, long_strike,
-                  credit_per_contract, total_credit, quantity, breakeven, max_risk
+                  credit_per_contract, total_credit, quantity, breakeven, max_risk, expiry
         """
         strategy = data.get('strategy', 'Unknown')
         direction = data.get('direction', '').upper()
@@ -269,6 +274,7 @@ class NotificationManager:
         qty = data.get('quantity', 0)
         breakeven = data.get('breakeven', 0)
         max_risk = data.get('max_risk', 0)
+        expiry = data.get('expiry', '')
 
         fields = [
             {'name': 'Strategy', 'value': strategy, 'inline': True},
@@ -279,6 +285,7 @@ class NotificationManager:
             {'name': 'Quantity', 'value': str(qty), 'inline': True},
             {'name': 'Breakeven', 'value': f"${breakeven:,.2f}", 'inline': True},
             {'name': 'Max Risk', 'value': f"${max_risk:,.2f}", 'inline': True},
+            {'name': 'Expiry', 'value': expiry or '0DTE', 'inline': True},
         ]
 
         self._send_rich(
@@ -422,8 +429,7 @@ class NotificationManager:
         ]
         if vix_level is not None:
             fields.append({'name': 'VIX', 'value': f"{vix_level:.1f} ({vix_regime})", 'inline': True})
-        else:
-            fields.append({'name': 'VIX Regime', 'value': vix_regime, 'inline': True})
+        # Omit VIX field entirely when unavailable (don't show "unknown")
         if open_positions > 0:
             fields.append({'name': 'Carry-Over Positions', 'value': str(open_positions), 'inline': True})
 
@@ -464,19 +470,26 @@ class NotificationManager:
         """Send enhanced bot stopped notification.
 
         Args:
-            data: dict with keys: mode, equity, open_positions, trades_today, daily_pnl
+            data: dict with keys: mode, equity, open_positions, trades_today, daily_pnl,
+                  streak, best_trade
         """
         mode = data.get('mode', 'dry-run')
         equity = data.get('equity')
         open_positions = data.get('open_positions', 0)
         trades_today = data.get('trades_today', 0)
         daily_pnl = data.get('daily_pnl', 0)
+        streak = data.get('streak', '')
+        best_trade = data.get('best_trade', '')
 
         fields = [
             {'name': 'Mode', 'value': mode, 'inline': True},
             {'name': 'Trades Today', 'value': str(trades_today), 'inline': True},
             {'name': 'Daily P&L', 'value': f"${daily_pnl:+.2f}", 'inline': True},
         ]
+        if streak:
+            fields.append({'name': 'Streak', 'value': streak, 'inline': True})
+        if best_trade:
+            fields.append({'name': 'Best Trade', 'value': best_trade, 'inline': True})
         if equity is not None:
             fields.append({'name': 'Equity', 'value': f"${equity:,.0f}", 'inline': True})
         fields.append({'name': 'Open Positions', 'value': str(open_positions), 'inline': True})

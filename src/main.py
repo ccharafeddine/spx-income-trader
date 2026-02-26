@@ -240,6 +240,7 @@ class TradingBot:
         self._reconciliation_done_today = False
         self._market_open_notified = False  # Send market open notification once per day
         self._danger_alerts_sent = {}  # Track danger alerts sent per trade (avoid spam)
+        self._best_trade_today = None  # Best single trade P&L today {pnl, strategy}
 
         # Daily loss limit is enforced solely by PortfolioManager.daily_realized_pnl
         # to prevent dual-tracker drift. No separate TradingBot.daily_pnl.
@@ -727,6 +728,7 @@ class TradingBot:
                     self._reconciliation_done_today = False
                     self._market_open_notified = False
                     self._danger_alerts_sent = {}
+                    self._best_trade_today = None
 
                     # Reset parallel strategies for new day
                     self._bnb_day_end_called = False
@@ -824,15 +826,21 @@ class TradingBot:
                 # Market open notification (once per day at 9:30 ET)
                 if market_open_now and not self._market_open_notified and self.notifier:
                     self._market_open_notified = True
+                    _vl, _vr = None, None
                     try:
-                        from src.data.vix_provider import get_vix_level
-                        _vl, _vr = get_vix_level()
+                        from src.data.vix_provider import VixProvider
+                        _vix = VixProvider()
+                        _vl, _vr = _vix.get_vix_with_regime()
+                        if _vl is None:
+                            # Retry once after brief pause
+                            time_module.sleep(1)
+                            _vl, _vr = _vix.get_vix_with_regime()
                     except Exception:
-                        _vl, _vr = None, 'unknown'
+                        _vl, _vr = None, None
                     _open_pos = self.position_manager.get_open_trades()
                     self.notifier.send_market_open({
                         'vix_level': _vl,
-                        'vix_regime': _vr or 'unknown',
+                        'vix_regime': _vr,
                         'open_positions': len(_open_pos),
                         'mode': TRADING_MODE,
                     })
@@ -929,9 +937,12 @@ class TradingBot:
                 if closed_pnl != 0:
                     logger.info(f"Daily realized P&L: ${self.portfolio.daily_realized_pnl:.2f}")
 
-                # Notify on closed trades
-                if self.notifier:
-                    for closed in self.position_manager.recently_closed_trades:
+                # Notify on closed trades and track best trade
+                for closed in self.position_manager.recently_closed_trades:
+                    _cpnl = closed.get('pnl', 0)
+                    if self._best_trade_today is None or _cpnl > self._best_trade_today.get('pnl', float('-inf')):
+                        self._best_trade_today = {'pnl': _cpnl, 'strategy': closed.get('strategy', 'DI')}
+                    if self.notifier:
                         if closed.get('is_reconciliation'):
                             subject = f"Startup Reconciliation: {closed['direction'].upper()}"
                             body_lines = [
@@ -1425,9 +1436,10 @@ class TradingBot:
 
             if n_disc > 0 and self.notifier:
                 summary_lines = [f"{d['field']}: {d['status']}" for d in result['discrepancies'][:5]]
-                self.notifier.send_alert(
+                self.notifier.send(
                     f"P&L Reconciliation: {n_disc} discrepancy(ies) found",
                     '\n'.join(summary_lines),
+                    level='warning',
                 )
 
             self._reconciliation_done_today = True
@@ -2080,6 +2092,10 @@ class TradingBot:
 
             # 9. Notification
             if self.notifier:
+                _expiry = '0DTE'
+                if spread.expiration:
+                    _dte = (spread.expiration.date() - datetime.now(self.tz).date()).days
+                    _expiry = spread.expiration.strftime('%m/%d') + (f" ({_dte}DTE)" if _dte > 0 else " (0DTE)")
                 self.notifier.send_trade_entry({
                     'strategy': strategy_name,
                     'direction': spread.direction.value,
@@ -2090,6 +2106,7 @@ class TradingBot:
                     'quantity': actual_qty,
                     'breakeven': spread.breakeven,
                     'max_risk': max_risk_per_contract * actual_qty,
+                    'expiry': _expiry,
                 })
 
             # Partial fill notification
@@ -2465,6 +2482,10 @@ class TradingBot:
 
                 # Send notification
                 if self.notifier:
+                    _expiry = '0DTE'
+                    if spread.expiration:
+                        _dte = (spread.expiration.date() - datetime.now(self.tz).date()).days
+                        _expiry = spread.expiration.strftime('%m/%d') + (f" ({_dte}DTE)" if _dte > 0 else " (0DTE)")
                     self.notifier.send_trade_entry({
                         'strategy': 'Daily Income',
                         'direction': spread.direction.value,
@@ -2475,6 +2496,7 @@ class TradingBot:
                         'quantity': actual_qty,
                         'breakeven': spread.breakeven,
                         'max_risk': spread.max_risk * actual_qty,
+                        'expiry': _expiry,
                     })
 
                 # Partial fill notification
@@ -2624,12 +2646,28 @@ class TradingBot:
                 except Exception:
                     _eq = self.portfolio.account_size
                 total_trades = self.dte0_trades_today + self.tnt_trades_today
+                # Build streak string
+                _streak = ''
+                dm = self.portfolio.drawdown_manager
+                if dm:
+                    _cw = getattr(dm, 'consecutive_wins', 0)
+                    _cl = getattr(dm, 'consecutive_losses', 0)
+                    if _cw > 0:
+                        _streak = f"{_cw}W"
+                    elif _cl > 0:
+                        _streak = f"{_cl}L"
+                # Best trade today
+                _best = ''
+                if self._best_trade_today and self._best_trade_today.get('pnl', 0) > 0:
+                    _best = f"${self._best_trade_today['pnl']:+.2f} ({self._best_trade_today.get('strategy', 'DI')})"
                 self.notifier.send_bot_stopped({
                     'mode': TRADING_MODE,
                     'equity': _eq,
                     'open_positions': len(self.position_manager.get_open_trades()),
                     'trades_today': total_trades,
                     'daily_pnl': self.portfolio.daily_realized_pnl,
+                    'streak': _streak,
+                    'best_trade': _best,
                 })
             except Exception as e:
                 logger.warning(f"Failed to send shutdown notification: {e}")
@@ -2795,6 +2833,7 @@ def main():
         )
         db_manager = DatabaseManager(DATABASE_PATH)
         notifier = NotificationManager()
+        notifier.mode = args.mode or TRADING_MODE
 
         # Create recorder if --record flag is set
         recorder = None
