@@ -201,10 +201,11 @@ class PositionManager:
                 entry_order_id=order_id,
                 quantity=actual_quantity
             )
-            
+            trade._strategy_type = strategy_type  # Carried through to exit notifications
+
             # Add to open trades
             self.open_trades.append(trade)
-            
+
             # Build entry context for database analytics
             entry_context = {'strategy_type': strategy_type}
             try:
@@ -494,6 +495,7 @@ class PositionManager:
 
             # Rich data for notifications
             max_risk = trade.spread.max_risk * trade.quantity if trade.spread.max_risk else 0
+            max_profit = trade.spread.max_profit * trade.quantity if trade.spread.max_profit else 0
             duration = ''
             if trade.entry_time and trade.exit_time:
                 dur = trade.exit_time - trade.entry_time
@@ -504,9 +506,13 @@ class PositionManager:
                 'direction': trade.spread.direction.value,
                 'pnl': trade.pnl or 0.0,
                 'pnl_pct': ((trade.pnl or 0) / max_risk * 100) if max_risk else 0,
+                'max_profit_pct': ((trade.pnl or 0) / max_profit * 100) if max_profit else 0,
                 'reason': reason,
                 'strikes': f"{trade.spread.short_leg.strike}/{trade.spread.long_leg.strike}",
+                'short_strike': trade.spread.short_leg.strike,
+                'long_strike': trade.spread.long_leg.strike,
                 'duration': duration,
+                'strategy': getattr(trade, '_strategy_type', 'unknown'),
             })
 
             # Update database

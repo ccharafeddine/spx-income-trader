@@ -238,6 +238,8 @@ class TradingBot:
         self._journal_trades_entered = 0
         self._journal_finalized = False
         self._reconciliation_done_today = False
+        self._market_open_notified = False  # Send market open notification once per day
+        self._danger_alerts_sent = {}  # Track danger alerts sent per trade (avoid spam)
 
         # Daily loss limit is enforced solely by PortfolioManager.daily_realized_pnl
         # to prevent dual-tracker drift. No separate TradingBot.daily_pnl.
@@ -543,11 +545,16 @@ class TradingBot:
 
         # Send startup notification
         if self.notifier:
-            self.notifier.send(
-                "Trading Bot Started",
-                f"Mode: {TRADING_MODE}\nTime: {datetime.now(self.tz).strftime('%H:%M:%S EST')}",
-                level='info'
-            )
+            try:
+                _eq = self.broker.get_account_balance().get(
+                    'net_account_value', self.portfolio.account_size)
+            except Exception:
+                _eq = self.portfolio.account_size
+            self.notifier.send_bot_started({
+                'mode': TRADING_MODE,
+                'equity': _eq,
+                'open_positions': len(self.position_manager.get_open_trades()),
+            })
         
         # Log system event
         self.db.log_event("bot_started", "Trading bot started", {
@@ -718,6 +725,8 @@ class TradingBot:
                     self._journal_trades_entered = 0
                     self._journal_finalized = False
                     self._reconciliation_done_today = False
+                    self._market_open_notified = False
+                    self._danger_alerts_sent = {}
 
                     # Reset parallel strategies for new day
                     self._bnb_day_end_called = False
@@ -810,6 +819,23 @@ class TradingBot:
                         self.recorder.record('market_close',
                             spx_price=self._current_spx_price,
                             daily_pnl=self.portfolio.daily_realized_pnl)
+
+                # Market open notification (once per day at 9:30 ET)
+                if market_open_now and not self._market_open_notified and self.notifier:
+                    self._market_open_notified = True
+                    try:
+                        from src.data.vix_provider import get_vix_level
+                        _vl, _vr = get_vix_level()
+                    except Exception:
+                        _vl, _vr = None, 'unknown'
+                    _open_pos = self.position_manager.get_open_trades()
+                    self.notifier.send_market_open({
+                        'vix_level': _vl,
+                        'vix_regime': _vr or 'unknown',
+                        'open_positions': len(_open_pos),
+                        'mode': TRADING_MODE,
+                    })
+
                 self._market_was_open = market_open_now
 
                 if not market_open_now:
@@ -852,6 +878,38 @@ class TradingBot:
                 except Exception as e:
                     logger.warning(f"Position monitoring error (non-fatal, will retry): {e}", exc_info=True)
 
+                # Danger alert: check if SPX has breached any open position's short strike
+                if self.notifier and self._current_spx_price > 0:
+                    for _ot in self.position_manager.get_open_trades():
+                        _ss = _ot.spread.short_leg.strike
+                        _dir = _ot.spread.direction.value
+                        _breached = (
+                            (_dir == 'bullish' and self._current_spx_price < _ss)
+                            or (_dir == 'bearish' and self._current_spx_price > _ss)
+                        )
+                        _alert_key = f"danger_{_ot.id}"
+                        if _breached and not getattr(self, '_danger_alerts_sent', {}).get(_alert_key):
+                            if not hasattr(self, '_danger_alerts_sent'):
+                                self._danger_alerts_sent = {}
+                            self._danger_alerts_sent[_alert_key] = True
+                            _dist = abs(self._current_spx_price - _ss)
+                            _est_loss = _ot.spread.profit_at_price(self._current_spx_price) * _ot.quantity
+                            _time_left = ''
+                            if _ot.spread.expiration:
+                                _remaining = _ot.spread.expiration - datetime.now(self.tz)
+                                _hrs, _rem = divmod(int(_remaining.total_seconds()), 3600)
+                                _mins = _rem // 60
+                                _time_left = f"{_hrs}h {_mins}m" if _hrs else f"{_mins}m"
+                            self.notifier.send_danger_alert({
+                                'direction': _dir,
+                                'short_strike': _ss,
+                                'long_strike': _ot.spread.long_leg.strike,
+                                'current_price': self._current_spx_price,
+                                'distance': _dist if _dir == 'bearish' else -_dist,
+                                'estimated_loss': _est_loss,
+                                'time_remaining': _time_left,
+                            })
+
                 # Record position updates for demo replay
                 if self.recorder:
                     open_positions = self.position_manager.get_open_trades()
@@ -882,16 +940,19 @@ class TradingBot:
                             ]
                             if closed['duration']:
                                 body_lines.append(f"Duration: {closed['duration']}")
+                            self.notifier.send(subject, "\n".join(body_lines), level='info')
                         else:
-                            subject = f"Trade Closed: {closed['direction'].upper()}"
-                            body_lines = [
-                                f"P&L: ${closed['pnl']:+.2f} ({closed['pnl_pct']:+.1f}%)",
-                                f"Strikes: {closed['strikes']}",
-                                f"Reason: {closed['reason']}",
-                                f"Duration: {closed['duration']}",
-                                f"Daily Total: ${self.portfolio.daily_realized_pnl:+.2f}",
-                            ]
-                        self.notifier.send(subject, "\n".join(body_lines), level='info')
+                            self.notifier.send_trade_exit({
+                                'strategy': closed.get('strategy', 'unknown'),
+                                'direction': closed['direction'],
+                                'short_strike': closed.get('short_strike', 0),
+                                'long_strike': closed.get('long_strike', 0),
+                                'pnl': closed['pnl'],
+                                'pnl_pct': closed['pnl_pct'],
+                                'max_profit_pct': closed.get('max_profit_pct', 0),
+                                'hold_duration': closed['duration'],
+                                'exit_reason': closed['reason'],
+                            })
                 self.position_manager.recently_closed_trades.clear()
 
                 # Update market state: build bars, feed parallel strategies
@@ -1138,11 +1199,12 @@ class TradingBot:
                 self.recorder.record('circuit_breaker',
                     daily_pnl=daily_pnl, limit=max_loss, triggered=True)
             if self.notifier:
-                self.notifier.send(
-                    "Daily Loss Limit Reached",
-                    f"Daily P&L: ${daily_pnl:.2f}\nStopping new trades.",
-                    level='critical'
-                )
+                self.notifier.send_circuit_breaker({
+                    'current_loss': daily_pnl,
+                    'loss_limit': max_loss,
+                    'message': f"Daily P&L ${daily_pnl:.2f} hit the -${max_loss:.0f} limit. "
+                               f"No new trades will be opened for the rest of the session.",
+                })
             return False
         return True
 
@@ -1274,12 +1336,41 @@ class TradingBot:
                         )
                     except Exception:
                         live_equity = self.portfolio.account_size
+
+                    # Compute wins/losses and streak for EOD summary
+                    _wins = 0
+                    _losses = 0
+                    _streak = ''
+                    if dm:
+                        _wins = getattr(dm, 'daily_wins', 0)
+                        _losses = getattr(dm, 'daily_losses', 0)
+                        _cl = getattr(dm, 'consecutive_losses', 0)
+                        _cw = getattr(dm, 'consecutive_wins', 0)
+                        if _cl > 0:
+                            _streak = f"{_cl}L"
+                        elif _cw > 0:
+                            _streak = f"{_cw}W"
+
+                    # Gather open swing positions for EOD notification
+                    _open_swings = []
+                    for _t in self.position_manager.get_open_trades():
+                        _open_swings.append({
+                            'direction': _t.spread.direction.value,
+                            'short_strike': _t.spread.short_leg.strike,
+                            'long_strike': _t.spread.long_leg.strike,
+                            'unrealized_pnl': _t.pnl or 0,
+                        })
+
                     self.notifier.send_eod_summary({
                         'trades_count': self._journal_trades_entered,
+                        'wins': _wins,
+                        'losses': _losses,
                         'daily_pnl': self.portfolio.daily_realized_pnl,
                         'weekly_pnl': dm.weekly_realized_pnl if dm else 0.0,
                         'monthly_pnl': dm.monthly_realized_pnl if dm else 0.0,
                         'equity': live_equity,
+                        'streak': _streak,
+                        'open_swings': _open_swings,
                         'no_trade_reason': no_trade_summary if self._journal_trades_entered == 0 else None,
                     })
                 except Exception as eod_err:
@@ -1963,13 +2054,17 @@ class TradingBot:
 
             # 9. Notification
             if self.notifier:
-                self.notifier.send(
-                    f"{strategy_name.upper()} Trade: {spread.direction.value.upper()}",
-                    f"Strikes: ${spread.short_leg.strike}/${spread.long_leg.strike}\n"
-                    f"Credit: ${spread.credit_received:.2f}\n"
-                    f"Contracts: {actual_qty}",
-                    level='info'
-                )
+                self.notifier.send_trade_entry({
+                    'strategy': strategy_name,
+                    'direction': spread.direction.value,
+                    'short_strike': spread.short_leg.strike,
+                    'long_strike': spread.long_leg.strike,
+                    'credit_per_contract': spread.credit_received,
+                    'total_credit': spread.credit_received * actual_qty * 100,
+                    'quantity': actual_qty,
+                    'breakeven': spread.breakeven,
+                    'max_risk': max_risk_per_contract * actual_qty,
+                })
 
             # Partial fill notification
             if actual_qty != quantity and self.notifier:
@@ -2344,14 +2439,17 @@ class TradingBot:
 
                 # Send notification
                 if self.notifier:
-                    self.notifier.send(
-                        f"Trade Entered: {spread.direction.value.upper()}",
-                        f"Strikes: ${spread.short_leg.strike}/${spread.long_leg.strike}\n"
-                        f"Credit: ${spread.credit_received:.2f}\n"
-                        f"Max Profit: ${spread.max_profit:.2f}\n"
-                        f"Contracts: {actual_qty}",
-                        level='info'
-                    )
+                    self.notifier.send_trade_entry({
+                        'strategy': 'Daily Income',
+                        'direction': spread.direction.value,
+                        'short_strike': spread.short_leg.strike,
+                        'long_strike': spread.long_leg.strike,
+                        'credit_per_contract': spread.credit_received,
+                        'total_credit': spread.credit_received * actual_qty * 100,
+                        'quantity': actual_qty,
+                        'breakeven': spread.breakeven,
+                        'max_risk': spread.max_risk * actual_qty,
+                    })
 
                 # Partial fill notification
                 if actual_qty != quantity and self.notifier:
@@ -2494,13 +2592,19 @@ class TradingBot:
         # Send notification
         if self.notifier:
             try:
+                try:
+                    _eq = self.broker.get_account_balance().get(
+                        'net_account_value', self.portfolio.account_size)
+                except Exception:
+                    _eq = self.portfolio.account_size
                 total_trades = self.dte0_trades_today + self.tnt_trades_today
-                self.notifier.send(
-                    "Trading Bot Stopped",
-                    f"Trades today: {total_trades}\n"
-                    f"Daily P&L: ${self.portfolio.daily_realized_pnl:.2f}",
-                    level='info'
-                )
+                self.notifier.send_bot_stopped({
+                    'mode': TRADING_MODE,
+                    'equity': _eq,
+                    'open_positions': len(self.position_manager.get_open_trades()),
+                    'trades_today': total_trades,
+                    'daily_pnl': self.portfolio.daily_realized_pnl,
+                })
             except Exception as e:
                 logger.warning(f"Failed to send shutdown notification: {e}")
 

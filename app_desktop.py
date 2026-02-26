@@ -604,17 +604,6 @@ class DesktopApp:
                 self._bot_crash_error = err_msg
                 logger.error(f"WATCHDOG: {err_msg}")
 
-                # Send notification if configured
-                try:
-                    from src.utils.notifications import NotificationManager
-                    notifier = NotificationManager()
-                    notifier.send(
-                        "Bot Crashed",
-                        "The trading bot stopped unexpectedly. Attempting auto-restart.",
-                    )
-                except Exception as e:
-                    logger.warning(f"Watchdog failed to send notification: {e}")
-
                 self._update_tray_icon()
 
                 # Check restart cap: max 3 per hour
@@ -642,11 +631,23 @@ class DesktopApp:
                 logger.warning(f"WATCHDOG: auto-restarting bot in {restart_mode} mode")
                 self._auto_restart_times.append(time.time())
                 self._auto_restarted = True
-                success, err = self.start_bot(restart_mode)
+                success, err_start = self.start_bot(restart_mode)
                 if success:
                     logger.info("WATCHDOG: bot auto-restarted successfully")
                 else:
-                    logger.error(f"WATCHDOG: auto-restart failed: {err}")
+                    logger.error(f"WATCHDOG: auto-restart failed: {err_start}")
+
+                # Send rich auto-restart notification
+                try:
+                    from src.utils.notifications import NotificationManager
+                    notifier = NotificationManager()
+                    notifier.send_auto_restart({
+                        'crash_reason': err_msg,
+                        'restart_count': len(self._auto_restart_times),
+                        'mode': restart_mode,
+                    })
+                except Exception as notify_err:
+                    logger.warning(f"Watchdog failed to send notification: {notify_err}")
                 break  # start_bot launches a new watchdog
 
             if not bot_thread.is_alive():

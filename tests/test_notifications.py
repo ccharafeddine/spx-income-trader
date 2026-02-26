@@ -170,6 +170,8 @@ class TestEODSummary:
         nm = _make_notifier(slack={'enabled': True, 'webhook_url': 'https://hooks.slack.com/test', 'min_level': 'info'})
         nm.send_eod_summary({
             'trades_count': 2,
+            'wins': 1,
+            'losses': 1,
             'daily_pnl': 150.50,
             'weekly_pnl': 320.00,
             'monthly_pnl': 800.00,
@@ -179,9 +181,10 @@ class TestEODSummary:
         mock_post.assert_called_once()
         payload = mock_post.call_args.kwargs.get('json') or mock_post.call_args[1].get('json')
         text = payload['attachments'][0]['text']
-        assert 'Trades: 2' in text
+        assert 'Trades' in text
         assert '$+150.50' in text
-        assert 'Win Rate: 75%' in text
+        assert 'Win Rate' in text
+        assert '75%' in text
         assert '$51,500' in text
 
 
@@ -222,3 +225,261 @@ class TestReloadConfig:
         assert nm.slack_config['enabled'] is True
         assert nm.slack_config['webhook_url'] == 'https://new-url'
         assert nm.slack_config['min_level'] == 'warning'
+
+
+# ------------------------------------------------------------------
+# Rich Discord embed tests (8 new tests)
+# ------------------------------------------------------------------
+
+DISCORD_CFG = {'enabled': True, 'webhook_url': 'https://discord.com/api/webhooks/test', 'min_level': 'info'}
+
+
+def _get_discord_embed(mock_post):
+    """Extract the first embed from a mocked Discord POST call."""
+    payload = mock_post.call_args.kwargs.get('json') or mock_post.call_args[1].get('json')
+    return payload['embeds'][0]
+
+
+class TestRichEmbedFields:
+    """Verify Discord embeds include structured fields with name/value/inline."""
+
+    @patch('requests.post')
+    def test_trade_entry_embed_has_fields(self, mock_post):
+        """send_trade_entry produces an embed with strategy, strikes, and risk fields."""
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+
+        nm.send_trade_entry({
+            'strategy': 'Daily Income',
+            'direction': 'bullish',
+            'short_strike': 5800,
+            'long_strike': 5795,
+            'credit_per_contract': 1.20,
+            'total_credit': 120.00,
+            'quantity': 1,
+            'breakeven': 5798.80,
+            'max_risk': 380.00,
+        })
+
+        mock_post.assert_called_once()
+        embed = _get_discord_embed(mock_post)
+        assert 'fields' in embed
+        field_names = {f['name'] for f in embed['fields']}
+        assert 'Strategy' in field_names
+        assert 'Strikes' in field_names
+        assert 'Max Risk' in field_names
+        assert 'Breakeven' in field_names
+        assert embed['footer']['text'] == 'The Daily Melt'
+        assert 'timestamp' in embed
+        # All fields should have inline set
+        for f in embed['fields']:
+            assert 'inline' in f
+
+
+class TestColorSelection:
+    """Verify win/loss color logic for trade exit embeds."""
+
+    @patch('requests.post')
+    def test_trade_exit_win_is_green(self, mock_post):
+        """Profitable trade exit uses green color (0x10b981)."""
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+
+        nm.send_trade_exit({
+            'strategy': 'Daily Income',
+            'direction': 'bullish',
+            'short_strike': 5800,
+            'long_strike': 5795,
+            'pnl': 95.00,
+            'pnl_pct': 79.2,
+            'max_profit_pct': 79,
+            'hold_duration': '2h 15m',
+            'exit_reason': 'profit_target',
+        })
+
+        embed = _get_discord_embed(mock_post)
+        assert embed['color'] == 0x10b981  # DISCORD_GREEN
+
+    @patch('requests.post')
+    def test_trade_exit_loss_is_red(self, mock_post):
+        """Losing trade exit uses red color (0xef4444)."""
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+
+        nm.send_trade_exit({
+            'strategy': 'Daily Income',
+            'direction': 'bearish',
+            'short_strike': 5850,
+            'long_strike': 5855,
+            'pnl': -280.00,
+            'pnl_pct': -73.7,
+            'max_profit_pct': -73,
+            'hold_duration': '45m',
+            'exit_reason': 'stop_loss',
+        })
+
+        embed = _get_discord_embed(mock_post)
+        assert embed['color'] == 0xef4444  # DISCORD_RED
+
+
+class TestDailySummaryContent:
+    """Verify EOD summary embed includes wins/losses, streak, and open swings."""
+
+    @patch('requests.post')
+    def test_eod_summary_discord_embed_content(self, mock_post):
+        """EOD summary embed has trades (W/L), streak, and swing position fields."""
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+
+        nm.send_eod_summary({
+            'trades_count': 3,
+            'wins': 2,
+            'losses': 1,
+            'daily_pnl': 210.00,
+            'weekly_pnl': 480.00,
+            'monthly_pnl': 1200.00,
+            'streak': '2W',
+            'equity': 52000.0,
+            'open_swings': [
+                {'direction': 'bullish', 'short_strike': 5700, 'long_strike': 5690, 'unrealized_pnl': 45.0},
+            ],
+        })
+
+        mock_post.assert_called_once()
+        embed = _get_discord_embed(mock_post)
+        assert embed['color'] == 0x10b981  # green for positive daily P&L
+        field_map = {f['name']: f['value'] for f in embed['fields']}
+        assert '2W / 1L' in field_map['Trades']
+        assert '2W' in field_map['Streak']
+        assert '$+210.00' in field_map['Daily P&L']
+        assert 'Open Swing Positions' in field_map
+        assert '5700/5690' in field_map['Open Swing Positions']
+
+
+class TestDangerAlertFields:
+    """Verify danger alert embed contains required threshold fields."""
+
+    @patch('requests.post')
+    def test_danger_alert_has_distance_and_loss(self, mock_post):
+        """Danger alert includes current price, distance past strike, and estimated loss."""
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+
+        nm.send_danger_alert({
+            'direction': 'bearish',
+            'short_strike': 5850,
+            'long_strike': 5855,
+            'current_price': 5853.25,
+            'distance': 3.25,
+            'estimated_loss': -175.00,
+            'time_remaining': '1h 30m',
+        })
+
+        mock_post.assert_called_once()
+        embed = _get_discord_embed(mock_post)
+        assert embed['color'] == 0xef4444  # red for danger
+        assert 'DANGER' in embed['title']
+        field_map = {f['name']: f['value'] for f in embed['fields']}
+        assert '$5,853.25' in field_map['SPX Price']
+        assert '$+3.25' in field_map['Past Short By']
+        assert '$-175.00' in field_map['Est. Loss']
+        assert '1h 30m' in field_map['Time Left']
+
+
+class TestCircuitBreakerMessage:
+    """Verify circuit breaker embed includes loss, limit, and halted status."""
+
+    @patch('requests.post')
+    def test_circuit_breaker_embed_content(self, mock_post):
+        """Circuit breaker embed shows daily P&L, limit, and halt status."""
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+
+        nm.send_circuit_breaker({
+            'current_loss': -520.00,
+            'loss_limit': 500.00,
+            'message': 'Daily P&L $-520.00 hit the -$500 limit.',
+        })
+
+        mock_post.assert_called_once()
+        embed = _get_discord_embed(mock_post)
+        assert embed['color'] == 0xef4444  # red
+        field_map = {f['name']: f['value'] for f in embed['fields']}
+        assert '$-520.00' in field_map['Daily P&L']
+        assert '-$500' in field_map['Loss Limit']
+        assert 'Halted' in field_map['Status']
+
+
+class TestAutoRestartEmbed:
+    """Verify auto-restart embed includes crash reason and restart count."""
+
+    @patch('requests.post')
+    def test_auto_restart_embed_content(self, mock_post):
+        """Auto-restart embed contains crash reason, restart count, and mode."""
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+
+        nm.send_auto_restart({
+            'crash_reason': 'Bot thread died unexpectedly',
+            'restart_count': 2,
+            'mode': 'live',
+        })
+
+        mock_post.assert_called_once()
+        embed = _get_discord_embed(mock_post)
+        assert embed['color'] == 0xf59e0b  # yellow
+        field_map = {f['name']: f['value'] for f in embed['fields']}
+        assert 'unexpectedly' in field_map['Crash Reason']
+        assert '2/3' in field_map['Restart #']
+        assert 'live' in field_map['Mode']
+
+
+class TestMarketOpenEmbed:
+    """Verify market open embed includes VIX regime and carry-over positions."""
+
+    @patch('requests.post')
+    def test_market_open_embed_content(self, mock_post):
+        """Market open embed has VIX regime and open position count."""
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+
+        nm.send_market_open({
+            'vix_level': 18.5,
+            'vix_regime': 'low',
+            'open_positions': 1,
+            'mode': 'dry-run',
+        })
+
+        mock_post.assert_called_once()
+        embed = _get_discord_embed(mock_post)
+        assert embed['color'] == 0x3b82f6  # blue
+        assert 'Market Open' in embed['title']
+        field_map = {f['name']: f['value'] for f in embed['fields']}
+        assert '18.5' in field_map['VIX']
+        assert 'low' in field_map['VIX']
+        assert '1' in field_map['Carry-Over Positions']
+        assert 'dry-run' in field_map['Mode']
+
+
+class TestEnhancedStartStop:
+    """Verify enhanced start/stop embeds include equity, mode, and open positions."""
+
+    @patch('requests.post')
+    def test_bot_started_embed_content(self, mock_post):
+        """Bot started embed includes mode, equity, and open position count."""
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+
+        nm.send_bot_started({
+            'mode': 'live',
+            'equity': 50000.0,
+            'open_positions': 2,
+        })
+
+        mock_post.assert_called_once()
+        embed = _get_discord_embed(mock_post)
+        assert embed['color'] == 0x10b981  # green
+        field_map = {f['name']: f['value'] for f in embed['fields']}
+        assert 'live' in field_map['Mode']
+        assert '$50,000' in field_map['Equity']
+        assert '2' in field_map['Open Positions']
