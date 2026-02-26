@@ -529,6 +529,18 @@ def classify_trades(conn, spx_price):
             # Expired but DB wasn't updated (bot wasn't running at close)
             # Calculate final P&L based on SPX price at expiration
             _resolve_expired_trade(t, spx_price)
+            # Persist resolved P&L to DB so calendar/other queries see it
+            try:
+                conn.execute(
+                    """UPDATE trades SET status=?, pnl=?, exit_time=?,
+                              exit_reason=?, exit_price=?
+                       WHERE id=?""",
+                    (t['status'], t['pnl'], t['exit_time'],
+                     t['exit_reason'], t['exit_price'], t['id']),
+                )
+                conn.commit()
+            except Exception as e:
+                logger.debug(f"Failed to persist expired trade resolution: {e}")
             _annotate_trade(t)
             closed_trades.append(t)
         else:
@@ -2426,9 +2438,16 @@ def api_journal_calendar():
         conn = get_db_connection()
 
         # Get trades for the month: entered OR closed within the range
+        # trade_date: cross-day trades use exit date, same-day uses entry date
         rows = conn.execute(
             """SELECT entry_time, exit_time, pnl, strategy_type, status,
-                      direction, credit_received, quantity
+                      direction, credit_received, quantity,
+                      CASE WHEN status IN ('closed', 'expired')
+                                AND exit_time IS NOT NULL
+                                AND DATE(exit_time) != DATE(entry_time)
+                           THEN DATE(exit_time)
+                           ELSE DATE(entry_time)
+                      END as trade_date
                FROM trades
                WHERE (DATE(entry_time) >= ? AND DATE(entry_time) < ?)
                   OR (status IN ('closed', 'expired')
@@ -2436,19 +2455,13 @@ def api_journal_calendar():
             (first_day, last_day, first_day, last_day)
         ).fetchall()
 
-        # Group by date (exclude flagged trades from stats)
-        # Closed trades: attribute to exit date (P&L realized on close)
-        # Open trades: attribute to entry date
+        # Group by trade_date (exclude flagged trades from stats)
+        # Same-day trades (0DTE): entry date. Cross-day: exit date.
         days_data = {}
         month_dur_hours = []
         month_cap_vals = []
         for row in rows:
-            entry_time = row['entry_time'] or ''
-            exit_time = row['exit_time'] or ''
-            if row['status'] in ('closed', 'expired') and exit_time:
-                date_str = exit_time[:10]
-            else:
-                date_str = entry_time[:10] if entry_time else None
+            date_str = row['trade_date']
             if not date_str or date_str < first_day or date_str >= last_day:
                 continue
 

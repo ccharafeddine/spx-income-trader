@@ -335,3 +335,67 @@ def test_calendar_attributes_pnl_to_exit_date(client_with_db):
     # Entry date should have no P&L entry (trade attributed to exit)
     entry_info = data['days'].get(entry_date)
     assert entry_info is None or entry_info['pnl'] == 0.0
+
+
+def test_same_day_trade_appears_on_entry_date(client_with_db):
+    """Same-day (0DTE) closed trade appears on entry date, not shifted."""
+    client, db_file = client_with_db
+    now = datetime.now(ET)
+    month = now.month
+    year = now.year
+
+    trade_date = f'{year:04d}-{month:02d}-15'
+
+    _insert_trade(db_file, 'same-day-1',
+                  entry_time=f'{trade_date} 10:15:00',
+                  exit_time=f'{trade_date} 11:30:00',
+                  status='closed', pnl=480.0)
+
+    resp = client.get(f'/api/journal/calendar?month={month}&year={year}')
+    assert resp.status_code == 200
+    data = resp.get_json()
+
+    day_info = data['days'].get(trade_date)
+    assert day_info is not None, f"No calendar entry for {trade_date}"
+    assert day_info['pnl'] == 480.0
+
+
+@patch('dashboard.app.yahoo')
+def test_dashboard_resolved_expiry_pnl_in_calendar(mock_yahoo, client_with_db):
+    """Dashboard-resolved expired trade has correct P&L persisted to DB."""
+    client, db_file = client_with_db
+    now = datetime.now(ET)
+    month = now.month
+    year = now.year
+    today = now.strftime('%Y-%m-%d')
+
+    mock_yahoo.get_spx_quote.return_value = {'price': 6000.0, 'previous_close': 5990.0}
+    mock_yahoo.get_intraday_bars.return_value = []
+
+    # Insert an active trade with expiration in the past (should be resolved)
+    # Put spread: short 6010, long 6020, credit 1.50, SPX at 6000 -> OTM -> max profit
+    conn = sqlite3.connect(db_file)
+    conn.execute(
+        """INSERT INTO trades (id, entry_time, exit_time, direction, status,
+              strategy_type, short_strike, long_strike, spread_width,
+              credit_received, entry_price, quantity, expiration, pnl)
+           VALUES (?, ?, NULL, 'bearish', 'active', 'daily_income',
+                   6010, 6020, 10, 1.50, 1.50, 1, ?, NULL)""",
+        ('exp-resolve-1', f'{today} 10:00:00', f'{today} 16:00:00'),
+    )
+    conn.commit()
+    conn.close()
+
+    # Call /api/today which triggers classify_trades -> _resolve_expired_trade
+    # This persists the resolved P&L to the DB
+    resp = client.get('/api/today')
+    assert resp.status_code == 200
+
+    # Now verify the calendar shows the resolved P&L
+    resp2 = client.get(f'/api/journal/calendar?month={month}&year={year}')
+    assert resp2.status_code == 200
+    data = resp2.get_json()
+    day_info = data['days'].get(today)
+    assert day_info is not None, f"No calendar entry for {today}"
+    # SPX 6000 < short 6010 -> put spread expired OTM -> max profit = credit * 100
+    assert day_info['pnl'] == 150.0
