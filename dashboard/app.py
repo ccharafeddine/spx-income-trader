@@ -2425,23 +2425,31 @@ def api_journal_calendar():
     try:
         conn = get_db_connection()
 
-        # Get trades for the month
+        # Get trades for the month: entered OR closed within the range
         rows = conn.execute(
             """SELECT entry_time, exit_time, pnl, strategy_type, status,
                       direction, credit_received, quantity
                FROM trades
-               WHERE DATE(entry_time) >= ? AND DATE(entry_time) < ?""",
-            (first_day, last_day)
+               WHERE (DATE(entry_time) >= ? AND DATE(entry_time) < ?)
+                  OR (status IN ('closed', 'expired')
+                      AND DATE(exit_time) >= ? AND DATE(exit_time) < ?)""",
+            (first_day, last_day, first_day, last_day)
         ).fetchall()
 
         # Group by date (exclude flagged trades from stats)
+        # Closed trades: attribute to exit date (P&L realized on close)
+        # Open trades: attribute to entry date
         days_data = {}
         month_dur_hours = []
         month_cap_vals = []
         for row in rows:
             entry_time = row['entry_time'] or ''
-            date_str = entry_time[:10] if entry_time else None
-            if not date_str:
+            exit_time = row['exit_time'] or ''
+            if row['status'] in ('closed', 'expired') and exit_time:
+                date_str = exit_time[:10]
+            else:
+                date_str = entry_time[:10] if entry_time else None
+            if not date_str or date_str < first_day or date_str >= last_day:
                 continue
 
             # Skip flagged trades (same logic as _annotate_trade)

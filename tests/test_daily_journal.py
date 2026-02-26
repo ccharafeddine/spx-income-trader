@@ -305,3 +305,33 @@ def test_api_today_includes_closed_today_count(mock_yahoo, client_with_db):
     resp2 = client.get('/api/today')
     data2 = resp2.get_json()
     assert data2['closed_today_count'] == 2
+
+
+def test_calendar_attributes_pnl_to_exit_date(client_with_db):
+    """Closed trade P&L appears on the exit date, not the entry date."""
+    client, db_file = client_with_db
+    now = datetime.now(ET)
+    month = now.month
+    year = now.year
+
+    # Use mid-month dates to avoid month boundary issues
+    entry_date = f'{year:04d}-{month:02d}-15'
+    exit_date = f'{year:04d}-{month:02d}-16'
+
+    _insert_trade(db_file, 'cross-day-1',
+                  entry_time=f'{entry_date} 14:00:00',
+                  exit_time=f'{exit_date} 10:00:00',
+                  status='closed', pnl=960.0)
+
+    resp = client.get(f'/api/journal/calendar?month={month}&year={year}')
+    assert resp.status_code == 200
+    data = resp.get_json()
+
+    # P&L should be on the exit date (when realized), not entry date
+    exit_info = data['days'].get(exit_date)
+    assert exit_info is not None, f"No calendar entry for exit date {exit_date}"
+    assert exit_info['pnl'] == 960.0
+
+    # Entry date should have no P&L entry (trade attributed to exit)
+    entry_info = data['days'].get(entry_date)
+    assert entry_info is None or entry_info['pnl'] == 0.0
