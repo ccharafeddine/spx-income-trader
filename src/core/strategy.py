@@ -33,9 +33,10 @@ class SPXIncomeStrategy:
         pulse_threshold: float = 10.0,
         spread_width: float = 5.0,
         profit_target_pct: float = 80.0,
-        min_credit: float = 1.00
+        min_credit: float = 1.00,
+        min_bar_range_points: float = 0.0,
     ):
-        self.pulse_detector = PulseBarDetector(pulse_threshold)
+        self.pulse_detector = PulseBarDetector(pulse_threshold, min_bar_range_points=min_bar_range_points)
         self.spread_width = spread_width
         self.profit_target = profit_target_pct / 100.0
 

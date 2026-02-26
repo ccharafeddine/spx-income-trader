@@ -797,7 +797,8 @@ class TradingBot:
                         settings_changed_file.unlink()
                         if self.notifier:
                             self.notifier.reload_config()
-                            logger.info("Settings changed: notification config reloaded")
+                        self._reload_strategy_enabled_flags()
+                        logger.info("Settings changed: config reloaded")
                     except OSError:
                         pass
 
@@ -1141,7 +1142,32 @@ class TradingBot:
         is_weekday = dt.weekday() < 5
 
         return is_weekday and market_open <= current_time < market_close
-    
+
+    def _reload_strategy_enabled_flags(self):
+        """Re-read strategy enabled flags from YAML after dashboard settings change."""
+        try:
+            from config.settings import load_strategy_params
+            params = load_strategy_params()
+
+            orb_enabled = params.get('orb', {}).get('enabled', False)
+            if orb_enabled != self.orb_enabled:
+                self.orb_enabled = orb_enabled
+                if not orb_enabled and self.orb_strategy:
+                    self.orb_strategy.enabled = False
+                logger.info(f"ORB strategy toggled: {'ENABLED' if orb_enabled else 'DISABLED'}")
+
+            tnt_enabled = params.get('tag_n_turn', {}).get('enabled', False)
+            if tnt_enabled != self.tag_n_turn_enabled:
+                self.tag_n_turn_enabled = tnt_enabled
+                logger.info(f"Tag 'n Turn strategy toggled: {'ENABLED' if tnt_enabled else 'DISABLED'}")
+
+            bnb_enabled = params.get('bnb', {}).get('enabled', False)
+            if bnb_enabled != self.bnb_enabled:
+                self.bnb_enabled = bnb_enabled
+                logger.info(f"B&B strategy toggled: {'ENABLED' if bnb_enabled else 'DISABLED'}")
+        except Exception as e:
+            logger.warning(f"Failed to reload strategy flags: {e}")
+
     def _is_setup_window(self, dt: datetime) -> bool:
         """Check if we're in any active setup window (morning or afternoon)."""
         current_time = dt.time()
@@ -1600,7 +1626,7 @@ class TradingBot:
                     self.tag_n_turn.on_bar_complete(bar)
 
                 # ORB: Set opening range on first bar (starts 9:30, completes at 10:00)
-                if self.orb_enabled and self.orb_strategy:
+                if self.orb_enabled and self.orb_strategy and self.orb_strategy.enabled:
                     if bar.timestamp.time() == time(9, 30):
                         self.orb_strategy.set_opening_range(bar)
 
@@ -1705,7 +1731,7 @@ class TradingBot:
                             "TNT exit signal but no TNT position found in portfolio"
                         )
 
-            if self.orb_enabled and self.orb_strategy:
+            if self.orb_enabled and self.orb_strategy and self.orb_strategy.enabled:
                 orb_signal = self.orb_strategy.check_breakout(current_price, current_time)
                 if orb_signal:
                     logger.info(
@@ -2763,7 +2789,10 @@ def main():
             else:
                 logger.warning("Live mode: per-trade confirmation DISABLED (--auto-trade active)")
 
-        strategy = SPXIncomeStrategy()
+        strat_yaml = STRATEGY_PARAMS.get('strategy', {})
+        strategy = SPXIncomeStrategy(
+            min_bar_range_points=strat_yaml.get('min_bar_range_points', 0.0),
+        )
         db_manager = DatabaseManager(DATABASE_PATH)
         notifier = NotificationManager()
 

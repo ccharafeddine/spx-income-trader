@@ -17,12 +17,15 @@ from unittest.mock import Mock, MagicMock, patch, PropertyMock
 from datetime import datetime, date, time, timedelta
 import sys
 from pathlib import Path
+import pytz
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.models.spread import CreditSpread, OptionLeg, TradeDirection
 from src.models.bar import Bar
 from src.core.portfolio_manager import PortfolioManager, StrategyType
+
+ET = pytz.timezone("America/New_York")
 
 
 # ============================================================================
@@ -1772,3 +1775,120 @@ class TestCircuitBreakerBlocksAllPaths:
 
         result = TradingBot._check_daily_loss_circuit_breaker(bot)
         assert result is False
+
+
+# ============================================================================
+# ORB DISABLED FLAG
+# ============================================================================
+
+class TestORBDisabledFlag:
+    """Verify ORB strategy does not fire when disabled."""
+
+    def test_orb_disabled_no_signals(self):
+        """When ORB enabled=false, no ORB signals fire regardless of market."""
+        from src.core.orb_strategy import ORBStrategy
+        from src.models.bar import Bar
+
+        config = {
+            'enabled': False,
+            'min_threshold': 10.0,
+            'min_range_points': 8.0,
+            'confirmation_minutes': 3,
+        }
+        orb = ORBStrategy(config)
+        assert orb.enabled is False
+
+        # Create a bar that would normally produce a strong signal
+        bar = Bar(
+            timestamp=ET.localize(datetime(2026, 2, 20, 9, 30)),
+            open=5800.0, high=5830.0, low=5795.0, close=5828.0,
+        )
+        # set_opening_range returns None when disabled (internal guard)
+        result = orb.set_opening_range(bar)
+        assert result is None
+        assert orb.opening_range is None
+
+        # check_breakout also returns None when disabled
+        breakout = orb.check_breakout(5835.0, ET.localize(datetime(2026, 2, 20, 10, 5)))
+        assert breakout is None
+
+        # Triple-guard in main.py also prevents calling:
+        # `if self.orb_enabled and self.orb_strategy and self.orb_strategy.enabled`
+        orb_enabled_flag = False  # simulating main.py's self.orb_enabled
+        should_call = orb_enabled_flag and orb.enabled
+        assert should_call is False
+
+
+# ============================================================================
+# MIN BAR RANGE POINTS
+# ============================================================================
+
+class TestMinBarRangePoints:
+    """Verify PulseBarDetector rejects bars below minimum range threshold."""
+
+    def test_bar_below_min_range_returns_neutral(self):
+        """Bar with range < min_bar_range_points is NEUTRAL."""
+        from src.core.pulse_detector import PulseBarDetector
+        from src.models.bar import Bar, BarType
+
+        detector = PulseBarDetector(threshold_percent=10.0, min_bar_range_points=2.0)
+        # Range = 5801.5 - 5800.0 = 1.5 pts (< 2.0 threshold)
+        bar = Bar(
+            timestamp=ET.localize(datetime(2026, 2, 20, 10, 0)),
+            open=5800.0, high=5801.5, low=5800.0, close=5801.4,
+        )
+        assert bar.range == 1.5
+        result = detector.analyze_bar(bar)
+        assert result == BarType.NEUTRAL
+
+    def test_bar_above_min_range_detects_pulse(self):
+        """Bar with range >= min_bar_range_points can be a pulse."""
+        from src.core.pulse_detector import PulseBarDetector
+        from src.models.bar import Bar, BarType
+
+        detector = PulseBarDetector(threshold_percent=10.0, min_bar_range_points=2.0)
+        # Range = 5810.0 - 5800.0 = 10 pts, close at 5809.5 = 95% (top 10%)
+        bar = Bar(
+            timestamp=ET.localize(datetime(2026, 2, 20, 10, 0)),
+            open=5800.0, high=5810.0, low=5800.0, close=5809.5,
+        )
+        assert bar.range == 10.0
+        result = detector.analyze_bar(bar)
+        assert result == BarType.BULLISH_PULSE
+
+    def test_min_range_zero_disables_filter(self):
+        """When min_bar_range_points=0.0, no range filter is applied."""
+        from src.core.pulse_detector import PulseBarDetector
+        from src.models.bar import Bar, BarType
+
+        detector = PulseBarDetector(threshold_percent=10.0, min_bar_range_points=0.0)
+        # Tiny range 0.5 pts but close in top 10%
+        bar = Bar(
+            timestamp=ET.localize(datetime(2026, 2, 20, 10, 0)),
+            open=5800.0, high=5800.5, low=5800.0, close=5800.48,
+        )
+        assert bar.range == 0.5
+        result = detector.analyze_bar(bar)
+        assert result == BarType.BULLISH_PULSE
+
+    def test_bearish_pulse_respects_min_range(self):
+        """Bearish pulse also filtered when bar range is too small."""
+        from src.core.pulse_detector import PulseBarDetector
+        from src.models.bar import Bar, BarType
+
+        detector = PulseBarDetector(threshold_percent=10.0, min_bar_range_points=1.0)
+        # Range = 0.8 pts (< 1.0), close in bottom 10%
+        bar = Bar(
+            timestamp=ET.localize(datetime(2026, 2, 20, 10, 0)),
+            open=5800.8, high=5800.8, low=5800.0, close=5800.05,
+        )
+        assert bar.range < 1.0
+        result = detector.analyze_bar(bar)
+        assert result == BarType.NEUTRAL
+
+    def test_strategy_passes_min_range_to_detector(self):
+        """SPXIncomeStrategy forwards min_bar_range_points to PulseBarDetector."""
+        from src.core.strategy import SPXIncomeStrategy
+
+        strategy = SPXIncomeStrategy(min_bar_range_points=3.5)
+        assert strategy.pulse_detector.min_bar_range_points == 3.5

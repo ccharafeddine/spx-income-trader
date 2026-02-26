@@ -14,15 +14,20 @@ class PulseBarDetector:
     - Bearish: Close < Open AND close in bottom 10% of bar range
     """
     
-    def __init__(self, threshold_percent: float = 10.0):
+    def __init__(self, threshold_percent: float = 10.0, min_bar_range_points: float = 0.0):
         """
         Initialize pulse bar detector
-        
+
         Args:
             threshold_percent: Percentage threshold for pulse bar (default 10%)
+            min_bar_range_points: Minimum bar range in points to qualify as pulse (default 0.0)
         """
         self.threshold = threshold_percent
-        logger.info(f"PulseBarDetector initialized with {threshold_percent}% threshold")
+        self.min_bar_range_points = min_bar_range_points
+        logger.info(
+            f"PulseBarDetector initialized with {threshold_percent}% threshold"
+            + (f", min range {min_bar_range_points}pts" if min_bar_range_points > 0 else "")
+        )
     
     def analyze_bar(self, bar: Bar) -> BarType:
         """
@@ -37,7 +42,14 @@ class PulseBarDetector:
         if bar.range == 0:
             logger.debug(f"Bar at {bar.timestamp} has zero range, returning NEUTRAL")
             return BarType.NEUTRAL
-        
+
+        if self.min_bar_range_points > 0 and bar.range < self.min_bar_range_points:
+            logger.debug(
+                f"Bar at {bar.timestamp} range {bar.range:.2f}pts "
+                f"below min {self.min_bar_range_points}pts, returning NEUTRAL"
+            )
+            return BarType.NEUTRAL
+
         close_pct = bar.close_percentage_in_range()
         
         # Check for bullish pulse bar

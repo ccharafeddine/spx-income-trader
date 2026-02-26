@@ -70,6 +70,9 @@ strategy:
   # Pulse bar detection threshold (% of bar range)
   pulse_threshold: 10.0
 
+  # Minimum bar range in points to qualify as pulse bar (0 = disabled)
+  min_bar_range_points: 2.0
+
   # Credit spread width in dollars
   spread_width: 5.0
 
@@ -149,6 +152,9 @@ tag_n_turn:
   # Pulse bar threshold for reversal detection
   pulse_threshold: 10.0
 
+  # Minimum bar range in points for pulse detection (0 = disabled)
+  min_bar_range_points: 1.0
+
   # Maximum holding period (days)
   max_hold_days: 7
 
@@ -180,6 +186,9 @@ bnb:
 # Uses first 30-min bar range with strong-only threshold
 orb:
   enabled: false
+
+  # Minimum bar range in points for opening range pulse (0 = disabled)
+  min_bar_range_points: 2.0
 
   # Strong signal threshold (close in top/bottom N% of range)
   min_threshold: 10.0

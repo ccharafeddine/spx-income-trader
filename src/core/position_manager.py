@@ -133,6 +133,7 @@ class PositionManager:
                         'close': round(setup_bar.close, 2),
                         'close_position_pct': round(close_pct, 1),
                         'bar_range': round(setup_bar.range, 2),
+                        'min_bar_range_threshold': self.strategy.pulse_detector.min_bar_range_points,
                     }
                 }
                 if breakout_time:

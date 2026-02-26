@@ -69,7 +69,8 @@ class TagNTurnStrategy:
 
         # Pulse bar detector for reversal confirmation
         self.pulse_detector = PulseBarDetector(
-            threshold_percent=config.get('pulse_threshold', 10.0)
+            threshold_percent=config.get('pulse_threshold', 10.0),
+            min_bar_range_points=config.get('min_bar_range_points', 0.0),
         )
 
         # Position parameters
