@@ -409,3 +409,47 @@ def test_dashboard_resolved_expiry_pnl_in_calendar(mock_yahoo, client_with_db):
     assert day_info is not None, f"No calendar entry for {today}"
     # SPX 6000 < short 6010 -> put spread expired OTM -> max profit = credit * 100
     assert day_info['pnl'] == 150.0
+
+
+@patch('dashboard.app.yahoo')
+def test_stats_exclude_open_trades(mock_yahoo, client_with_db):
+    """Stats endpoints exclude open trades from count, win rate, and P&L."""
+    client, db_file = client_with_db
+    now = datetime.now(ET)
+    month = now.month
+    year = now.year
+    today = now.strftime('%Y-%m-%d')
+
+    mock_yahoo.get_spx_quote.return_value = {'price': 6000.0, 'previous_close': 5990.0}
+    mock_yahoo.get_intraday_bars.return_value = []
+
+    # One closed winning trade
+    _insert_trade(db_file, 'stats-closed-1',
+                  entry_time=f'{today} 10:00:00',
+                  exit_time=f'{today} 11:00:00',
+                  status='closed', pnl=480.0)
+
+    # One open trade (should be excluded from stats)
+    from datetime import timedelta
+    tomorrow = (now + timedelta(days=1)).strftime('%Y-%m-%d')
+    _insert_trade(db_file, 'stats-open-1',
+                  entry_time=f'{today} 10:30:00',
+                  status='active',
+                  strategy_type='tag_n_turn',
+                  expiration=f'{tomorrow} 16:00:00')
+
+    # Check /api/journal/totals (ALL TIME)
+    resp = client.get('/api/journal/totals')
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['trades'] == 1, f"Expected 1 trade, got {data['trades']}"
+    assert data['win_rate'] == 100.0
+    assert data['total_pnl'] == 480.0
+
+    # Check calendar summary for the month
+    resp2 = client.get(f'/api/journal/calendar?month={month}&year={year}')
+    assert resp2.status_code == 200
+    cal = resp2.get_json()
+    assert cal['summary']['trades'] == 1
+    assert cal['summary']['wins'] == 1
+    assert cal['summary']['win_rate'] == 100.0

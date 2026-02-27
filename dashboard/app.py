@@ -2307,8 +2307,9 @@ def api_journal():
     # Sort newest first
     journal_entries.sort(key=lambda e: e.get('entry_time') or '', reverse=True)
 
-    # Compute stats (valid = non-flagged)
-    valid = [e for e in journal_entries if not e.get('flag')]
+    # Compute stats (valid = non-flagged, closed/expired only - exclude open positions)
+    valid = [e for e in journal_entries
+             if not e.get('flag') and e.get('status') in ('closed', 'expired')]
     wins = [e for e in valid if e['exit_analysis']['outcome'] == 'win']
     losses = [e for e in valid if e['exit_analysis']['outcome'] == 'loss']
     total_pnl = sum((e['exit_analysis']['pnl'] or 0) for e in valid)
@@ -2379,19 +2380,16 @@ def api_journal_totals():
         spx = yahoo.get_spx_quote() or {}
         spx_price = spx.get('price')
         _, closed = classify_trades(conn, spx_price)
-        open_pos, _ = classify_trades(conn, spx_price)
         conn.close()
     except Exception as e:
         logger.error(f"Journal totals error: {e}")
         return jsonify({'error': 'Database error'}), 500
 
-    all_trades = closed + open_pos
-
-    # Compute exit analysis for each trade (same as journal endpoint)
+    # Only closed/expired trades contribute to stats (exclude open positions)
     valid = []
     dur_hours = []
     cap_vals = []
-    for t in all_trades:
+    for t in closed:
         ea = _compute_exit_analysis(t)
         if t.get('flag'):
             continue  # exclude flagged trades from stats
@@ -2479,7 +2477,8 @@ def api_journal_calendar():
                     'strategies': set()
                 }
             d = days_data[date_str]
-            if not is_flagged:
+            is_closed = row['status'] in ('closed', 'expired')
+            if not is_flagged and is_closed:
                 d['trades'] += 1
                 pnl = row['pnl'] or 0
                 d['pnl'] += pnl
