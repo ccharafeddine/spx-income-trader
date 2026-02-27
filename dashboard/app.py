@@ -2414,6 +2414,94 @@ def api_journal_totals():
     })
 
 
+@app.route('/api/debug/calendar-day')
+def api_debug_calendar_day():
+    """TEMPORARY: Debug a single calendar day - raw DB rows + grouping result."""
+    date = request.args.get('date')
+    if not date:
+        return jsonify({'error': 'date param required'}), 400
+
+    conn = get_db_connection()
+
+    # 1. Raw trade rows for this date
+    raw_rows = conn.execute(
+        """SELECT id, entry_time, exit_time, status, strategy_type,
+                  pnl, credit_received
+           FROM trades
+           WHERE DATE(entry_time) = ? OR DATE(exit_time) = ?""",
+        (date, date)
+    ).fetchall()
+    raw = [dict(r) for r in raw_rows]
+
+    # 2. Run the same grouping logic the calendar uses
+    grouped_rows = conn.execute(
+        """SELECT entry_time, exit_time, pnl, strategy_type, status,
+                  direction, credit_received, quantity,
+                  CASE WHEN strategy_type = 'tag_n_turn'
+                            AND status IN ('closed', 'expired')
+                            AND exit_time IS NOT NULL
+                            AND DATE(exit_time) != DATE(entry_time)
+                       THEN DATE(exit_time)
+                       ELSE DATE(entry_time)
+                  END as trade_date
+           FROM trades
+           WHERE DATE(entry_time) = ? OR DATE(exit_time) = ?""",
+        (date, date)
+    ).fetchall()
+
+    day_data = {'trades': 0, 'pnl': 0.0, 'wins': 0, 'losses': 0,
+                'open_count': 0, 'strategies': []}
+    for row in grouped_rows:
+        td = row['trade_date']
+        if td != date:
+            continue
+        credit = row['credit_received'] or 0
+        is_flagged = credit < MIN_CREDIT_THRESHOLD
+        is_closed = row['status'] in ('closed', 'expired')
+        is_open = row['status'] in ('open', 'active')
+        if not is_flagged and is_closed:
+            day_data['trades'] += 1
+            pnl = row['pnl'] or 0
+            day_data['pnl'] += pnl
+            if pnl > 0:
+                day_data['wins'] += 1
+            elif pnl < 0:
+                day_data['losses'] += 1
+        elif is_open:
+            day_data['open_count'] += 1
+        strat = row['strategy_type'] or 'daily_income'
+        if strat not in day_data['strategies']:
+            day_data['strategies'].append(strat)
+
+    # 3. What the frontend hasTrades would be
+    has_trades = day_data['trades'] > 0 or day_data['open_count'] > 0
+
+    # 4. Check what the actual calendar endpoint returns for this date
+    # (pull from daily_stats / system_events / daily_journal too)
+    daily_stats_row = conn.execute(
+        "SELECT * FROM daily_stats WHERE date = ?", (date,)
+    ).fetchone()
+    events = conn.execute(
+        """SELECT event_type, message, timestamp FROM system_events
+           WHERE DATE(timestamp) = ?""", (date,)
+    ).fetchall()
+    journal_row = conn.execute(
+        "SELECT * FROM daily_journal WHERE date = ?", (date,)
+    ).fetchone()
+
+    conn.close()
+
+    return jsonify({
+        'date': date,
+        'raw_trades': raw,
+        'grouping_result': day_data,
+        'has_trades': has_trades,
+        'daily_stats': dict(daily_stats_row) if daily_stats_row else None,
+        'system_events': [dict(e) for e in events],
+        'daily_journal': dict(journal_row) if journal_row else None,
+    })
+
+
 @app.route('/api/journal/calendar')
 def api_journal_calendar():
     """Monthly calendar view data for the trade journal."""
@@ -2479,7 +2567,7 @@ def api_journal_calendar():
                 }
             d = days_data[date_str]
             is_closed = row['status'] in ('closed', 'expired')
-            is_open = row['status'] == 'open'
+            is_open = row['status'] in ('open', 'active')
             if not is_flagged and is_closed:
                 d['trades'] += 1
                 pnl = row['pnl'] or 0
@@ -2503,7 +2591,7 @@ def api_journal_calendar():
                 if pnl and max_profit > 0:
                     month_cap_vals.append(pnl / max_profit * 100)
             elif is_open:
-                # Open trades always count — they're live positions, never flagged
+                # Open/active trades always count — live positions, never flagged
                 d['open_count'] += 1
             strat = row['strategy_type'] or 'daily_income'
             d['strategies'].add(strat)
@@ -5831,7 +5919,7 @@ def api_health():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'open'")
+        cursor.execute("SELECT COUNT(*) FROM trades WHERE status IN ('open', 'active')")
         open_positions = cursor.fetchone()[0]
         today_str = datetime.now(ET).date().isoformat()
         cursor.execute(

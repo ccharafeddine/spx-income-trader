@@ -456,7 +456,7 @@ def test_stats_exclude_open_trades(mock_yahoo, client_with_db):
 
 
 def test_calendar_shows_open_tnt_on_entry_date(client_with_db):
-    """Open TNT trade appears on entry date even with low credit (never flagged)."""
+    """Open TNT trade appears on entry date — status='active' (DB convention)."""
     client, db_file = client_with_db
     now = datetime.now(ET)
     month = now.month
@@ -464,13 +464,13 @@ def test_calendar_shows_open_tnt_on_entry_date(client_with_db):
 
     entry_date = f'{year:04d}-{month:02d}-10'
 
-    # Open TNT trade with credit below MIN_CREDIT_THRESHOLD ($1.00).
-    # Open positions are live — they must never be filtered by the flag.
+    # DB stores open positions as status='active', not 'open'.
+    # Use low credit to also verify open trades bypass MIN_CREDIT_THRESHOLD.
     from datetime import timedelta
     future_exp = (now + timedelta(days=30)).strftime('%Y-%m-%d') + ' 16:00:00'
     _insert_trade(db_file, 'tnt-open-1',
                   entry_time=f'{entry_date} 14:00:00',
-                  status='open', pnl=None,
+                  status='active', pnl=None,
                   strategy_type='tag_n_turn',
                   expiration=future_exp,
                   credit=0.50)
