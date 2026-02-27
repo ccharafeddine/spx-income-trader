@@ -4588,12 +4588,8 @@ function setChartTimeframe(tf) {
   if (!allChartBars[tf] || !allChartBars[tf].length) {
     fetchJSON('/api/chart/bars?tf=' + tf).then(data => {
       if (data && data.bars) {
-        allChartBars[tf] = data.bars;
+        allChartBars[tf] = _dedupBars(data.bars);
         if (data.bb) allChartBB[tf] = data.bb;
-        // Sync legacy cache vars
-        if (tf === '5m') cached5minBars = data.bars;
-        else if (tf === '1h') { cached1hBars = data.bars; cached1hBB = data.bb; }
-        else if (tf === '4h') { cached4hBars = data.bars; cached4hBB = data.bb; }
       }
       if (latestTodayData) renderChart(latestTodayData);
       _attachChartRelayoutListener();
@@ -4626,12 +4622,8 @@ async function updateToday() {
   if (!allChartBars[chartTimeframe] || !allChartBars[chartTimeframe].length) {
     const barsData = await fetchJSON('/api/chart/bars?tf=' + chartTimeframe);
     if (barsData && barsData.bars && barsData.bars.length) {
-      allChartBars[chartTimeframe] = barsData.bars;
+      allChartBars[chartTimeframe] = _dedupBars(barsData.bars);
       if (barsData.bb) allChartBB[chartTimeframe] = barsData.bb;
-      // Sync legacy cache vars
-      if (chartTimeframe === '5m') cached5minBars = barsData.bars;
-      else if (chartTimeframe === '1h') { cached1hBars = barsData.bars; cached1hBB = barsData.bb; }
-      else if (chartTimeframe === '4h') { cached4hBars = barsData.bars; cached4hBB = barsData.bb; }
     }
   }
   // Load historical trades once
@@ -4740,7 +4732,7 @@ function renderChart(d) {
       if (allChartBars['30m'] && allChartBars['30m'].length) {
         // Strip existing today bars, then append fresh ones
         allChartBars['30m'] = allChartBars['30m'].filter(b => !b.time.startsWith(todayPrefix));
-        allChartBars['30m'] = [...allChartBars['30m'], ...normalizedLive];
+        allChartBars['30m'] = _dedupBars([...allChartBars['30m'], ...normalizedLive]);
       }
     }
   }
@@ -5073,6 +5065,16 @@ function renderChart(d) {
     const defaultRange = [totalBars - windowSize - 0.5, totalBars - 0.5];
     const xRange = savedXRange[chartTimeframe] || defaultRange;
 
+    // Compute one tick label per day (MM/DD) instead of per bar
+    const tickvals = [0];
+    const ticktext = [sortedTimestamps[0].substring(0, 5)];
+    for (let i = 1; i < sortedTimestamps.length; i++) {
+      if (sortedTimestamps[i].substring(0, 5) !== sortedTimestamps[i - 1].substring(0, 5)) {
+        tickvals.push(i);
+        ticktext.push(sortedTimestamps[i].substring(0, 5));
+      }
+    }
+
     const layout = {
       paper_bgcolor: '#0a0e17', plot_bgcolor: '#0a0e17',
       font: {color: '#6b7280', family: 'JetBrains Mono, Consolas, monospace', size: 11},
@@ -5083,10 +5085,16 @@ function renderChart(d) {
         type: 'category',
         rangeslider: {visible: false},
         range: xRange,
+        tickmode: 'array',
+        tickvals: tickvals,
+        ticktext: ticktext,
+        tickangle: -45,
+        fixedrange: false,
       },
       yaxis: {
         gridcolor: 'rgba(255,255,255,0.04)', side: 'right',
         range: yRangeMin != null ? [yRangeMin, yRangeMax] : undefined,
+        fixedrange: false,
       },
       shapes: shapes,
       annotations: annotations,
@@ -5119,6 +5127,18 @@ function renderChart(d) {
   } else {
     document.getElementById('candle-chart').innerHTML = '<div class="empty">No bar data yet (market may be closed)</div>';
   }
+}
+
+function _dedupBars(bars) {
+  // Keep only last occurrence of each normalized MM/DD HH:MM timestamp
+  const map = new Map();
+  bars.forEach(b => {
+    const raw = b.timestamp || b.time || '';
+    const md = String(raw).match(/(\d{2}\/\d{2}\s+\d{2}:\d{2})/);
+    const key = md ? md[1] : String(raw);
+    map.set(key, b);
+  });
+  return Array.from(map.values());
 }
 
 function _mergeTradesDeduped(older, newer) {
@@ -5159,8 +5179,8 @@ async function _fetchOlderBars(tf) {
     const isoDate = _mmddToISO(oldestTime);
     const resp = await fetchJSON('/api/chart/bars?tf=' + tf + '&before=' + isoDate);
     if (resp && resp.bars && resp.bars.length) {
-      const prependCount = resp.bars.length;
-      allChartBars[tf] = [...resp.bars, ...existing];
+      allChartBars[tf] = _dedupBars([...resp.bars, ...existing]);
+      const prependCount = allChartBars[tf].length - existing.length;
       if (resp.bb && allChartBB[tf]) {
         allChartBB[tf] = [...resp.bb, ...allChartBB[tf]];
       }
@@ -5168,10 +5188,6 @@ async function _fetchOlderBars(tf) {
       if (savedXRange[tf]) {
         savedXRange[tf] = [savedXRange[tf][0] + prependCount, savedXRange[tf][1] + prependCount];
       }
-      // Sync legacy cache vars
-      if (tf === '5m') cached5minBars = allChartBars[tf];
-      else if (tf === '1h') { cached1hBars = allChartBars[tf]; cached1hBB = allChartBB[tf]; }
-      else if (tf === '4h') { cached4hBars = allChartBars[tf]; cached4hBB = allChartBB[tf]; }
       if (latestTodayData) renderChart(latestTodayData);
       if (resp.oldest_date) _loadHistoricalTrades(resp.oldest_date);
     }
