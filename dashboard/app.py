@@ -2502,7 +2502,8 @@ def api_journal_calendar():
                 max_profit = credit * 100 * qty
                 if pnl and max_profit > 0:
                     month_cap_vals.append(pnl / max_profit * 100)
-            elif not is_flagged and is_open:
+            elif is_open:
+                # Open trades always count — they're live positions, never flagged
                 d['open_count'] += 1
             strat = row['strategy_type'] or 'daily_income'
             d['strategies'].add(strat)
