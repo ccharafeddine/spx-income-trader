@@ -2775,6 +2775,127 @@ class TradingBot:
         logger.info("Shutdown complete")
 
 
+def run_schwab_test():
+    """Test Schwab connection: auth, quotes, option chain, account."""
+    from src.brokers.schwab_broker import SchwabBroker
+    from src.brokers.schwab_auth import SchwabAuth
+    from config.settings import get_schwab_credentials
+
+    passed = 0
+    failed = 0
+
+    print("\n=== Schwab Connection Test ===\n")
+
+    # --- 1. Authentication ---
+    print("[1/4] Authentication")
+    try:
+        schwab_cfg = STRATEGY_PARAMS.get('broker', {}).get('schwab', {})
+        schwab_creds = get_schwab_credentials()
+        auth = SchwabAuth(
+            app_key=schwab_creds.get('app_key', ''),
+            app_secret=schwab_creds.get('app_secret', ''),
+            callback_url=schwab_creds.get('callback_url', 'https://127.0.0.1'),
+            token_path=schwab_cfg.get('token_path'),
+        )
+        authenticated = auth.is_authenticated()
+        status = auth.get_token_status()
+        if authenticated and status.get('valid'):
+            hours = status.get('hours_remaining', 0)
+            print(f"  Token: valid, expires in {hours} hours")
+            print("  Status: OK")
+            passed += 1
+        else:
+            print("  Token: invalid or expired")
+            print("  Status: FAIL")
+            failed += 1
+    except Exception as e:
+        print(f"  Error: {e}")
+        print("  Status: FAIL")
+        failed += 1
+
+    # Need auth+broker for remaining steps
+    try:
+        broker = SchwabBroker(config=schwab_cfg, auth=auth)
+    except Exception as e:
+        print(f"\n  Could not create broker: {e}")
+        print("\n=== {}/4 checks passed, {}/4 failed ===".format(passed, 3 + failed))
+        return 1
+
+    # --- 2. SPX Quote ---
+    print("\n[2/4] SPX Quote")
+    try:
+        price = broker.get_current_price("SPX")
+        if price and price > 0:
+            print(f"  Price: ${price:,.2f}")
+            print("  Status: OK")
+            passed += 1
+        else:
+            print("  Price: not available")
+            print("  Status: FAIL")
+            failed += 1
+    except Exception as e:
+        print(f"  Error: {e}")
+        print("  Status: FAIL")
+        failed += 1
+
+    # --- 3. Option Chain ---
+    today_str = datetime.now(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d')
+    print(f"\n[3/4] Option Chain (exp: {today_str})")
+    try:
+        chain = broker.get_options_chain("SPX", today_str)
+        if chain:
+            strikes = sorted(chain.keys())
+            print(f"  Strikes loaded: {len(strikes)}")
+
+            # Find ATM and nearest 5 strikes
+            atm = round(price / 5) * 5 if price else 0
+            nearest = sorted(strikes, key=lambda s: abs(s - atm))[:5]
+            nearest.sort()
+
+            print(f"  Nearest ATM (${atm:,.0f}):\n")
+            print("  Strike  | Call Bid | Call Ask | Put Bid | Put Ask")
+            print("  --------|---------|---------|---------|--------")
+            for s in nearest:
+                d = chain[s]
+                print(f"  {s:>7.2f} | {d.get('call_bid', 0):>7.2f} | {d.get('call_ask', 0):>7.2f} | {d.get('put_bid', 0):>7.2f} | {d.get('put_ask', 0):>7.2f}")
+            print("  Status: OK")
+            passed += 1
+        else:
+            print("  No chain data returned (market may be closed)")
+            print("  Status: FAIL")
+            failed += 1
+    except Exception as e:
+        print(f"  Error: {e}")
+        print("  Status: FAIL")
+        failed += 1
+
+    # --- 4. Account ---
+    print("\n[4/4] Account")
+    try:
+        balance = broker.get_account_balance()
+        if balance:
+            net_value = balance.get('net_account_value', 0)
+            print(f"  Net Value: ${net_value:,.2f}")
+            print("  Status: OK")
+            passed += 1
+        else:
+            print("  No balance data returned")
+            print("  Status: FAIL")
+            failed += 1
+    except Exception as e:
+        print(f"  Error: {e}")
+        print("  Status: FAIL")
+        failed += 1
+
+    # Summary
+    if failed == 0:
+        print("\n=== All checks passed ===\n")
+        return 0
+    else:
+        print(f"\n=== {passed}/4 passed, {failed}/4 failed ===\n")
+        return 1
+
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
@@ -2817,8 +2938,16 @@ def main():
         action='store_true',
         help='Record trading session as JSONL for demo replay'
     )
+    parser.add_argument(
+        '--schwab-test',
+        action='store_true',
+        help='Test Schwab connection: authenticate, fetch SPX price and option chain, then exit'
+    )
 
     args = parser.parse_args()
+
+    if args.schwab_test:
+        return run_schwab_test()
 
     # Update log level if specified
     if args.log_level != LOG_LEVEL:
