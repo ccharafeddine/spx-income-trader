@@ -205,6 +205,10 @@ class TradingBot:
         self.tnt_trades_today = 0    # TNT swing slot
         self.current_trading_date = None
         self._market_was_open = False  # Edge detection for recorder
+        self._start_time_wall = None    # Wall-clock start time for uptime display
+        self._last_heartbeat = None     # Updated every heartbeat cycle
+        self._shutdown_reason = None    # Set before shutdown() is called
+        self._loop_count = 0            # Main loop iteration count
 
         # Token auto-renewal for live broker (E*TRADE tokens expire after 2 hours)
         self._token_renewal_thread = None
@@ -277,6 +281,8 @@ class TradingBot:
         # B&B (Bed & Breakfast) strategy - overnight signals
         bnb_cfg = STRATEGY_PARAMS.get('bnb', {})
         self.bnb_enabled = bnb_cfg.get('enabled', False)
+        # EXPERIMENTAL: Do not enable until backtest validates > 0% win rate
+        self.bnb_enabled = False
         if self.bnb_enabled:
             self.bnb_strategy = BnBStrategy(bnb_cfg)
             logger.info("B&B strategy: ENABLED")
@@ -287,6 +293,8 @@ class TradingBot:
         # ORB (Opening Range Breakout) strategy
         orb_cfg = STRATEGY_PARAMS.get('orb', {})
         self.orb_enabled = orb_cfg.get('enabled', False)
+        # EXPERIMENTAL: Do not enable until backtest validates > 0% win rate
+        self.orb_enabled = False
         if self.orb_enabled:
             self.orb_strategy = ORBStrategy(orb_cfg)
             logger.info("ORB strategy: ENABLED")
@@ -529,7 +537,8 @@ class TradingBot:
         self._acquire_instance_lock()
         self.running = True
         self._start_time = time_module.monotonic()
-        
+        self._start_time_wall = datetime.now(self.tz)
+
         logger.info("=" * 60)
         logger.info("SPX Income Trading Bot Starting")
         logger.info("=" * 60)
@@ -543,6 +552,12 @@ class TradingBot:
 
         # Start token auto-renewal for live broker
         self._start_token_renewal()
+
+        # Start heartbeat monitor thread
+        self._heartbeat_monitor_stop = threading.Event()
+        self._heartbeat_monitor_thread = threading.Thread(
+            target=self._run_heartbeat_monitor, daemon=True, name="heartbeat-monitor")
+        self._heartbeat_monitor_thread.start()
 
         # Send startup notification
         if self.notifier:
@@ -673,9 +688,11 @@ class TradingBot:
             self._run_main_loop()
         except KeyboardInterrupt:
             logger.info("Shutdown signal received")
+            self._shutdown_reason = "user_stop"
             self.shutdown()
         except Exception as e:
             logger.error(f"Fatal error: {e}", exc_info=True)
+            self._shutdown_reason = f"crash: {e}"
             self.shutdown(error=True)
     
     def _interruptible_sleep(self, seconds):
@@ -684,17 +701,53 @@ class TradingBot:
         while self.running and time_module.time() < end:
             time_module.sleep(min(0.5, end - time_module.time()))
 
+    def _run_heartbeat_monitor(self):
+        """Background thread: alert if the main loop heartbeat goes stale.
+
+        Checks every 2 minutes. Only alerts during market hours.
+        Alerts if heartbeat is >10 minutes old, with 30-minute cooldown.
+        """
+        STALE_THRESHOLD = 600   # 10 minutes
+        COOLDOWN = 1800         # 30 minutes between alerts
+        last_alert_time = 0
+
+        while not self._heartbeat_monitor_stop.wait(120):
+            try:
+                if self._last_heartbeat is None:
+                    continue
+                now = datetime.now(self.tz)
+                if not self._is_market_open(now):
+                    continue
+                stale_seconds = (now - self._last_heartbeat).total_seconds()
+                if stale_seconds < STALE_THRESHOLD:
+                    continue
+                # Cooldown check
+                if (time_module.monotonic() - last_alert_time) < COOLDOWN:
+                    continue
+                last_alert_time = time_module.monotonic()
+                logger.warning(
+                    f"Heartbeat stale: last update {self._last_heartbeat.strftime('%H:%M:%S ET')}, "
+                    f"{int(stale_seconds)}s ago, loop #{self._loop_count}")
+                if self.notifier:
+                    self.notifier.send_heartbeat_stale({
+                        'last_heartbeat': self._last_heartbeat.strftime('%H:%M:%S ET'),
+                        'stale_seconds': stale_seconds,
+                        'loop_count': self._loop_count,
+                    })
+            except Exception as e:
+                logger.debug(f"Heartbeat monitor error: {e}")
+
     def _run_main_loop(self):
         """Main trading loop"""
         consecutive_errors = 0
         max_consecutive_errors = 5
-        loop_count = 0
-        last_heartbeat = datetime.now(self.tz)
+        self._loop_count = 0
+        self._last_heartbeat = datetime.now(self.tz)
 
         while self.running:
             try:
                 current_time = datetime.now(self.tz)
-                loop_count += 1
+                self._loop_count += 1
 
                 # Daily reset check - reset counters when date changes
                 today = current_time.date()
@@ -750,7 +803,7 @@ class TradingBot:
                         )
 
                 # Heartbeat logging every 5 minutes
-                if (current_time - last_heartbeat).total_seconds() >= 300:
+                if (current_time - self._last_heartbeat).total_seconds() >= 300:
                     setup_str = ""
                     if self.pending_setup:
                         ps = self.pending_setup
@@ -771,8 +824,8 @@ class TradingBot:
                             f"({pf_health['source']}, "
                             f"{pf_health['consecutive_failures']} failures)"
                         )
-                    logger.info(f"[Heartbeat] Loop #{loop_count} at {current_time.strftime('%H:%M:%S')} ET{setup_str}{bb_str}{pf_str}")
-                    last_heartbeat = current_time
+                    logger.info(f"[Heartbeat] Loop #{self._loop_count} at {current_time.strftime('%H:%M:%S')} ET{setup_str}{bb_str}{pf_str}")
+                    self._last_heartbeat = current_time
                     metrics.bot_uptime_seconds.set(
                         time_module.monotonic() - self._start_time)
 
@@ -786,7 +839,7 @@ class TradingBot:
                         pass
                     if self.recorder:
                         self.recorder.record('status_update',
-                            loop_count=loop_count, spx_price=self._current_spx_price,
+                            loop_count=self._loop_count, spx_price=self._current_spx_price,
                             daily_pnl=self.portfolio.daily_realized_pnl,
                             bars_built=self._journal_bars_built,
                             pulse_bars=self._journal_pulse_bars,
@@ -1035,7 +1088,7 @@ class TradingBot:
 
                 # Log outside-window status periodically
                 if not self._is_setup_window(current_time):
-                    if loop_count == 1 or loop_count % 20 == 0:
+                    if self._loop_count == 1 or self._loop_count % 20 == 0:
                         windows_str = f"{self.morning_start.strftime('%H:%M')}-{self.morning_end.strftime('%H:%M')}"
                         if self.afternoon_enabled:
                             windows_str += f", {self.afternoon_start.strftime('%H:%M')}-{self.afternoon_end.strftime('%H:%M')}"
@@ -1071,6 +1124,7 @@ class TradingBot:
                         # since trades_today will be >= max_daily_trades or errors block setup
                     else:
                         logger.critical(f"Too many consecutive errors ({consecutive_errors}), no open trades, shutting down")
+                        self._shutdown_reason = f"max_errors ({consecutive_errors} consecutive)"
                         self.shutdown(error=True)
                         break
             
@@ -1161,6 +1215,8 @@ class TradingBot:
             params = load_strategy_params()
 
             orb_enabled = params.get('orb', {}).get('enabled', False)
+            # EXPERIMENTAL: Do not enable until backtest validates > 0% win rate
+            orb_enabled = False
             if orb_enabled != self.orb_enabled:
                 self.orb_enabled = orb_enabled
                 if not orb_enabled and self.orb_strategy:
@@ -1173,6 +1229,8 @@ class TradingBot:
                 logger.info(f"Tag 'n Turn strategy toggled: {'ENABLED' if tnt_enabled else 'DISABLED'}")
 
             bnb_enabled = params.get('bnb', {}).get('enabled', False)
+            # EXPERIMENTAL: Do not enable until backtest validates > 0% win rate
+            bnb_enabled = False
             if bnb_enabled != self.bnb_enabled:
                 self.bnb_enabled = bnb_enabled
                 logger.info(f"B&B strategy toggled: {'ENABLED' if bnb_enabled else 'DISABLED'}")
@@ -2624,6 +2682,10 @@ class TradingBot:
         # Release the instance lock
         self._release_instance_lock()
 
+        # Stop heartbeat monitor thread
+        if hasattr(self, '_heartbeat_monitor_stop'):
+            self._heartbeat_monitor_stop.set()
+
         # Stop token renewal thread
         self._stop_token_renewal()
 
@@ -2660,6 +2722,17 @@ class TradingBot:
                 _best = ''
                 if self._best_trade_today and self._best_trade_today.get('pnl', 0) > 0:
                     _best = f"${self._best_trade_today['pnl']:+.2f} ({self._best_trade_today.get('strategy', 'DI')})"
+                # Uptime calculation
+                _uptime = 'N/A'
+                if self._start_time_wall:
+                    delta = datetime.now(self.tz) - self._start_time_wall
+                    hours, remainder = divmod(int(delta.total_seconds()), 3600)
+                    minutes, _ = divmod(remainder, 60)
+                    _uptime = f"{hours}h {minutes}m"
+                # Last heartbeat
+                _hb = 'N/A'
+                if self._last_heartbeat:
+                    _hb = self._last_heartbeat.strftime('%H:%M:%S ET')
                 self.notifier.send_bot_stopped({
                     'mode': TRADING_MODE,
                     'equity': _eq,
@@ -2668,6 +2741,9 @@ class TradingBot:
                     'daily_pnl': self.portfolio.daily_realized_pnl,
                     'streak': _streak,
                     'best_trade': _best,
+                    'stop_reason': self._shutdown_reason or 'unknown',
+                    'uptime': _uptime,
+                    'last_heartbeat': _hb,
                 })
             except Exception as e:
                 logger.warning(f"Failed to send shutdown notification: {e}")
@@ -2853,6 +2929,7 @@ def main():
         # Set up signal handlers
         def signal_handler(sig, frame):
             logger.info("Interrupt signal received")
+            bot._shutdown_reason = "signal"
             bot.shutdown()
             sys.exit(0)
 

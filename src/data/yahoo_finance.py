@@ -16,14 +16,16 @@ Note: Yahoo Finance has rate limits. This provider includes:
 import logging
 import time
 import json
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Tuple
 import pytz
 import requests
 
 # Retry configuration
-MAX_RETRIES = 3
-BACKOFF_BASE_SECONDS = 2  # 2s, 4s, 8s
+MAX_RETRIES = 2
+BACKOFF_BASE_SECONDS = 2  # 2s, 4s
+CALL_TIMEOUT_SECONDS = 10
 
 try:
     import yfinance as yf
@@ -272,7 +274,9 @@ class YahooFinanceProvider:
             volume = 0
 
             try:
-                hist = ticker.history(period="5d", interval="1d")
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(ticker.history, period="5d", interval="1d")
+                    hist = future.result(timeout=CALL_TIMEOUT_SECONDS)
                 if not hist.empty:
                     last_row = hist.iloc[-1]
                     price = float(last_row['Close'])
@@ -285,6 +289,9 @@ class YahooFinanceProvider:
                         prev_close = float(hist.iloc[-2]['Close'])
                     else:
                         prev_close = open_price
+            except FuturesTimeout:
+                logger.warning(f"yfinance history timed out for {symbol} ({CALL_TIMEOUT_SECONDS}s)")
+                return None
             except Exception as e:
                 logger.debug(f"yfinance history failed for {symbol}: {e}")
 
@@ -350,7 +357,10 @@ class YahooFinanceProvider:
         for attempt in range(MAX_RETRIES):
             try:
                 ticker = yf.Ticker(self.SPX_SYMBOL)
-                hist = ticker.history(period=period, interval=interval, timeout=5)
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        ticker.history, period=period, interval=interval, timeout=5)
+                    hist = future.result(timeout=CALL_TIMEOUT_SECONDS)
 
                 if hist is None or hist.empty:
                     # Cache empty result briefly to avoid hammering Yahoo

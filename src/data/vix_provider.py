@@ -8,6 +8,7 @@ Returns None gracefully on failure -- never blocks a trade due to VIX fetch fail
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -104,15 +105,19 @@ class VixProvider:
             except Exception as e:
                 logger.debug(f"YahooFinanceProvider VIX failed: {e}")
 
-        # Source 2: raw yfinance
+        # Source 2: raw yfinance (with thread-based timeout)
         try:
             import yfinance as yf
             ticker = yf.Ticker("^VIX")
-            hist = ticker.history(period="1d", interval="1d")
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(ticker.history, period="1d", interval="1d")
+                hist = future.result(timeout=10)
             if not hist.empty:
                 price = float(hist["Close"].iloc[-1])
                 logger.debug(f"VIX from yfinance: {price:.2f}")
                 return price
+        except FuturesTimeout:
+            logger.warning("yfinance VIX timed out (10s)")
         except Exception as e:
             logger.debug(f"yfinance VIX failed: {e}")
 

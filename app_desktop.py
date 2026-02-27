@@ -531,6 +531,8 @@ class DesktopApp:
             # shutdown() is idempotent so this is safe even if it was
             # already called from within start() (e.g. fatal-error path).
             if bot is not None:
+                if bot._shutdown_reason is None:
+                    bot._shutdown_reason = "thread_exit"
                 logger.info("Bot thread finishing, running shutdown cleanup")
                 try:
                     bot.shutdown()
@@ -563,6 +565,7 @@ class DesktopApp:
         # holding _bot_lock.  The bot thread will pick up running=False
         # within ~0.5s (interruptible sleep) and perform its own cleanup.
         self._stop_requested = True
+        bot._shutdown_reason = "user_stop"
         logger.info("Stop requested: sending shutdown signal to trading bot")
         bot.running = False
         logger.info("Shutdown signal sent (bot will stop after current iteration)")

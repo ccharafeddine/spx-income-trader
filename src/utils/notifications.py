@@ -467,11 +467,11 @@ class NotificationManager:
         )
 
     def send_bot_stopped(self, data: dict):
-        """Send enhanced bot stopped notification.
+        """Send enhanced bot stopped notification with shutdown diagnostics.
 
         Args:
             data: dict with keys: mode, equity, open_positions, trades_today, daily_pnl,
-                  streak, best_trade
+                  streak, best_trade, stop_reason, uptime, last_heartbeat
         """
         mode = data.get('mode', 'dry-run')
         equity = data.get('equity')
@@ -480,8 +480,27 @@ class NotificationManager:
         daily_pnl = data.get('daily_pnl', 0)
         streak = data.get('streak', '')
         best_trade = data.get('best_trade', '')
+        stop_reason = data.get('stop_reason', 'unknown')
+        uptime = data.get('uptime', 'N/A')
+        last_heartbeat = data.get('last_heartbeat', 'N/A')
+
+        # Human-readable stop reason labels
+        reason_labels = {
+            'user_stop': 'User-initiated stop',
+            'signal': 'OS signal (SIGINT/SIGTERM)',
+            'thread_exit': 'Bot thread exited',
+            'unknown': 'Unknown',
+        }
+        reason_display = reason_labels.get(stop_reason, stop_reason)
+
+        # Color: red for crashes/errors, green for clean stops
+        is_clean = stop_reason in ('user_stop', 'signal', 'thread_exit', 'unknown')
+        color = DISCORD_GREEN if is_clean else DISCORD_RED
 
         fields = [
+            {'name': 'Stop Reason', 'value': reason_display, 'inline': True},
+            {'name': 'Uptime', 'value': uptime, 'inline': True},
+            {'name': 'Last Heartbeat', 'value': last_heartbeat, 'inline': True},
             {'name': 'Mode', 'value': mode, 'inline': True},
             {'name': 'Trades Today', 'value': str(trades_today), 'inline': True},
             {'name': 'Daily P&L', 'value': f"${daily_pnl:+.2f}", 'inline': True},
@@ -499,7 +518,33 @@ class NotificationManager:
             "Bot has been shut down.",
             level='info',
             fields=fields,
-            color=DISCORD_GREEN,
+            color=color,
+        )
+
+    def send_heartbeat_stale(self, data: dict):
+        """Alert when bot heartbeat has gone stale (possible freeze).
+
+        Args:
+            data: dict with keys: last_heartbeat, stale_seconds, loop_count
+        """
+        last_hb = data.get('last_heartbeat', 'N/A')
+        stale_secs = data.get('stale_seconds', 0)
+        loop_count = data.get('loop_count', 0)
+
+        stale_min = int(stale_secs // 60)
+
+        fields = [
+            {'name': 'Last Heartbeat', 'value': last_hb, 'inline': True},
+            {'name': 'Stale Duration', 'value': f"{stale_min}m", 'inline': True},
+            {'name': 'Loop Count', 'value': str(loop_count), 'inline': True},
+        ]
+
+        self._send_rich(
+            "Heartbeat Stale - Possible Freeze",
+            f"Bot heartbeat has not updated in {stale_min} minutes.",
+            level='warning',
+            fields=fields,
+            color=DISCORD_YELLOW,
         )
 
     def send_eod_summary(self, summary_data: dict):
