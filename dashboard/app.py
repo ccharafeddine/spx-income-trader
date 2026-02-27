@@ -2474,10 +2474,12 @@ def api_journal_calendar():
                 days_data[date_str] = {
                     'trades': 0, 'pnl': 0.0,
                     'wins': 0, 'losses': 0,
+                    'open_count': 0,
                     'strategies': set()
                 }
             d = days_data[date_str]
             is_closed = row['status'] in ('closed', 'expired')
+            is_open = row['status'] == 'open'
             if not is_flagged and is_closed:
                 d['trades'] += 1
                 pnl = row['pnl'] or 0
@@ -2500,6 +2502,8 @@ def api_journal_calendar():
                 max_profit = credit * 100 * qty
                 if pnl and max_profit > 0:
                     month_cap_vals.append(pnl / max_profit * 100)
+            elif not is_flagged and is_open:
+                d['open_count'] += 1
             strat = row['strategy_type'] or 'daily_income'
             d['strategies'].add(strat)
 

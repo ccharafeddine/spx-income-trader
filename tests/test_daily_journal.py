@@ -453,3 +453,79 @@ def test_stats_exclude_open_trades(mock_yahoo, client_with_db):
     assert cal['summary']['trades'] == 1
     assert cal['summary']['wins'] == 1
     assert cal['summary']['win_rate'] == 100.0
+
+
+def test_calendar_shows_open_tnt_on_entry_date(client_with_db):
+    """Open TNT trade appears on its entry date in calendar with $0 P&L."""
+    client, db_file = client_with_db
+    now = datetime.now(ET)
+    month = now.month
+    year = now.year
+
+    entry_date = f'{year:04d}-{month:02d}-10'
+
+    # Open TNT trade (no exit_time, status='open')
+    from datetime import timedelta
+    future_exp = (now + timedelta(days=30)).strftime('%Y-%m-%d') + ' 16:00:00'
+    _insert_trade(db_file, 'tnt-open-1',
+                  entry_time=f'{entry_date} 14:00:00',
+                  status='open', pnl=None,
+                  strategy_type='tag_n_turn',
+                  expiration=future_exp)
+
+    resp = client.get(f'/api/journal/calendar?month={month}&year={year}')
+    assert resp.status_code == 200
+    data = resp.get_json()
+
+    day_info = data['days'].get(entry_date)
+    assert day_info is not None, f"Open TNT trade missing from calendar on {entry_date}"
+    assert day_info['pnl'] == 0.0, "Open trade should contribute $0 P&L"
+    assert day_info.get('open_count', 0) == 1, "open_count should be 1"
+    assert 'tag_n_turn' in day_info['strategies']
+    # Open trades must NOT count toward win/loss stats
+    assert day_info['wins'] == 0
+    assert day_info['losses'] == 0
+    assert day_info['trades'] == 0, "Closed trade count should be 0"
+
+
+def test_calendar_tnt_closed_multiday_on_exit_sameday_on_entry(client_with_db):
+    """Closed TNT trade: exit date when multi-day, entry date when same-day."""
+    client, db_file = client_with_db
+    now = datetime.now(ET)
+    month = now.month
+    year = now.year
+
+    # Multi-day TNT: entered on the 12th, closed on the 13th
+    entry_date_multi = f'{year:04d}-{month:02d}-12'
+    exit_date_multi = f'{year:04d}-{month:02d}-13'
+    _insert_trade(db_file, 'tnt-multi-1',
+                  entry_time=f'{entry_date_multi} 14:00:00',
+                  exit_time=f'{exit_date_multi} 10:00:00',
+                  status='closed', pnl=500.0,
+                  strategy_type='tag_n_turn')
+
+    # Same-day TNT: entered and closed on the 14th
+    same_date = f'{year:04d}-{month:02d}-14'
+    _insert_trade(db_file, 'tnt-same-1',
+                  entry_time=f'{same_date} 10:00:00',
+                  exit_time=f'{same_date} 14:00:00',
+                  status='closed', pnl=300.0,
+                  strategy_type='tag_n_turn')
+
+    resp = client.get(f'/api/journal/calendar?month={month}&year={year}')
+    assert resp.status_code == 200
+    data = resp.get_json()
+
+    # Multi-day: P&L on exit date
+    exit_info = data['days'].get(exit_date_multi)
+    assert exit_info is not None, f"Multi-day TNT should appear on exit date {exit_date_multi}"
+    assert exit_info['pnl'] == 500.0
+
+    # Multi-day: entry date should have no P&L
+    entry_info = data['days'].get(entry_date_multi)
+    assert entry_info is None or entry_info['pnl'] == 0.0
+
+    # Same-day: P&L on entry date (which equals exit date)
+    same_info = data['days'].get(same_date)
+    assert same_info is not None, f"Same-day TNT should appear on {same_date}"
+    assert same_info['pnl'] == 300.0

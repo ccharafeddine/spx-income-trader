@@ -5580,7 +5580,7 @@ function renderCalendar() {
     const isFuture = dateStr > todayStr;
     const isToday = dateStr === todayStr;
     const dayData = (calData.days || {})[dateStr];
-    const hasTrades = dayData && dayData.trades > 0;
+    const hasTrades = dayData && (dayData.trades > 0 || (dayData.open_count || 0) > 0);
     const hasJournal = dayData && (dayData.journal || dayData.no_trade_summary);
     const isClickable = hasTrades || hasJournal;
     const isSelected = calSelectedDate === dateStr;
@@ -5606,9 +5606,14 @@ function renderCalendar() {
     if (isFuture) {
       // Empty for future dates
     } else if (hasTrades) {
+      const openCount = dayData.open_count || 0;
+      const closedCount = dayData.trades || 0;
+      const totalDisplay = closedCount + openCount;
       const pnlCls = dayData.pnl >= 0 ? 'positive' : 'negative';
       html += '<div class="cal-pnl ' + pnlCls + '">' + fmt$(dayData.pnl) + '</div>';
-      html += '<div class="cal-trades-count">' + dayData.trades + ' trade' + (dayData.trades !== 1 ? 's' : '') + '</div>';
+      let countLabel = totalDisplay + ' trade' + (totalDisplay !== 1 ? 's' : '');
+      if (openCount > 0) countLabel += ' (' + openCount + ' open)';
+      html += '<div class="cal-trades-count">' + countLabel + '</div>';
       if (dayData.strategies && dayData.strategies.length) {
         html += '<div class="cal-strategy-tags">';
         dayData.strategies.forEach(st => {
@@ -5701,7 +5706,7 @@ async function selectCalDay(dateStr) {
 
   // Check if this is a trade day or a no-trade day
   const dayData = (calData.days || {})[dateStr];
-  const hasTrades = dayData && dayData.trades > 0;
+  const hasTrades = dayData && (dayData.trades > 0 || (dayData.open_count || 0) > 0);
 
   if (hasTrades) {
     // Fetch journal trade entries for trade days
