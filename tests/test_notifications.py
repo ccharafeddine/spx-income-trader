@@ -613,32 +613,106 @@ class TestDangerAlertSuppression:
 class TestEODSummaryTimingGate:
     """Verify EOD summary only fires at/after market close, not before."""
 
-    def test_eod_summary_fires_after_4pm_not_before(self):
-        """The _finalize_daily_journal timing gate blocks before 16:00 ET."""
+    def test_eod_summary_fires_after_405pm_not_before(self):
+        """The _finalize_daily_journal timing gate blocks before 16:05 ET."""
         import pytz
         from datetime import datetime, time
 
         ET = pytz.timezone("America/New_York")
-        market_close = time(16, 0)
+        eod_threshold = time(16, 5)
 
-        before = ET.localize(datetime(2026, 2, 26, 15, 59))
-        at_close = ET.localize(datetime(2026, 2, 26, 16, 0))
+        before = ET.localize(datetime(2026, 2, 26, 16, 0))
         after = ET.localize(datetime(2026, 2, 26, 16, 5))
 
-        # Before 4pm: gate blocks
-        assert before.time() < market_close
-        # At 4pm: gate opens
-        assert at_close.time() >= market_close
-        # After 4pm: gate open
-        assert after.time() >= market_close
+        # At exactly 4:00pm: gate still blocks (need 16:05)
+        assert before.time() < eod_threshold
+        # At 4:05pm: gate opens
+        assert after.time() >= eod_threshold
 
-        # Simulate the actual guard from main.py
-        finalized = False
-        for check_time in [before, at_close, after]:
-            if check_time.time() >= market_close and not finalized:
-                finalized = True
+    def test_eod_summary_skipped_when_bot_starts_after_market_close(self):
+        """EOD summary must not fire when bot starts after 4:00 PM ET."""
+        import pytz
+        from datetime import datetime, time, date as date_type
 
-        assert finalized is True
+        ET = pytz.timezone("America/New_York")
+
+        # Simulate: bot started at 17:00, current time is 17:05
+        start_time_wall = ET.localize(datetime(2026, 2, 26, 17, 0))
+        current_time = ET.localize(datetime(2026, 2, 26, 17, 5))
+        trading_date = date_type(2026, 2, 26)
+
+        journal_finalized = False
+        eod_summary_sent_today = False
+
+        # Reproduce the guard from main.py _run_main_loop
+        should_finalize = (
+            not journal_finalized
+            and trading_date == current_time.date()
+            and current_time.time() >= time(16, 5)
+            and start_time_wall
+            and start_time_wall.time() < time(16, 0)
+        )
+
+        # Bot started after market close, so EOD should NOT fire
+        assert should_finalize is False
+
+    def test_eod_summary_does_not_fire_twice(self):
+        """EOD summary notification must not fire twice on the same day."""
+        import pytz
+        from datetime import datetime, time
+
+        ET = pytz.timezone("America/New_York")
+
+        # Simulate: bot started at 09:30, two checks after 16:05
+        start_time_wall = ET.localize(datetime(2026, 2, 26, 9, 30))
+        check1 = ET.localize(datetime(2026, 2, 26, 16, 5))
+        check2 = ET.localize(datetime(2026, 2, 26, 16, 10))
+
+        journal_finalized = False
+        eod_summary_sent_today = False
+        send_count = 0
+
+        for current_time in [check1, check2]:
+            should_finalize = (
+                not journal_finalized
+                and current_time.time() >= time(16, 5)
+                and start_time_wall
+                and start_time_wall.time() < time(16, 0)
+            )
+            if should_finalize:
+                journal_finalized = True
+                if not eod_summary_sent_today:
+                    eod_summary_sent_today = True
+                    send_count += 1
+
+        # Exactly one send despite two checks
+        assert send_count == 1
+
+    def test_eod_summary_equity_not_from_initial_balance(self):
+        """EOD summary must query live equity, never use config initial_balance."""
+        nm = _make_notifier(discord=DISCORD_CFG)
+
+        # The notifier just passes through whatever equity value it gets.
+        # The caller (main.py) must pass None when broker query fails,
+        # not fall back to portfolio.account_size.
+        # When equity is None, the embed should omit the Equity field.
+        with patch('requests.post') as mock_post:
+            mock_post.return_value = MagicMock(ok=True)
+            nm.send_eod_summary({
+                'trades_count': 2,
+                'wins': 1,
+                'losses': 1,
+                'daily_pnl': -50.0,
+                'weekly_pnl': 100.0,
+                'monthly_pnl': 500.0,
+                'equity': None,  # Broker unreachable, should NOT be $50,000
+                'streak': '',
+                'open_swings': [],
+            })
+            embed = _get_discord_embed(mock_post)
+            field_map = {f['name']: f['value'] for f in embed['fields']}
+            # Equity field must be absent when None (not a hardcoded $50,000)
+            assert 'Equity' not in field_map
 
 
 class TestCircuitBreakerContent:

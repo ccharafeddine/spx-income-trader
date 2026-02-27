@@ -241,6 +241,7 @@ class TradingBot:
         self._journal_signals_evaluated = 0
         self._journal_trades_entered = 0
         self._journal_finalized = False
+        self._eod_summary_sent_today = False  # Prevent duplicate EOD notifications
         self._reconciliation_done_today = False
         self._market_open_notified = False  # Send market open notification once per day
         self._danger_alerts_sent = {}  # Track danger alerts sent per trade (avoid spam)
@@ -563,9 +564,9 @@ class TradingBot:
         if self.notifier:
             try:
                 _eq = self.broker.get_account_balance().get(
-                    'net_account_value', self.portfolio.account_size)
+                    'net_account_value', None)
             except Exception:
-                _eq = self.portfolio.account_size
+                _eq = None
             self.notifier.send_bot_started({
                 'mode': TRADING_MODE,
                 'equity': _eq,
@@ -778,6 +779,7 @@ class TradingBot:
                     self._journal_signals_evaluated = 0
                     self._journal_trades_entered = 0
                     self._journal_finalized = False
+                    self._eod_summary_sent_today = False
                     self._reconciliation_done_today = False
                     self._market_open_notified = False
                     self._danger_alerts_sent = {}
@@ -915,10 +917,13 @@ class TradingBot:
                         except Exception as e:
                             logger.warning(f"B&B on_day_end failed: {e}")
 
-                    # Finalize daily journal once after market close
+                    # Finalize daily journal once after market close (16:05+)
+                    # Only fire if the bot was running before market close (skip late starts)
                     if (not self._journal_finalized
                             and self.current_trading_date == current_time.date()
-                            and current_time.time() >= time(16, 0)):
+                            and current_time.time() >= time(16, 5)
+                            and self._start_time_wall
+                            and self._start_time_wall.time() < time(16, 0)):
                         self._finalize_daily_journal()
 
                     # Run P&L reconciliation once after market close (live mode only)
@@ -1007,6 +1012,7 @@ class TradingBot:
                                 body_lines.append(f"Duration: {closed['duration']}")
                             self.notifier.send(subject, "\n".join(body_lines), level='info')
                         else:
+                            logger.debug(f"Sending trade exit notification: {closed.get('strategy', 'unknown')} {closed['direction']} P&L=${closed['pnl']:+.2f}")
                             self.notifier.send_trade_exit({
                                 'strategy': closed.get('strategy', 'unknown'),
                                 'direction': closed['direction'],
@@ -1420,17 +1426,24 @@ class TradingBot:
                 f"{len(self._journal_rejections)} rejections"
             )
 
-            # Send EOD summary notification
-            if self.notifier:
+            # Send EOD summary notification (once per day)
+            if self.notifier and not self._eod_summary_sent_today:
                 try:
+                    self._eod_summary_sent_today = True
                     dm = self.portfolio.drawdown_manager
-                    # Use live broker balance instead of config account_size
+
+                    # Query DB for today's actual trade stats (authoritative source)
+                    db_summary = self.db.get_daily_summary(trade_date)
+                    db_trades = db_summary.get('trades_count', 0)
+                    db_pnl = db_summary.get('realized_pnl', 0.0)
+
+                    # Use live broker balance (never config initial_balance)
                     try:
                         live_equity = self.broker.get_account_balance().get(
-                            'net_account_value', self.portfolio.account_size
+                            'net_account_value', None
                         )
                     except Exception:
-                        live_equity = self.portfolio.account_size
+                        live_equity = None
 
                     # Compute wins/losses and streak for EOD summary
                     _wins = 0
@@ -1457,16 +1470,16 @@ class TradingBot:
                         })
 
                     self.notifier.send_eod_summary({
-                        'trades_count': self._journal_trades_entered,
+                        'trades_count': db_trades,
                         'wins': _wins,
                         'losses': _losses,
-                        'daily_pnl': self.portfolio.daily_realized_pnl,
+                        'daily_pnl': db_pnl,
                         'weekly_pnl': dm.weekly_realized_pnl if dm else 0.0,
                         'monthly_pnl': dm.monthly_realized_pnl if dm else 0.0,
                         'equity': live_equity,
                         'streak': _streak,
                         'open_swings': _open_swings,
-                        'no_trade_reason': no_trade_summary if self._journal_trades_entered == 0 else None,
+                        'no_trade_reason': no_trade_summary if db_trades == 0 else None,
                     })
                 except Exception as eod_err:
                     logger.warning(f"Failed to send EOD summary: {eod_err}")
@@ -2154,6 +2167,7 @@ class TradingBot:
                 if spread.expiration:
                     _dte = (spread.expiration.date() - datetime.now(self.tz).date()).days
                     _expiry = spread.expiration.strftime('%m/%d') + (f" ({_dte}DTE)" if _dte > 0 else " (0DTE)")
+                logger.debug(f"Sending trade entry notification: {strategy_name} {spread.direction.value} ${spread.short_leg.strike}/{spread.long_leg.strike}")
                 self.notifier.send_trade_entry({
                     'strategy': strategy_name,
                     'direction': spread.direction.value,
@@ -2544,6 +2558,7 @@ class TradingBot:
                     if spread.expiration:
                         _dte = (spread.expiration.date() - datetime.now(self.tz).date()).days
                         _expiry = spread.expiration.strftime('%m/%d') + (f" ({_dte}DTE)" if _dte > 0 else " (0DTE)")
+                    logger.debug(f"Sending trade entry notification: Daily Income {spread.direction.value} ${spread.short_leg.strike}/{spread.long_leg.strike}")
                     self.notifier.send_trade_entry({
                         'strategy': 'Daily Income',
                         'direction': spread.direction.value,
@@ -2702,12 +2717,21 @@ class TradingBot:
         # Send notification
         if self.notifier:
             try:
+                # Query live equity from broker (never fall back to config initial_balance)
                 try:
                     _eq = self.broker.get_account_balance().get(
-                        'net_account_value', self.portfolio.account_size)
+                        'net_account_value', None)
                 except Exception:
-                    _eq = self.portfolio.account_size
-                total_trades = self.dte0_trades_today + self.tnt_trades_today
+                    _eq = None
+                # Query DB for authoritative trade counts and P&L
+                _db_summary = {}
+                try:
+                    if self.current_trading_date:
+                        _db_summary = self.db.get_daily_summary(self.current_trading_date)
+                except Exception:
+                    pass
+                total_trades = _db_summary.get('trades_count', self.dte0_trades_today + self.tnt_trades_today)
+                _daily_pnl = _db_summary.get('realized_pnl', self.portfolio.daily_realized_pnl)
                 # Build streak string
                 _streak = ''
                 dm = self.portfolio.drawdown_manager
@@ -2738,7 +2762,7 @@ class TradingBot:
                     'equity': _eq,
                     'open_positions': len(self.position_manager.get_open_trades()),
                     'trades_today': total_trades,
-                    'daily_pnl': self.portfolio.daily_realized_pnl,
+                    'daily_pnl': _daily_pnl,
                     'streak': _streak,
                     'best_trade': _best,
                     'stop_reason': self._shutdown_reason or 'unknown',
