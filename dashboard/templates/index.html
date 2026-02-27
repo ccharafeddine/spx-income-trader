@@ -3827,6 +3827,13 @@ let cached1hBars = null;
 let cached4hBars = null;
 let cached1hBB = null;
 let cached4hBB = null;
+const allChartBars = {};   // {tf: [bars]}
+const allChartBB = {};     // {tf: [bb]}
+const isFetchingOld = {};  // {tf: bool}
+let histTrades = [];
+let histTradesLoaded = false;
+const savedXRange = {};    // {tf: [start,end]}
+const chartRelayoutAttached = {attached: false};
 let prevTradeIds = new Set();
 let prevClosedIds = new Set();
 let prevDangerIds = new Set();
@@ -4564,6 +4571,8 @@ async function updateStatus() {
 
 function setChartTimeframe(tf) {
   chartTimeframe = tf;
+  // Reset relayout listener for new timeframe
+  chartRelayoutAttached.attached = false;
   // Update toggle button styles for all 4 buttons
   ['4h','1h','30m','5m'].forEach(t => {
     const btn = document.getElementById('tf-' + t);
@@ -4575,26 +4584,24 @@ function setChartTimeframe(tf) {
       btn.style.color = '#6b7280';
     }
   });
-  // Fetch bars for the selected timeframe and re-render
-  if (tf === '5m') {
-    fetchJSON('/api/chart/bars5min').then(data => {
-      if (data && data.bars) cached5minBars = data.bars;
+  // Fetch from unified endpoint if not cached
+  if (!allChartBars[tf] || !allChartBars[tf].length) {
+    fetchJSON('/api/chart/bars?tf=' + tf).then(data => {
+      if (data && data.bars) {
+        allChartBars[tf] = data.bars;
+        if (data.bb) allChartBB[tf] = data.bb;
+        // Sync legacy cache vars
+        if (tf === '5m') cached5minBars = data.bars;
+        else if (tf === '1h') { cached1hBars = data.bars; cached1hBB = data.bb; }
+        else if (tf === '4h') { cached4hBars = data.bars; cached4hBB = data.bb; }
+      }
       if (latestTodayData) renderChart(latestTodayData);
-    });
-  } else if (tf === '1h') {
-    fetchJSON('/api/chart/bars1h').then(data => {
-      if (data && data.bars) cached1hBars = data.bars;
-      if (data && data.bb) cached1hBB = data.bb;
-      if (latestTodayData) renderChart(latestTodayData);
-    });
-  } else if (tf === '4h') {
-    fetchJSON('/api/chart/bars4h').then(data => {
-      if (data && data.bars) cached4hBars = data.bars;
-      if (data && data.bb) cached4hBB = data.bb;
-      if (latestTodayData) renderChart(latestTodayData);
+      _attachChartRelayoutListener();
+      if (!histTradesLoaded) _loadHistoricalTrades();
     });
   } else {
     if (latestTodayData) renderChart(latestTodayData);
+    _attachChartRelayoutListener();
   }
 }
 
@@ -4615,19 +4622,20 @@ async function updateToday() {
   prevOpenPositionCount = openCount;
   prevClosedTodayCount = closedCount;
 
-  // Fetch bars in parallel when in non-30m mode
-  if (chartTimeframe === '5m') {
-    const data5m = await fetchJSON('/api/chart/bars5min');
-    if (data5m && data5m.bars) cached5minBars = data5m.bars;
-  } else if (chartTimeframe === '1h') {
-    const data1h = await fetchJSON('/api/chart/bars1h');
-    if (data1h && data1h.bars) cached1hBars = data1h.bars;
-    if (data1h && data1h.bb) cached1hBB = data1h.bb;
-  } else if (chartTimeframe === '4h') {
-    const data4h = await fetchJSON('/api/chart/bars4h');
-    if (data4h && data4h.bars) cached4hBars = data4h.bars;
-    if (data4h && data4h.bb) cached4hBB = data4h.bb;
+  // Fetch initial bars from unified endpoint if not yet loaded
+  if (!allChartBars[chartTimeframe] || !allChartBars[chartTimeframe].length) {
+    const barsData = await fetchJSON('/api/chart/bars?tf=' + chartTimeframe);
+    if (barsData && barsData.bars && barsData.bars.length) {
+      allChartBars[chartTimeframe] = barsData.bars;
+      if (barsData.bb) allChartBB[chartTimeframe] = barsData.bb;
+      // Sync legacy cache vars
+      if (chartTimeframe === '5m') cached5minBars = barsData.bars;
+      else if (chartTimeframe === '1h') { cached1hBars = barsData.bars; cached1hBB = barsData.bb; }
+      else if (chartTimeframe === '4h') { cached4hBars = barsData.bars; cached4hBB = barsData.bb; }
+    }
   }
+  // Load historical trades once
+  if (!histTradesLoaded) _loadHistoricalTrades();
 
   // Stats (in chart footer)
   document.getElementById('footer-signals').textContent = (d.signals || []).length;
@@ -4705,46 +4713,67 @@ function _findClosestBarIdx(sortedTimestamps, sortedCloses, timeStr) {
 }
 
 function _entryTimeForTF(isoStr) {
-  // Convert ISO entry_time to the format matching current timeframe's bar labels
+  // Always return 'MM/DD HH:MM' format for all timeframes
   if (!isoStr) return null;
-  if (chartTimeframe === '4h') {
-    // ISO: "2026-02-20T10:30:00" -> "02/20 10:30"
-    const d = isoStr.substring(5, 7);
-    const dd = isoStr.substring(8, 10);
-    const hm = isoStr.substring(11, 16);
-    return d + '/' + dd + ' ' + hm;
-  }
-  return isoStr.substring(11, 16);  // HH:MM
+  const mm = isoStr.substring(5, 7);
+  const dd = isoStr.substring(8, 10);
+  const hm = isoStr.substring(11, 16);
+  return mm + '/' + dd + ' ' + hm;
 }
 
 function renderChart(d) {
-  // Bar data: select based on active timeframe
+  // Merge today's live bars into allChartBars['30m'] when on 30m timeframe
+  if (chartTimeframe === '30m') {
+    const liveBars = (d.bot_bars && d.bot_bars.length) ? d.bot_bars
+                   : (d.chart_bars && d.chart_bars.length) ? d.chart_bars
+                   : d.log_bars;
+    if (liveBars && liveBars.length) {
+      const now = new Date();
+      const todayPrefix = String(now.getMonth() + 1).padStart(2, '0') + '/' + String(now.getDate()).padStart(2, '0');
+      // Normalize live bar timestamps to MM/DD HH:MM
+      const normalizedLive = liveBars.map(b => {
+        const raw = b.timestamp || b.time || '';
+        const m = String(raw).match(/(\d{2}:\d{2})/);
+        const ts = m ? m[1] : raw;
+        return {time: todayPrefix + ' ' + ts, open: b.open, high: b.high, low: b.low, close: b.close};
+      });
+      if (allChartBars['30m'] && allChartBars['30m'].length) {
+        // Strip existing today bars, then append fresh ones
+        allChartBars['30m'] = allChartBars['30m'].filter(b => !b.time.startsWith(todayPrefix));
+        allChartBars['30m'] = [...allChartBars['30m'], ...normalizedLive];
+      }
+    }
+  }
+
+  // Bar selection: allChartBars[tf] > legacy cached* > live bars from d
   let chartBars;
-  if (chartTimeframe === '5m' && cached5minBars && cached5minBars.length) {
+  if (allChartBars[chartTimeframe] && allChartBars[chartTimeframe].length) {
+    chartBars = allChartBars[chartTimeframe];
+  } else if (chartTimeframe === '5m' && cached5minBars && cached5minBars.length) {
     chartBars = cached5minBars;
   } else if (chartTimeframe === '1h' && cached1hBars && cached1hBars.length) {
     chartBars = cached1hBars;
   } else if (chartTimeframe === '4h' && cached4hBars && cached4hBars.length) {
     chartBars = cached4hBars;
   } else {
-    // 30m bars: bot memory > Yahoo > log
     chartBars = (d.bot_bars && d.bot_bars.length) ? d.bot_bars
                : (d.chart_bars && d.chart_bars.length) ? d.chart_bars
                : d.log_bars;
   }
 
+  // Merge historical + today's trades for closed trade rendering
+  const allTrades = _mergeTradesDeduped(histTrades, d.trades || []);
+
   const pulseTimes = new Set(d.pulse_times || []);
 
   if (chartBars && chartBars.length) {
-    const isMultiDay = chartTimeframe === '4h';
     const timestamps = chartBars.map(b => {
       const raw = b.timestamp || b.time || '';
-      if (isMultiDay) {
-        // Keep full MM/DD HH:MM format for 4h bars
-        const md = raw.match(/(\d{2}\/\d{2}\s+\d{2}:\d{2})/);
-        return md ? md[1] : raw;
-      }
-      const m = raw.match(/(\d{2}:\d{2})/);
+      // Prefer MM/DD HH:MM format (from unified endpoint / allChartBars)
+      const md = String(raw).match(/(\d{2}\/\d{2}\s+\d{2}:\d{2})/);
+      if (md) return md[1];
+      // Fallback: extract HH:MM (legacy live bars)
+      const m = String(raw).match(/(\d{2}:\d{2})/);
       return m ? m[1] : raw;
     });
     const opens = chartBars.map(b => b.open);
@@ -4753,9 +4782,10 @@ function renderChart(d) {
     const closes = chartBars.map(b => b.close);
 
     // Pad with session time slots so candles don't balloon
+    // Only pad single-day (HH:MM) bars; skip for multi-day (MM/DD HH:MM)
+    const isMultiDayBars = timestamps.length > 0 && timestamps[0].includes('/');
     let sessionTimes;
-    if (chartTimeframe === '4h') {
-      // Multi-day: no padding (bars already have MM/DD HH:MM labels)
+    if (isMultiDayBars || chartTimeframe === '4h') {
       sessionTimes = [];
     } else if (chartTimeframe === '1h') {
       sessionTimes = ['09:00','10:00','11:00','12:00','13:00','14:00','15:00'];
@@ -4938,7 +4968,7 @@ function renderChart(d) {
     });
 
     // Render closed trades (entry circle + exit X + connecting line)
-    (d.trades || []).forEach(trade => {
+    allTrades.forEach(trade => {
       const pnl = trade.pnl || 0;
       const isWinner = pnl >= 0;
       const isBullishTrade = trade.direction === 'bullish';
@@ -5037,14 +5067,22 @@ function renderChart(d) {
       }
     });
 
+    // Compute default x-axis range (show recent window, allow pan back)
+    const totalBars = sortedTimestamps.length;
+    const windowSize = {'30m': 65, '5m': 78, '1h': 40, '4h': 20}[chartTimeframe] || 65;
+    const defaultRange = [totalBars - windowSize - 0.5, totalBars - 0.5];
+    const xRange = savedXRange[chartTimeframe] || defaultRange;
+
     const layout = {
       paper_bgcolor: '#0a0e17', plot_bgcolor: '#0a0e17',
       font: {color: '#6b7280', family: 'JetBrains Mono, Consolas, monospace', size: 11},
       margin: {l: 55, r: 90, t: 15, b: 55},
+      dragmode: 'pan',
       xaxis: {
         gridcolor: 'rgba(255,255,255,0.04)',
         type: 'category',
         rangeslider: {visible: false},
+        range: xRange,
       },
       yaxis: {
         gridcolor: 'rgba(255,255,255,0.04)', side: 'right',
@@ -5057,8 +5095,8 @@ function renderChart(d) {
 
     // Bollinger Band overlay for 1h and 4h views
     const bbTraces = [];
-    const bbData = chartTimeframe === '1h' ? cached1hBB
-                 : chartTimeframe === '4h' ? cached4hBB : null;
+    const bbData = allChartBB[chartTimeframe] || (chartTimeframe === '1h' ? cached1hBB
+                 : chartTimeframe === '4h' ? cached4hBB : null);
     if (bbData && bbData.length === sortedTimestamps.length) {
       const bbUpper = bbData.map(b => b ? b.upper : null);
       const bbMiddle = bbData.map(b => b ? b.middle : null);
@@ -5076,9 +5114,94 @@ function renderChart(d) {
       );
     }
 
-    Plotly.react('candle-chart', [candleTrace, ...bbTraces], layout, {displayModeBar: false, responsive: true});
+    Plotly.react('candle-chart', [candleTrace, ...bbTraces], layout, {displayModeBar: false, responsive: true, scrollZoom: true});
+    _attachChartRelayoutListener();
   } else {
     document.getElementById('candle-chart').innerHTML = '<div class="empty">No bar data yet (market may be closed)</div>';
+  }
+}
+
+function _mergeTradesDeduped(older, newer) {
+  const seen = new Set();
+  const result = [];
+  // Newer takes priority
+  [...newer, ...older].forEach(t => {
+    const key = t.id || t.trade_id || ((t.entry_time || '') + (t.direction || ''));
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    result.push(t);
+  });
+  return result;
+}
+
+function _attachChartRelayoutListener() {
+  if (chartRelayoutAttached.attached) return;
+  const el = document.getElementById('candle-chart');
+  if (!el || !el.on) return;
+  chartRelayoutAttached.attached = true;
+  el.on('plotly_relayout', function(eventData) {
+    if (eventData['xaxis.range[0]'] !== undefined && eventData['xaxis.range[1]'] !== undefined) {
+      savedXRange[chartTimeframe] = [eventData['xaxis.range[0]'], eventData['xaxis.range[1]']];
+      if (eventData['xaxis.range[0]'] < 20) {
+        _fetchOlderBars(chartTimeframe);
+      }
+    }
+  });
+}
+
+async function _fetchOlderBars(tf) {
+  if (isFetchingOld[tf]) return;
+  const existing = allChartBars[tf];
+  if (!existing || !existing.length) return;
+  isFetchingOld[tf] = true;
+  try {
+    const oldestTime = existing[0].time;
+    const isoDate = _mmddToISO(oldestTime);
+    const resp = await fetchJSON('/api/chart/bars?tf=' + tf + '&before=' + isoDate);
+    if (resp && resp.bars && resp.bars.length) {
+      const prependCount = resp.bars.length;
+      allChartBars[tf] = [...resp.bars, ...existing];
+      if (resp.bb && allChartBB[tf]) {
+        allChartBB[tf] = [...resp.bb, ...allChartBB[tf]];
+      }
+      // Shift saved range so viewport doesn't jump
+      if (savedXRange[tf]) {
+        savedXRange[tf] = [savedXRange[tf][0] + prependCount, savedXRange[tf][1] + prependCount];
+      }
+      // Sync legacy cache vars
+      if (tf === '5m') cached5minBars = allChartBars[tf];
+      else if (tf === '1h') { cached1hBars = allChartBars[tf]; cached1hBB = allChartBB[tf]; }
+      else if (tf === '4h') { cached4hBars = allChartBars[tf]; cached4hBB = allChartBB[tf]; }
+      if (latestTodayData) renderChart(latestTodayData);
+      if (resp.oldest_date) _loadHistoricalTrades(resp.oldest_date);
+    }
+  } catch (e) {
+    console.warn('Failed to fetch older bars:', e);
+  } finally {
+    isFetchingOld[tf] = false;
+  }
+}
+
+function _mmddToISO(tsStr) {
+  // Parse 'MM/DD HH:MM' -> 'YYYY-MM-DD'
+  const parts = tsStr.split(' ');
+  const md = parts[0].split('/');
+  const month = parseInt(md[0], 10);
+  const day = parseInt(md[1], 10);
+  const now = new Date();
+  const year = month > (now.getMonth() + 1) ? now.getFullYear() - 1 : now.getFullYear();
+  return year + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+}
+
+async function _loadHistoricalTrades(since) {
+  try {
+    const resp = await fetchJSON('/api/chart/trades' + (since ? '?since=' + since : ''));
+    if (resp && resp.trades) {
+      histTrades = _mergeTradesDeduped(histTrades, resp.trades);
+      histTradesLoaded = true;
+    }
+  } catch (e) {
+    console.warn('Failed to load historical trades:', e);
   }
 }
 

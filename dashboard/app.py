@@ -1954,6 +1954,159 @@ def api_chart_bars4h():
     return jsonify({'success': True, 'bars': bars, 'bb': bb})
 
 
+@app.route('/api/chart/bars')
+def api_chart_bars():
+    """Return historical bars for any timeframe via yfinance download."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        return jsonify({'success': False, 'bars': [], 'bb': None, 'oldest_date': None})
+
+    from dashboard.chart_utils import compute_bollinger_series
+
+    tf = request.args.get('tf', '30m')
+    before = request.args.get('before')
+    default_days = {'30m': 35, '5m': 35, '1h': 90, '4h': 180}.get(tf, 35)
+    days = request.args.get('days', default_days, type=int)
+
+    try:
+        if before:
+            end_date = datetime.strptime(before, '%Y-%m-%d').date()
+        else:
+            end_date = (datetime.now(ET).date() + timedelta(days=1))
+        start_date = end_date - timedelta(days=days)
+
+        yf_interval = '1h' if tf == '4h' else tf
+        df = yf.download(
+            '^GSPC', start=start_date.isoformat(), end=end_date.isoformat(),
+            interval=yf_interval, progress=False, auto_adjust=True,
+        )
+        if df is None or df.empty:
+            return jsonify({'success': True, 'bars': [], 'bb': None, 'oldest_date': None})
+
+        et_tz = pytz.timezone('US/Eastern')
+        bars = []
+        for idx, row in df.iterrows():
+            ts = idx.to_pydatetime()
+            if ts.tzinfo is None:
+                ts = pytz.utc.localize(ts)
+            ts_et = ts.astimezone(et_tz)
+            label = ts_et.strftime('%m/%d %H:%M')
+            # Handle multi-index columns from yf.download
+            o = float(row['Open'].iloc[0]) if hasattr(row['Open'], 'iloc') else float(row['Open'])
+            h = float(row['High'].iloc[0]) if hasattr(row['High'], 'iloc') else float(row['High'])
+            lo = float(row['Low'].iloc[0]) if hasattr(row['Low'], 'iloc') else float(row['Low'])
+            c = float(row['Close'].iloc[0]) if hasattr(row['Close'], 'iloc') else float(row['Close'])
+            bars.append({'time': label, 'open': o, 'high': h, 'low': lo, 'close': c})
+
+        # For 4h: aggregate 1h bars into 4h
+        if tf == '4h' and bars:
+            from src.models.bar import Bar as BarModel
+            from src.main import _aggregate_bars_to_higher
+            now = datetime.now(et_tz)
+            bar_objects = []
+            for b in bars:
+                # Parse MM/DD HH:MM back to aware datetime
+                parts = b['time'].split()
+                md = parts[0].split('/')
+                hm = parts[1].split(':')
+                month, day = int(md[0]), int(md[1])
+                hour, minute = int(hm[0]), int(hm[1])
+                year = now.year if month <= now.month else now.year - 1
+                try:
+                    dt = et_tz.localize(datetime(year, month, day, hour, minute))
+                except Exception:
+                    continue
+                bar_objects.append(BarModel(
+                    timestamp=dt, open=b['open'], high=b['high'],
+                    low=b['low'], close=b['close'], volume=0,
+                ))
+            agg_bars = _aggregate_bars_to_higher(bar_objects, 240, et_tz)
+            bars = [
+                {'time': ab.timestamp.strftime('%m/%d %H:%M'),
+                 'open': ab.open, 'high': ab.high, 'low': ab.low, 'close': ab.close}
+                for ab in agg_bars
+            ]
+
+        # For 30m: check bot bars for today's live data
+        if tf == '30m' and end_date > datetime.now(ET).date():
+            get_bot_bars = getattr(app, '_desktop_get_bot_bars', None)
+            if get_bot_bars:
+                live_bars = get_bot_bars()
+                if live_bars:
+                    today_str = datetime.now(ET).strftime('%m/%d')
+                    # Remove stale today bars from yfinance
+                    bars = [b for b in bars if not b['time'].startswith(today_str)]
+                    # Append live bars with normalized timestamps
+                    for lb in live_bars:
+                        raw = lb.get('timestamp') or lb.get('time') or ''
+                        m = re.search(r'(\d{2}:\d{2})', str(raw))
+                        ts = m.group(1) if m else raw
+                        bars.append({
+                            'time': today_str + ' ' + ts,
+                            'open': lb['open'], 'high': lb['high'],
+                            'low': lb['low'], 'close': lb['close'],
+                        })
+
+        # Compute BB for 1h and 4h
+        bb = None
+        if tf in ('1h', '4h') and bars:
+            closes = [b['close'] for b in bars]
+            bb = compute_bollinger_series(closes)
+
+        # Derive oldest_date from first bar
+        oldest_date = None
+        if bars:
+            try:
+                first_ts = bars[0]['time']
+                parts = first_ts.split()
+                md = parts[0].split('/')
+                month, day = int(md[0]), int(md[1])
+                now = datetime.now(ET)
+                year = now.year if month <= now.month else now.year - 1
+                oldest_date = f'{year}-{month:02d}-{day:02d}'
+            except Exception:
+                pass
+
+        return jsonify({'success': True, 'bars': bars, 'bb': bb, 'oldest_date': oldest_date})
+
+    except Exception as e:
+        logger.debug(f"Chart bars ({tf}) error: {e}")
+        return jsonify({'success': True, 'bars': [], 'bb': None, 'oldest_date': None})
+
+
+@app.route('/api/chart/trades')
+def api_chart_trades():
+    """Return closed trades for chart overlay within a date range."""
+    try:
+        default_since = (datetime.now(ET).date() - timedelta(days=35)).isoformat()
+        default_until = (datetime.now(ET).date() + timedelta(days=1)).isoformat()
+        since = request.args.get('since', default_since)
+        until = request.args.get('until', default_until)
+
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                """SELECT id, entry_time, exit_time, direction, status,
+                          short_strike, long_strike, pnl,
+                          underlying_price_at_entry, spx_at_entry, spx_at_exit,
+                          quantity
+                   FROM trades
+                   WHERE status='closed' AND entry_time >= ? AND entry_time < ?
+                   ORDER BY entry_time ASC""",
+                (since, until),
+            ).fetchall()
+            trades = [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+        return jsonify({'success': True, 'trades': trades})
+
+    except Exception as e:
+        logger.debug(f"Chart trades error: {e}")
+        return jsonify({'success': True, 'trades': []})
+
+
 @app.route('/api/signals')
 def api_signals():
     """Signal log with optional days filter. Excludes signals outside market hours."""
