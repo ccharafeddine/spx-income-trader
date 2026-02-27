@@ -2438,11 +2438,13 @@ def api_journal_calendar():
         conn = get_db_connection()
 
         # Get trades for the month: entered OR closed within the range
-        # trade_date: cross-day trades use exit date, same-day uses entry date
+        # trade_date: 0DTE strategies (daily_income/orb/bnb) always use entry date;
+        # only TNT swing trades use exit date when it differs from entry date.
         rows = conn.execute(
             """SELECT entry_time, exit_time, pnl, strategy_type, status,
                       direction, credit_received, quantity,
-                      CASE WHEN status IN ('closed', 'expired')
+                      CASE WHEN strategy_type = 'tag_n_turn'
+                                AND status IN ('closed', 'expired')
                                 AND exit_time IS NOT NULL
                                 AND DATE(exit_time) != DATE(entry_time)
                            THEN DATE(exit_time)
@@ -2450,13 +2452,14 @@ def api_journal_calendar():
                       END as trade_date
                FROM trades
                WHERE (DATE(entry_time) >= ? AND DATE(entry_time) < ?)
-                  OR (status IN ('closed', 'expired')
+                  OR (strategy_type = 'tag_n_turn'
+                      AND status IN ('closed', 'expired')
                       AND DATE(exit_time) >= ? AND DATE(exit_time) < ?)""",
             (first_day, last_day, first_day, last_day)
         ).fetchall()
 
         # Group by trade_date (exclude flagged trades from stats)
-        # Same-day trades (0DTE): entry date. Cross-day: exit date.
+        # 0DTE strategies: always entry date. TNT swings: exit date if cross-day.
         days_data = {}
         month_dur_hours = []
         month_cap_vals = []

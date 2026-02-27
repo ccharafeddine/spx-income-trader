@@ -226,7 +226,8 @@ def client_with_db(tmp_path):
 
 
 def _insert_trade(db_file, trade_id, entry_time, status, pnl=None,
-                  exit_time=None, credit=1.50, expiration=None):
+                  exit_time=None, credit=1.50, expiration=None,
+                  strategy_type='daily_income'):
     """Helper to insert a trade row for testing."""
     if expiration is None:
         expiration = entry_time[:10] + ' 16:00:00'
@@ -235,9 +236,9 @@ def _insert_trade(db_file, trade_id, entry_time, status, pnl=None,
         """INSERT INTO trades (id, entry_time, exit_time, direction, status,
               strategy_type, short_strike, long_strike, spread_width,
               credit_received, entry_price, quantity, expiration, pnl)
-           VALUES (?, ?, ?, 'put', ?, 'daily_income', 6000, 5990, 10, ?, ?, 1, ?, ?)""",
-        (trade_id, entry_time, exit_time, status, credit, credit,
-         expiration, pnl),
+           VALUES (?, ?, ?, 'put', ?, ?, 6000, 5990, 10, ?, ?, 1, ?, ?)""",
+        (trade_id, entry_time, exit_time, status, strategy_type,
+         credit, credit, expiration, pnl),
     )
     conn.commit()
     conn.close()
@@ -307,57 +308,66 @@ def test_api_today_includes_closed_today_count(mock_yahoo, client_with_db):
     assert data2['closed_today_count'] == 2
 
 
-def test_calendar_attributes_pnl_to_exit_date(client_with_db):
-    """Closed trade P&L appears on the exit date, not the entry date."""
+def test_calendar_attributes_tnt_pnl_to_exit_date(client_with_db):
+    """TNT swing trade P&L appears on exit date when cross-day."""
     client, db_file = client_with_db
     now = datetime.now(ET)
     month = now.month
     year = now.year
 
-    # Use mid-month dates to avoid month boundary issues
     entry_date = f'{year:04d}-{month:02d}-15'
     exit_date = f'{year:04d}-{month:02d}-16'
 
-    _insert_trade(db_file, 'cross-day-1',
+    # Only tag_n_turn strategy shifts to exit date
+    _insert_trade(db_file, 'tnt-cross-1',
                   entry_time=f'{entry_date} 14:00:00',
                   exit_time=f'{exit_date} 10:00:00',
-                  status='closed', pnl=960.0)
+                  status='closed', pnl=960.0,
+                  strategy_type='tag_n_turn')
 
     resp = client.get(f'/api/journal/calendar?month={month}&year={year}')
     assert resp.status_code == 200
     data = resp.get_json()
 
-    # P&L should be on the exit date (when realized), not entry date
+    # P&L should be on exit date for TNT swing
     exit_info = data['days'].get(exit_date)
     assert exit_info is not None, f"No calendar entry for exit date {exit_date}"
     assert exit_info['pnl'] == 960.0
 
-    # Entry date should have no P&L entry (trade attributed to exit)
+    # Entry date should have no P&L entry
     entry_info = data['days'].get(entry_date)
     assert entry_info is None or entry_info['pnl'] == 0.0
 
 
-def test_same_day_trade_appears_on_entry_date(client_with_db):
-    """Same-day (0DTE) closed trade appears on entry date, not shifted."""
+def test_daily_trade_stays_on_entry_date_even_with_cross_day_exit(client_with_db):
+    """0DTE daily_income trade stays on entry date even if exit_time crosses midnight."""
     client, db_file = client_with_db
     now = datetime.now(ET)
     month = now.month
     year = now.year
 
-    trade_date = f'{year:04d}-{month:02d}-15'
+    entry_date = f'{year:04d}-{month:02d}-15'
+    exit_date = f'{year:04d}-{month:02d}-16'
 
-    _insert_trade(db_file, 'same-day-1',
-                  entry_time=f'{trade_date} 10:15:00',
-                  exit_time=f'{trade_date} 11:30:00',
-                  status='closed', pnl=480.0)
+    # daily_income with exit after midnight (dashboard-resolved expiry)
+    _insert_trade(db_file, 'daily-midnight-1',
+                  entry_time=f'{entry_date} 10:15:00',
+                  exit_time=f'{exit_date} 00:05:00',
+                  status='expired', pnl=480.0,
+                  strategy_type='daily_income')
 
     resp = client.get(f'/api/journal/calendar?month={month}&year={year}')
     assert resp.status_code == 200
     data = resp.get_json()
 
-    day_info = data['days'].get(trade_date)
-    assert day_info is not None, f"No calendar entry for {trade_date}"
-    assert day_info['pnl'] == 480.0
+    # P&L must stay on entry date (0DTE strategy, never shifts)
+    entry_info = data['days'].get(entry_date)
+    assert entry_info is not None, f"No calendar entry for entry date {entry_date}"
+    assert entry_info['pnl'] == 480.0
+
+    # Exit date should NOT have this trade's P&L
+    exit_info = data['days'].get(exit_date)
+    assert exit_info is None or exit_info['pnl'] == 0.0
 
 
 @patch('dashboard.app.yahoo')
