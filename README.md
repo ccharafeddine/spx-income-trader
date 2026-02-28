@@ -317,7 +317,7 @@ Position Manager (P&L tracking, exit management, partial fill tracking, PDT-cond
     +---> Trade Reconciler (DB vs. broker fill comparison)
 ```
 
-**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1097+ tests), GitHub Actions CI
+**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1114+ tests), GitHub Actions CI
 
 ---
 
@@ -531,8 +531,8 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 
 ## Testing
 
-1097+ tests covering:
-- Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays, morning bias filter)
+1114+ tests covering:
+- Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays, morning bias filter, TNT weekend hold prevention)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
 - Position management (sizing, P&L calculation, exit triggers, partial fill tracking)
 - Risk gates (circuit breaker, position limits, credit quality, drawdown)
@@ -543,7 +543,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 - VIX data provider multi-source fallback chains
 - Price feed health monitoring and stale detection
 - Daily journal persistence and API endpoints
-- Notification delivery (Slack, Discord, email, webhook)
+- Notification delivery (Slack, Discord, email, webhook, hourly updates, EOD summary, SPX/VIX enrichment)
 - Demo mode (recording, replay, Flask integration)
 - Session recording (fixed filename mode, start/stop lifecycle, dashboard list/load routes, path traversal protection)
 - Trade reconciliation (DB vs. broker comparison, mismatch detection)
@@ -642,9 +642,8 @@ Recordings are saved to `database/demo_recordings/` and can be browsed from the 
 - [x] Interactive Brokers (IBKR) TWS API integration
 - [x] Scrollable chart history with pan/zoom and historical trade overlays
 - [x] Four-timeframe chart (4h/1h/30m/5m) with Bollinger Bands on 1h and 4h
-
-### Near-Term
-- [ ] TNT weekend hold prevention: auto-exit profitable TNT positions before market close on Friday
+- [x] TNT weekend hold prevention: auto-exit profitable TNT positions before market close on Friday
+- [x] Discord notifications: startup, market open, hourly updates, trade entry/exit, EOD summary
 
 ---
 
