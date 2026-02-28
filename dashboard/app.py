@@ -1986,11 +1986,14 @@ def api_chart_bars():
 
         et_tz = pytz.timezone('US/Eastern')
         bars = []
+        oldest_dt = None
         for idx, row in df.iterrows():
             ts = idx.to_pydatetime()
             if ts.tzinfo is None:
                 ts = pytz.utc.localize(ts)
             ts_et = ts.astimezone(et_tz)
+            if oldest_dt is None:
+                oldest_dt = ts_et.date()
             label = ts_et.strftime('%m/%d %H:%M')
             # Handle multi-index columns from yf.download
             o = float(row['Open'].iloc[0]) if hasattr(row['Open'], 'iloc') else float(row['Open'])
@@ -2054,19 +2057,8 @@ def api_chart_bars():
             closes = [b['close'] for b in bars]
             bb = compute_bollinger_series(closes)
 
-        # Derive oldest_date from first bar
-        oldest_date = None
-        if bars:
-            try:
-                first_ts = bars[0]['time']
-                parts = first_ts.split()
-                md = parts[0].split('/')
-                month, day = int(md[0]), int(md[1])
-                now = datetime.now(ET)
-                year = now.year if month <= now.month else now.year - 1
-                oldest_date = f'{year}-{month:02d}-{day:02d}'
-            except Exception:
-                pass
+        # Derive oldest_date from the raw pandas timestamp (not re-parsed strings)
+        oldest_date = oldest_dt.isoformat() if oldest_dt else None
 
         return jsonify({'success': True, 'bars': bars, 'bb': bb, 'oldest_date': oldest_date})
 
