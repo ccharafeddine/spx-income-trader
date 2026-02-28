@@ -82,6 +82,21 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Backtest results stored in a shared database (mode-independent)
 - Schema auto-created on first access for new mode
 
+### Chart & Visualization
+- Real-time SPX candlestick chart with four timeframe toggles: 4h, 1h, 30m, 5m
+- 5-minute bar aggregator (display-only, does not feed strategy logic)
+- Scrollable price history: 30+ days on 30m, proportionally more on 1h/4h
+- TradingView-style chart controls: drag chart area to pan, scroll wheel to zoom, drag x-axis strip to widen/narrow candles, drag y-axis strip to scale height
+- Auto y-axis scaling: visible price range fits to the candles currently in view, updates live as you pan or zoom
+- Bollinger Bands overlay on 1h and 4h timeframes
+- Lazy loading: fetches older bars seamlessly as user scrolls left, no viewport jump
+- Historical trade overlays: entry/exit markers and spread zones render across the full scrollable history, not just today
+- Pulse bar highlight boxes on detection
+- Entry markers: filled circles (green bullish / red bearish) at entry price
+- Exit markers: X at exit price with P&L label and connecting line
+- Spread visualization: horizontal dashed lines at short/long strikes with tinted fill zone
+- Profit zone overlay showing where price needs to stay
+
 ### Dashboard
 - Real-time web UI with account summary, candlestick charts, and position monitoring
 - Audio alerts via Web Audio API: market open/close chimes, trade entry/exit tones, bar completion pings, danger alerts (all mutable)
@@ -273,7 +288,7 @@ Position Manager (P&L tracking, exit management, partial fill tracking, PDT-cond
     +---> Trade Reconciler (DB vs. broker fill comparison)
 ```
 
-**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus
+**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Testing:** pytest (1097+ tests), GitHub Actions CI
 
 ---
 
@@ -487,7 +502,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 
 ## Testing
 
-1045 tests covering:
+1097+ tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays, morning bias filter)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
 - Position management (sizing, P&L calculation, exit triggers, partial fill tracking)
@@ -510,6 +525,8 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 - Database separation (dry-run vs live mode)
 - Analytics computations (BB agreement, trade duration, direction drilldown, P&L attribution, regime analysis, execution quality)
 - Backtest engine PDT mode and BB agreement tracking
+- Chart data endpoints (unified bar history, paginated lazy loading, historical trade queries)
+- Timestamp normalization across year boundaries (YYYY-MM-DD HH:MM format, correct sort order)
 
 ```bash
 python -m pytest tests/ -v
@@ -587,6 +604,18 @@ In desktop mode, you can record live bot sessions directly from the Overview tab
 5. Click **Load as Demo** to set it up for replay, then restart with `--demo`
 
 Recordings are saved to `database/demo_recordings/` and can be browsed from the panel. The recording state persists across page refreshes. If the bot stops while recording, the recording is automatically closed and saved.
+
+---
+
+## Expansion Roadmap
+
+### Recently Completed
+- [x] Interactive Brokers (IBKR) TWS API integration
+- [x] Scrollable chart history with pan/zoom and historical trade overlays
+- [x] Four-timeframe chart (4h/1h/30m/5m) with Bollinger Bands on 1h and 4h
+
+### Near-Term
+- [ ] TNT weekend hold prevention: auto-exit profitable TNT positions before market close on Friday
 
 ---
 
