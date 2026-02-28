@@ -3834,6 +3834,7 @@ let histTrades = [];
 let histTradesLoaded = false;
 const savedXRange = {};    // {tf: [start,end]}
 const chartRelayoutAttached = {attached: false};
+let isRescaling = false;
 let prevTradeIds = new Set();
 let prevClosedIds = new Set();
 let prevDangerIds = new Set();
@@ -5157,7 +5158,7 @@ function renderChart(d) {
     Plotly.react('candle-chart', [candleTrace, ...bbTraces], layout, {displayModeBar: false, responsive: true, scrollZoom: true});
     _attachChartRelayoutListener();
     // Auto-fit y-axis to visible bars on load/refresh (skip when open position sets yRange)
-    if (yRangeMin == null) _rescaleYToVisible(chartTimeframe);
+    if (chartBars && chartBars.length > 0 && yRangeMin == null) _rescaleYToVisible(chartTimeframe);
   } else {
     document.getElementById('candle-chart').innerHTML = '<div class="empty">No bar data yet (market may be closed)</div>';
   }
@@ -5188,6 +5189,9 @@ function _mergeTradesDeduped(older, newer) {
 }
 
 function _rescaleYToVisible(tf) {
+  if (isRescaling) return;
+  const el = document.getElementById('candle-chart');
+  if (!el || !el.data || !el.data.length) return;
   const bars = allChartBars[tf];
   if (!bars || !bars.length) return;
   const xr = savedXRange[tf];
@@ -5200,7 +5204,10 @@ function _rescaleYToVisible(tf) {
   if (!highs.length || !lows.length) return;
   const yMin = Math.min(...lows) - 5;
   const yMax = Math.max(...highs) + 5;
-  Plotly.relayout('candle-chart', {'yaxis.range': [yMin, yMax]});
+  isRescaling = true;
+  Plotly.relayout('candle-chart', {'yaxis.range': [yMin, yMax]}).then(() => {
+    isRescaling = false;
+  });
 }
 
 function _attachChartRelayoutListener() {
@@ -5211,7 +5218,7 @@ function _attachChartRelayoutListener() {
   el.on('plotly_relayout', function(eventData) {
     const hasXRange = eventData['xaxis.range[0]'] !== undefined && eventData['xaxis.range[1]'] !== undefined;
     const hasOnlyYRange = eventData['yaxis.range[0]'] !== undefined && !hasXRange;
-    if (hasXRange) {
+    if (hasXRange && !isRescaling) {
       savedXRange[chartTimeframe] = [eventData['xaxis.range[0]'], eventData['xaxis.range[1]']];
       if (eventData['xaxis.range[0]'] < 20) {
         _fetchOlderBars(chartTimeframe);
