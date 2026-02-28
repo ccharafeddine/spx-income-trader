@@ -198,6 +198,19 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Bot start/stop controls from the dashboard and system tray context menu
 - Bot crash detection with watchdog thread and notification
 
+### Discord Notifications
+- Bot startup: mode, equity, open positions, ET time
+- Market open (9:30 AM ET): SPX price, VIX level and regime, carry-over positions
+- Hourly market update (top of each hour during market hours): SPX price and session change, VIX, session high/low range, bars built, pulse bars detected, open position details (strikes, unrealized P&L, time held), next bar time
+- Trade entry: strategy, direction, strikes, credit per contract, total credit, quantity, breakeven, max risk, expiry
+- Trade exit: strategy, direction, strikes, P&L, exit reason, hold duration
+- End of day summary: trades (W/L), daily/weekly/monthly P&L, SPX close and session range, equity, win rate, streak, open swing positions, no-trade reason with pulse bar count and VIX context
+- Circuit breaker alert: loss amount vs limit, halted status
+- Short strike breach warning: critical alert when SPX crosses the short strike
+- Bot stopped: shutdown reason, uptime, trade count
+- Watchdog auto-restart: crash reason, restart count
+- All channels configurable (Slack, Discord, generic webhook) with per-channel min severity level
+
 ### Data & Storage
 - SQLite database with WAL mode for concurrent read/write access
 - Separate databases for dry-run and live trading modes
@@ -212,29 +225,69 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 
 ## Screenshots
 
-**Dashboard Overview** -- Bot status, strategy parameters, risk drawdown meters, SPX candlestick chart with pulse bar highlights, account summary, signal log, and trade history.
+**Full Application** -- Complete desktop application showing the sidebar, real-time SPX candlestick chart with trade overlays, open position panel, and trade plan section.
+
+![Full App Window](screenshots/FullAppWindow.png)
+
+**Dashboard Overview** -- Bot status, strategy LED indicators, risk drawdown meters, SPX candlestick chart with pulse bar highlights, account summary, signal log, and trade history.
 
 ![Dashboard Overview](screenshots/overview.png)
 
-**Trade Journal - Calendar View** -- Monthly calendar showing per-day P&L, trade count, strategy tags, no-trade reasons, weekends, and market holidays. Click any day to expand its trades with full entry analysis below.
+**Dashboard — 1h Chart with Bollinger Bands** -- One-hour candlestick view with Bollinger Band overlay, historical trade entry/exit markers, and spread visualization across multiple days.
 
-![Trade Journal Calendar](screenshots/journal_calendar.png)
+![Overview 1h Chart](screenshots/OverviewTab1hChart.png)
 
-**Trade Journal - List View** -- Per-strategy summary cards, filterable trade list with expandable entry/exit analysis, CSV export. Filter by strategy, direction, outcome, day type, and date range.
+**Open Position** -- Active credit spread details showing strikes, credit received, SPX distance, estimated P&L, time to expiry, and quantity.
 
-![Trade Journal List](screenshots/journal_list.png)
+![Open Position](screenshots/OpenPosition.png)
 
-**Trade Journal - Trade Detail** -- Entry analysis with a checklist of every gate the signal passed through, pulse bar details, strike rationale, market context, trade details (strikes, credit, risk/reward, duration), and exit analysis with post-trade review.
+**Trade Journal - Calendar View** -- Monthly calendar showing per-day P&L, trade count, strategy tags, no-trade reasons, weekends, and market holidays. Click any day to expand its trades.
+
+![Trade Journal Calendar](screenshots/TradeJournalCalendar.png)
+
+**Trade Journal - List View** -- Per-strategy summary cards, filterable trade list with expandable entry/exit analysis, CSV export.
+
+![Trade Journal List](screenshots/TradeJournalList.png)
+
+**Trade Journal - Trade Entry Detail** -- Entry analysis with a checklist of every gate the signal passed through, pulse bar details, strike rationale, market context, and trade details.
+
+![Trade Journal Entry](screenshots/TradeJournalEntry.png)
+
+**Trade Journal - Performance Overview** -- Aggregate performance metrics across all journal entries including win rate, P&L breakdown, and trade duration stats.
+
+![Trade Performance Overview](screenshots/TradePerformanceOverview.png)
+
+**Trade Detail** -- Full entry and exit analysis: signal gates, pulse bar details, strike rationale, credit/risk/reward, exit reason, and post-trade review.
 
 ![Trade Detail](screenshots/trade_detail.png)
 
-**Backtest** -- Parameter configuration, strategy selection, previous runs with bulk delete, equity curve, drawdown chart, monthly returns table, win rate by day of week, backtest assumptions panel, and disclaimer banner for simulated data.
+**Backtest** -- Parameter configuration, strategy selection, previous runs with bulk delete, equity curve, drawdown chart, monthly returns heatmap, and backtest assumptions panel.
 
 ![Backtest](screenshots/backtest_example.png)
 
-**Analytics** -- Data source selector (live or backtest), collapsible panels covering equity curve, drawdown, regime analysis with direction drilldown, BB agreement, trade duration, execution quality, P&L attribution, risk metrics, and strategy tear sheet export. Disclaimer banners for simulated/dry-run sources.
+**Backtest — Full Run (2019–2025)** -- Long-run backtest example showing equity curve and key performance metrics across six years.
 
-![Analytics](screenshots/backtest_analytics.png)
+![Backtest Full Run](screenshots/Backtest_20190101-20251231_example.png)
+
+**Analytics — Equity & Drawdown** -- Equity curve, rolling drawdown chart, and performance summary cards.
+
+![Analytics 1](screenshots/Analytics_20190101-20251231_1.png)
+
+**Analytics — Regime & Win Rate** -- VIX regime breakdown, market direction drilldown, win rate by day/time/regime, and direction comparison.
+
+![Analytics 2](screenshots/Analytics_20190101-20251231_2.png)
+
+**Analytics — P&L Attribution & Execution Quality** -- Theta/delta/vega decomposition, slippage analysis by time bucket and VIX regime, and exit reason breakdown.
+
+![Analytics 3](screenshots/Analytics_20190101-20251231_3.png)
+
+**Analytics — Risk Metrics** -- Calmar ratio, VaR 95/99, CVaR, tail ratio, win/loss streaks, and rolling win rate windows.
+
+![Analytics 4](screenshots/Analytics_20190101-20251231_4.png)
+
+**Backtest Analytics** -- Full analytics panel seeded from backtest data with disclaimer banner.
+
+![Backtest Analytics](screenshots/backtest_analytics.png)
 
 **Settings - Dry Run** -- Trading mode toggle, broker selection, PDT rule protection status, and notification configuration.
 
@@ -288,7 +341,7 @@ Position Manager (P&L tracking, exit management, partial fill tracking, PDT-cond
     +---> Trade Reconciler (DB vs. broker fill comparison)
 ```
 
-**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Testing:** pytest (1097+ tests), GitHub Actions CI
+**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1097+ tests), GitHub Actions CI
 
 ---
 
