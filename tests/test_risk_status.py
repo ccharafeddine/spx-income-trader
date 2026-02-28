@@ -503,3 +503,169 @@ class TestCircuitBreakerBlocking:
             is_0dte=True,
         )
         assert allowed is True
+
+
+# ============================================================================
+# MONTHLY P&L PERSISTENCE TESTS (BUG 1-3)
+# ============================================================================
+
+class TestMonthlyPersistence:
+    """Verify monthly P&L survives daily resets and period rollovers."""
+
+    def test_monthly_pnl_survives_daily_reset(self, tmp_path):
+        """Monthly P&L persists after portfolio reset_daily()."""
+        pm = PortfolioManager(
+            account_size=50000.0,
+            max_daily_loss_pct=2.0,
+            drawdown_limits={
+                'weekly': {'enabled': True, 'max_loss_pct': 4.0},
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},
+            },
+            persistence_path=tmp_path / 'portfolio_state.json',
+        )
+        dm = pm.drawdown_manager
+
+        dm.record_realized_pnl(-675.0)
+        assert dm.monthly_realized_pnl == -675.0
+
+        pm.reset_daily()
+
+        assert dm.monthly_realized_pnl == -675.0
+        state = json.loads(dm.persistence_path.read_text())
+        assert state['monthly_realized_pnl'] == -675.0
+
+    def test_weekly_resets_monthly_carries_over(self, tmp_path):
+        """Weekly resets on ISO week change, monthly carries over."""
+        dm = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 4.0},
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},
+            },
+            persistence_path=tmp_path / 'drawdown_state.json',
+        )
+
+        # Set to known week/month: ISO week 8, February 2026
+        dm.current_iso_week = 8
+        dm.current_iso_year = 2026
+        dm.current_month = 2
+        dm.current_month_year = 2026
+
+        dm.record_realized_pnl(-675.0)
+
+        # Simulate rollover to week 9, still February (Feb 23, 2026 = Monday)
+        with patch('src.core.drawdown_manager.date') as mock_date:
+            mock_date.today.return_value = date(2026, 2, 23)
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            dm.check_period_rollovers()
+
+        assert dm.weekly_realized_pnl == 0.0  # reset
+        assert dm.monthly_realized_pnl == -675.0  # NOT reset
+
+    def test_monthly_resets_on_month_change_fresh_weekly(self, tmp_path):
+        """Monthly resets on month change, weekly resets too."""
+        dm = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 4.0},
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},
+            },
+            persistence_path=tmp_path / 'drawdown_state.json',
+        )
+
+        # Set to ISO week 9, February 2026
+        dm.current_iso_week = 9
+        dm.current_iso_year = 2026
+        dm.current_month = 2
+        dm.current_month_year = 2026
+
+        dm.record_realized_pnl(-675.0)
+
+        # Simulate rollover to March 2, 2026 (Monday, ISO week 10, month 3)
+        with patch('src.core.drawdown_manager.date') as mock_date:
+            mock_date.today.return_value = date(2026, 3, 2)
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            dm.check_period_rollovers()
+
+        assert dm.monthly_realized_pnl == 0.0  # reset
+        assert dm.weekly_realized_pnl == 0.0  # also reset (new week)
+
+    def test_current_month_stored_and_restored_as_int(self, tmp_path):
+        """current_month persisted and loaded as int, not string."""
+        dm = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 4.0},
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},
+            },
+            persistence_path=tmp_path / 'drawdown_state.json',
+        )
+
+        dm.record_realized_pnl(-100.0)
+        dm._save_state()
+
+        # Load a fresh DrawdownManager from the same state file
+        dm2 = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 4.0},
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},
+            },
+            persistence_path=tmp_path / 'drawdown_state.json',
+        )
+
+        assert type(dm2.current_month) is int
+        assert type(dm2.current_iso_week) is int
+
+    def test_check_period_rollovers_idempotent_three_calls(self, tmp_path):
+        """Calling check_period_rollovers() 3 times in same day is safe."""
+        dm = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 4.0},
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},
+            },
+            persistence_path=tmp_path / 'drawdown_state.json',
+        )
+
+        dm.record_realized_pnl(-500.0)
+
+        for _ in range(3):
+            dm.check_period_rollovers()
+            assert dm.weekly_realized_pnl == -500.0
+            assert dm.monthly_realized_pnl == -500.0
+
+    def test_api_returns_monthly_from_drawdown_state(self, tmp_path):
+        """API returns monthly P&L from drawdown_state.json after reset_daily()."""
+        db_dir = tmp_path / 'database'
+        db_dir.mkdir()
+
+        # portfolio_state.json with daily_realized_pnl = 0 (as after reset)
+        (db_dir / 'portfolio_state.json').write_text(json.dumps({
+            'daily_realized_pnl': 0.0,
+            'circuit_breaker_triggered': False,
+        }))
+
+        # drawdown_state.json with monthly loss (same period as today)
+        today = date.today()
+        iso_year, iso_week, _ = today.isocalendar()
+        (db_dir / 'drawdown_state.json').write_text(json.dumps({
+            'weekly_realized_pnl': -200.0,
+            'monthly_realized_pnl': -675.0,
+            'weekly_breaker_triggered': False,
+            'monthly_breaker_triggered': False,
+            'current_iso_year': iso_year,
+            'current_iso_week': iso_week,
+            'current_month': today.month,
+            'current_month_year': today.year,
+        }))
+
+        with patch('dashboard.app.BASE_DIR', tmp_path):
+            app.config['TESTING'] = True
+            with app.test_client() as c:
+                resp = c.get('/api/risk-status')
+                data = resp.get_json()
+
+        assert data['monthly']['realized_pnl'] == -675.0
+        assert data['weekly']['realized_pnl'] == -200.0
+        assert data['daily']['realized_pnl'] == 0.0
