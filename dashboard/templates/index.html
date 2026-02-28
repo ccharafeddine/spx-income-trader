@@ -4681,9 +4681,15 @@ async function updateToday() {
 }
 
 function _findClosestBarIdx(sortedTimestamps, sortedCloses, timeStr) {
-  // For multi-day timestamps (MM/DD HH:MM), extract minutes-in-day + day offset
+  // Extract a comparable numeric value from various timestamp formats
   function toMinutes(s) {
-    // Handle "MM/DD HH:MM" format
+    // Handle "YYYY-MM-DD HH:MM" format
+    const ymdMatch = s.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
+    if (ymdMatch) {
+      const dayVal = parseInt(ymdMatch[2]) * 31 + parseInt(ymdMatch[3]);
+      return dayVal * 1440 + parseInt(ymdMatch[4]) * 60 + parseInt(ymdMatch[5]);
+    }
+    // Handle "MM/DD HH:MM" format (legacy)
     const mdMatch = s.match(/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2})/);
     if (mdMatch) {
       const dayVal = parseInt(mdMatch[1]) * 31 + parseInt(mdMatch[2]);
@@ -4705,12 +4711,13 @@ function _findClosestBarIdx(sortedTimestamps, sortedCloses, timeStr) {
 }
 
 function _entryTimeForTF(isoStr) {
-  // Always return 'MM/DD HH:MM' format for all timeframes
+  // Always return 'YYYY-MM-DD HH:MM' format for all timeframes
   if (!isoStr) return null;
-  const mm = isoStr.substring(5, 7);
-  const dd = isoStr.substring(8, 10);
+  const yyyy = isoStr.substring(0, 4);
+  const mo = isoStr.substring(5, 7);
+  const dy = isoStr.substring(8, 10);
   const hm = isoStr.substring(11, 16);
-  return mm + '/' + dd + ' ' + hm;
+  return yyyy + '-' + mo + '-' + dy + ' ' + hm;
 }
 
 function renderChart(d) {
@@ -4720,9 +4727,11 @@ function renderChart(d) {
                    : (d.chart_bars && d.chart_bars.length) ? d.chart_bars
                    : d.log_bars;
     if (liveBars && liveBars.length) {
-      const now = new Date();
-      const todayPrefix = String(now.getMonth() + 1).padStart(2, '0') + '/' + String(now.getDate()).padStart(2, '0');
-      // Normalize live bar timestamps to MM/DD HH:MM
+      const today = new Date();
+      const todayPrefix = today.getFullYear() + '-'
+        + String(today.getMonth() + 1).padStart(2, '0') + '-'
+        + String(today.getDate()).padStart(2, '0');
+      // Normalize live bar timestamps to YYYY-MM-DD HH:MM
       const normalizedLive = liveBars.map(b => {
         const raw = b.timestamp || b.time || '';
         const m = String(raw).match(/(\d{2}:\d{2})/);
@@ -4731,7 +4740,7 @@ function renderChart(d) {
       });
       if (allChartBars['30m'] && allChartBars['30m'].length) {
         // Strip existing today bars, then append fresh ones
-        allChartBars['30m'] = allChartBars['30m'].filter(b => !b.time.startsWith(todayPrefix));
+        allChartBars['30m'] = allChartBars['30m'].filter(b => b.time.substring(0, 10) !== todayPrefix);
         allChartBars['30m'] = _dedupBars([...allChartBars['30m'], ...normalizedLive]);
       }
     }
@@ -4770,7 +4779,10 @@ function renderChart(d) {
   if (chartBars && chartBars.length) {
     const timestamps = chartBars.map(b => {
       const raw = b.timestamp || b.time || '';
-      // Prefer MM/DD HH:MM format (from unified endpoint / allChartBars)
+      // Prefer YYYY-MM-DD HH:MM format (from unified endpoint / allChartBars)
+      const ymd = String(raw).match(/(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})/);
+      if (ymd) return ymd[1];
+      // Legacy MM/DD HH:MM format
       const md = String(raw).match(/(\d{2}\/\d{2}\s+\d{2}:\d{2})/);
       if (md) return md[1];
       // Fallback: extract HH:MM (legacy live bars)
@@ -4783,8 +4795,8 @@ function renderChart(d) {
     const closes = chartBars.map(b => b.close);
 
     // Pad with session time slots so candles don't balloon
-    // Only pad single-day (HH:MM) bars; skip for multi-day (MM/DD HH:MM)
-    const isMultiDayBars = timestamps.length > 0 && timestamps[0].includes('/');
+    // Only pad single-day (HH:MM) bars; skip for multi-day (YYYY-MM-DD HH:MM or MM/DD HH:MM)
+    const isMultiDayBars = timestamps.length > 0 && (timestamps[0].includes('-') || timestamps[0].includes('/'));
     let sessionTimes;
     if (isMultiDayBars || chartTimeframe === '4h') {
       sessionTimes = [];
@@ -5086,13 +5098,13 @@ function renderChart(d) {
       }
     }
 
-    // Compute one tick label per day (MM/DD) instead of per bar
+    // Compute one tick label per day (MM-DD) instead of per bar
     const tickvals = [0];
-    const ticktext = [sortedTimestamps[0].substring(0, 5)];
+    const ticktext = [sortedTimestamps[0].substring(5, 10)];
     for (let i = 1; i < sortedTimestamps.length; i++) {
-      if (sortedTimestamps[i].substring(0, 5) !== sortedTimestamps[i - 1].substring(0, 5)) {
+      if (sortedTimestamps[i].substring(0, 10) !== sortedTimestamps[i - 1].substring(0, 10)) {
         tickvals.push(i);
-        ticktext.push(sortedTimestamps[i].substring(0, 5));
+        ticktext.push(sortedTimestamps[i].substring(5, 10));
       }
     }
 
@@ -5149,12 +5161,11 @@ function renderChart(d) {
 }
 
 function _dedupBars(bars) {
-  // Keep only last occurrence of each normalized MM/DD HH:MM timestamp
+  // Keep only last occurrence of each timestamp
   const map = new Map();
   bars.forEach(b => {
     const raw = b.timestamp || b.time || '';
-    const md = String(raw).match(/(\d{2}\/\d{2}\s+\d{2}:\d{2})/);
-    const key = md ? md[1] : String(raw);
+    const key = String(raw).trim();
     map.set(key, b);
   });
   return Array.from(map.values());
@@ -5218,14 +5229,9 @@ async function _fetchOlderBars(tf) {
 }
 
 function _mmddToISO(tsStr) {
-  // Parse 'MM/DD HH:MM' -> 'YYYY-MM-DD'
-  const parts = tsStr.split(' ');
-  const md = parts[0].split('/');
-  const month = parseInt(md[0], 10);
-  const day = parseInt(md[1], 10);
-  const now = new Date();
-  const year = month > (now.getMonth() + 1) ? now.getFullYear() - 1 : now.getFullYear();
-  return year + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+  // Parse 'YYYY-MM-DD HH:MM' -> 'YYYY-MM-DD'
+  const m = tsStr.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;
 }
 
 async function _loadHistoricalTrades(since) {

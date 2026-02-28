@@ -1994,7 +1994,7 @@ def api_chart_bars():
             ts_et = ts.astimezone(et_tz)
             if oldest_dt is None:
                 oldest_dt = ts_et.date()
-            label = ts_et.strftime('%m/%d %H:%M')
+            label = ts_et.strftime('%Y-%m-%d %H:%M')
             # Handle multi-index columns from yf.download
             o = float(row['Open'].iloc[0]) if hasattr(row['Open'], 'iloc') else float(row['Open'])
             h = float(row['High'].iloc[0]) if hasattr(row['High'], 'iloc') else float(row['High'])
@@ -2009,15 +2009,9 @@ def api_chart_bars():
             now = datetime.now(et_tz)
             bar_objects = []
             for b in bars:
-                # Parse MM/DD HH:MM back to aware datetime
-                parts = b['time'].split()
-                md = parts[0].split('/')
-                hm = parts[1].split(':')
-                month, day = int(md[0]), int(md[1])
-                hour, minute = int(hm[0]), int(hm[1])
-                year = now.year if month <= now.month else now.year - 1
+                # Parse YYYY-MM-DD HH:MM back to aware datetime
                 try:
-                    dt = et_tz.localize(datetime(year, month, day, hour, minute))
+                    dt = et_tz.localize(datetime.strptime(b['time'], '%Y-%m-%d %H:%M'))
                 except Exception:
                     continue
                 bar_objects.append(BarModel(
@@ -2026,7 +2020,7 @@ def api_chart_bars():
                 ))
             agg_bars = _aggregate_bars_to_higher(bar_objects, 240, et_tz)
             bars = [
-                {'time': ab.timestamp.strftime('%m/%d %H:%M'),
+                {'time': ab.timestamp.strftime('%Y-%m-%d %H:%M'),
                  'open': ab.open, 'high': ab.high, 'low': ab.low, 'close': ab.close}
                 for ab in agg_bars
             ]
@@ -2037,7 +2031,7 @@ def api_chart_bars():
             if get_bot_bars:
                 live_bars = get_bot_bars()
                 if live_bars:
-                    today_str = datetime.now(ET).strftime('%m/%d')
+                    today_str = datetime.now(ET).strftime('%Y-%m-%d')
                     # Remove stale today bars from yfinance
                     bars = [b for b in bars if not b['time'].startswith(today_str)]
                     # Append live bars with normalized timestamps
