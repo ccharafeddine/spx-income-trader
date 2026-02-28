@@ -4073,7 +4073,14 @@ function updateStrategyStatuses(data) {
   const tntLight = document.getElementById('light-tnt');
   const tntLabel = document.getElementById('label-tnt');
   if (tntLight) {
-    if (data.tag_n_turn) {
+    // Check for open TNT position first — this is ground truth from the DB
+    // and must show Active regardless of bot state, market hours, or enabled flag
+    const hasTntPosition = data.account?.positions?.some(
+      p => p.strategy_type === 'tag_n_turn' || p.strategy_type === 'swing'
+    );
+    if (hasTntPosition) {
+      setLightState(tntLight, tntLabel, 'active', 'Active');
+    } else if (data.tag_n_turn) {
       const tnt = data.tag_n_turn;
       if (!tnt.enabled) {
         setLightState(tntLight, tntLabel, 'disabled', 'Off');
