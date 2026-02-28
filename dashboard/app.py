@@ -2051,6 +2051,9 @@ def api_chart_bars():
                             'low': lb['low'], 'close': lb['close'],
                         })
 
+        # Sort bars ascending by time
+        bars.sort(key=lambda b: b['time'])
+
         # Compute BB for 1h and 4h
         bb = None
         if tf in ('1h', '4h') and bars:

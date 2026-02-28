@@ -3834,7 +3834,6 @@ let histTrades = [];
 let histTradesLoaded = false;
 const savedXRange = {};    // {tf: [start,end]}
 const chartRelayoutAttached = {attached: false};
-let axisHandlersAttached = false;
 let prevTradeIds = new Set();
 let prevClosedIds = new Set();
 let prevDangerIds = new Set();
@@ -4754,6 +4753,15 @@ function renderChart(d) {
                : d.log_bars;
   }
 
+  // Sort bars ascending by time to ensure latest data is at the end
+  if (chartBars && chartBars.length) {
+    chartBars = [...chartBars].sort((a, b) => {
+      const ta = (a.time || a.timestamp || '');
+      const tb = (b.time || b.timestamp || '');
+      return ta < tb ? -1 : ta > tb ? 1 : 0;
+    });
+  }
+
   // Merge historical + today's trades for closed trade rendering
   const allTrades = _mergeTradesDeduped(histTrades, d.trades || []);
 
@@ -5062,9 +5070,21 @@ function renderChart(d) {
 
     // Compute default x-axis range (show recent window, allow pan back)
     const totalBars = sortedTimestamps.length;
-    const windowSize = {'30m': 65, '5m': 78, '1h': 40, '4h': 20}[chartTimeframe] || 65;
+    const windowSize = {'30m': 65, '5m': 78, '1h': 40, '4h': 30}[chartTimeframe] || 65;
     const defaultRange = [totalBars - windowSize - 0.5, totalBars - 0.5];
     const xRange = savedXRange[chartTimeframe] || defaultRange;
+
+    // Auto y-range from visible bars (when no open position overrides it)
+    if (yRangeMin == null) {
+      const visStart = Math.max(0, Math.floor(xRange[0]));
+      const visEnd = Math.min(totalBars - 1, Math.ceil(xRange[1]));
+      const visHighs = sortedHighs.slice(visStart, visEnd + 1).filter(v => v != null);
+      const visLows = sortedLows.slice(visStart, visEnd + 1).filter(v => v != null);
+      if (visHighs.length && visLows.length) {
+        yRangeMin = Math.min(...visLows) - 5;
+        yRangeMax = Math.max(...visHighs) + 5;
+      }
+    }
 
     // Compute one tick label per day (MM/DD) instead of per bar
     const tickvals = [0];
@@ -5090,12 +5110,10 @@ function renderChart(d) {
         tickvals: tickvals,
         ticktext: ticktext,
         tickangle: -45,
-        fixedrange: true,
       },
       yaxis: {
         gridcolor: 'rgba(255,255,255,0.04)', side: 'right',
         range: yRangeMin != null ? [yRangeMin, yRangeMax] : undefined,
-        fixedrange: true,
       },
       shapes: shapes,
       annotations: annotations,
@@ -5168,77 +5186,6 @@ function _attachChartRelayoutListener() {
       }
     }
   });
-  _initAxisDragHandlers();
-}
-
-function _initAxisDragHandlers() {
-  if (axisHandlersAttached) return;
-  const chartEl = document.getElementById('candle-chart');
-  if (!chartEl) return;
-  const xLayer = chartEl.querySelector('.xaxislayer-above') || chartEl.querySelector('.xaxislayer');
-  const yLayer = chartEl.querySelector('.yaxislayer-above') || chartEl.querySelector('.yaxislayer');
-  if (!xLayer && !yLayer) return;
-  axisHandlersAttached = true;
-
-  // X-axis drag: resize visible bar count (wider/narrower candles)
-  if (xLayer) {
-    xLayer.style.cursor = 'ew-resize';
-    xLayer.addEventListener('mousedown', function(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      const startX = e.clientX;
-      const range = savedXRange[chartTimeframe];
-      if (!range) return;
-      const startSpan = range[1] - range[0];
-      const startCenter = (range[0] + range[1]) / 2;
-      const totalBars = (allChartBars[chartTimeframe] || []).length || 100;
-
-      function onMove(ev) {
-        const dx = ev.clientX - startX;
-        const scale = Math.max(0.1, 1 - dx / 400);
-        let newSpan = startSpan * scale;
-        newSpan = Math.max(10, Math.min(totalBars, newSpan));
-        const newStart = startCenter - newSpan / 2;
-        const newEnd = startCenter + newSpan / 2;
-        savedXRange[chartTimeframe] = [newStart, newEnd];
-        Plotly.relayout('candle-chart', {'xaxis.range': [newStart, newEnd]});
-      }
-      function onUp() {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      }
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
-  }
-
-  // Y-axis drag: scale price range (taller/shorter candles)
-  if (yLayer) {
-    yLayer.style.cursor = 'ns-resize';
-    yLayer.addEventListener('mousedown', function(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      const startY = e.clientY;
-      const layout = chartEl._fullLayout || {};
-      const yRange = layout.yaxis && layout.yaxis.range ? [...layout.yaxis.range] : null;
-      if (!yRange) return;
-      const center = (yRange[0] + yRange[1]) / 2;
-      const startHalf = (yRange[1] - yRange[0]) / 2;
-
-      function onMove(ev) {
-        const dy = ev.clientY - startY;
-        const scale = Math.max(0.1, 1 + dy / 300);
-        const newHalf = startHalf * scale;
-        Plotly.relayout('candle-chart', {'yaxis.range': [center - newHalf, center + newHalf]});
-      }
-      function onUp() {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      }
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
-  }
 }
 
 async function _fetchOlderBars(tf) {
