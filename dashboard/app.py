@@ -3565,7 +3565,8 @@ def api_risk_status():
             import sqlite3
             conn = sqlite3.connect(str(db_path), timeout=10)
             rows = conn.execute(
-                "SELECT pnl FROM trades WHERE LOWER(status) = 'closed' AND pnl IS NOT NULL "
+                "SELECT pnl FROM trades WHERE LOWER(status) = 'closed' "
+                "AND pnl IS NOT NULL AND pnl != 0 "
                 "ORDER BY exit_time DESC"
             ).fetchall()
             conn.close()
@@ -3582,6 +3583,8 @@ def api_risk_status():
                 active_count = 0
                 for r in rows:
                     pnl = r[0]
+                    if pnl == 0:
+                        continue  # skip scratch trades
                     if streaks['active'] == 'win' and pnl > 0:
                         active_count += 1
                     elif streaks['active'] == 'loss' and pnl < 0:
@@ -3604,6 +3607,8 @@ def api_risk_status():
                         for r in remaining:
                             if r[0] > 0:
                                 prev_count += 1
+                            elif r[0] == 0:
+                                continue  # skip scratch trades
                             else:
                                 break
                         streaks['prev_win_streak'] = prev_count
@@ -3611,6 +3616,8 @@ def api_risk_status():
                         for r in remaining:
                             if r[0] < 0:
                                 prev_count += 1
+                            elif r[0] == 0:
+                                continue  # skip scratch trades
                             else:
                                 break
                         streaks['prev_loss_streak'] = prev_count
