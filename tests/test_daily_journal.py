@@ -14,7 +14,7 @@ import json
 import tempfile
 import os
 import pytz
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from unittest.mock import patch, MagicMock
 
 ET = pytz.timezone("America/New_York")
@@ -375,9 +375,11 @@ def test_dashboard_resolved_expiry_pnl_in_calendar(mock_yahoo, client_with_db):
     """Dashboard-resolved expired trade has correct P&L persisted to DB."""
     client, db_file = client_with_db
     now = datetime.now(ET)
-    month = now.month
-    year = now.year
-    today = now.strftime('%Y-%m-%d')
+    # Use yesterday so expiration is always in the past regardless of time of day
+    yesterday = (now - timedelta(days=1))
+    yest_str = yesterday.strftime('%Y-%m-%d')
+    month = yesterday.month
+    year = yesterday.year
 
     mock_yahoo.get_spx_quote.return_value = {'price': 6000.0, 'previous_close': 5990.0}
     mock_yahoo.get_intraday_bars.return_value = []
@@ -391,7 +393,7 @@ def test_dashboard_resolved_expiry_pnl_in_calendar(mock_yahoo, client_with_db):
               credit_received, entry_price, quantity, expiration, pnl)
            VALUES (?, ?, NULL, 'bearish', 'active', 'daily_income',
                    6010, 6020, 10, 1.50, 1.50, 1, ?, NULL)""",
-        ('exp-resolve-1', f'{today} 10:00:00', f'{today} 16:00:00'),
+        ('exp-resolve-1', f'{yest_str} 10:00:00', f'{yest_str} 16:00:00'),
     )
     conn.commit()
     conn.close()
@@ -405,8 +407,8 @@ def test_dashboard_resolved_expiry_pnl_in_calendar(mock_yahoo, client_with_db):
     resp2 = client.get(f'/api/journal/calendar?month={month}&year={year}')
     assert resp2.status_code == 200
     data = resp2.get_json()
-    day_info = data['days'].get(today)
-    assert day_info is not None, f"No calendar entry for {today}"
+    day_info = data['days'].get(yest_str)
+    assert day_info is not None, f"No calendar entry for {yest_str}"
     # SPX 6000 < short 6010 -> put spread expired OTM -> max profit = credit * 100
     assert day_info['pnl'] == 150.0
 

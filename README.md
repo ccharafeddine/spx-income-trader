@@ -229,10 +229,6 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 
 ![Full App Window](screenshots/FullAppWindow.png)
 
-**Dashboard Overview** -- Bot status, strategy LED indicators, risk drawdown meters, SPX candlestick chart with pulse bar highlights, account summary, signal log, and trade history.
-
-![Dashboard Overview](screenshots/overview.png)
-
 **Dashboard — 1h Chart with Bollinger Bands** -- One-hour candlestick view with Bollinger Band overlay, historical trade entry/exit markers, and spread visualization across multiple days.
 
 ![Overview 1h Chart](screenshots/OverviewTab1hChart.png)
@@ -257,14 +253,6 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 
 ![Trade Performance Overview](screenshots/TradePerformanceOverview.png)
 
-**Trade Detail** -- Full entry and exit analysis: signal gates, pulse bar details, strike rationale, credit/risk/reward, exit reason, and post-trade review.
-
-![Trade Detail](screenshots/trade_detail.png)
-
-**Backtest** -- Parameter configuration, strategy selection, previous runs with bulk delete, equity curve, drawdown chart, monthly returns heatmap, and backtest assumptions panel.
-
-![Backtest](screenshots/backtest_example.png)
-
 **Backtest — Full Run (2019–2025)** -- Long-run backtest example showing equity curve and key performance metrics across six years.
 
 ![Backtest Full Run](screenshots/Backtest_20190101-20251231_example.png)
@@ -284,18 +272,6 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 **Analytics — Risk Metrics** -- Calmar ratio, VaR 95/99, CVaR, tail ratio, win/loss streaks, and rolling win rate windows.
 
 ![Analytics 4](screenshots/Analytics_20190101-20251231_4.png)
-
-**Backtest Analytics** -- Full analytics panel seeded from backtest data with disclaimer banner.
-
-![Backtest Analytics](screenshots/backtest_analytics.png)
-
-**Settings - Dry Run** -- Trading mode toggle, broker selection, PDT rule protection status, and notification configuration.
-
-![Settings Dry Run](screenshots/settings_dryrun.png)
-
-**Settings - E\*TRADE** -- Broker credential management with masked display, connection testing, OAuth session status with token age and auto-renewal.
-
-![Settings E\*TRADE](screenshots/settings_etrade.png)
 
 ---
 
