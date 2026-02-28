@@ -5085,6 +5085,7 @@ function renderChart(d) {
     const windowSize = {'30m': 65, '5m': 78, '1h': 40, '4h': 30}[chartTimeframe] || 65;
     const defaultRange = [totalBars - windowSize - 0.5, totalBars - 0.5];
     const xRange = savedXRange[chartTimeframe] || defaultRange;
+    if (!savedXRange[chartTimeframe]) savedXRange[chartTimeframe] = defaultRange;
 
     // Auto y-range from visible bars (when no open position overrides it)
     if (yRangeMin == null) {
@@ -5155,6 +5156,8 @@ function renderChart(d) {
 
     Plotly.react('candle-chart', [candleTrace, ...bbTraces], layout, {displayModeBar: false, responsive: true, scrollZoom: true});
     _attachChartRelayoutListener();
+    // Auto-fit y-axis to visible bars on load/refresh (skip when open position sets yRange)
+    if (yRangeMin == null) _rescaleYToVisible(chartTimeframe);
   } else {
     document.getElementById('candle-chart').innerHTML = '<div class="empty">No bar data yet (market may be closed)</div>';
   }
@@ -5184,17 +5187,36 @@ function _mergeTradesDeduped(older, newer) {
   return result;
 }
 
+function _rescaleYToVisible(tf) {
+  const bars = allChartBars[tf];
+  if (!bars || !bars.length) return;
+  const xr = savedXRange[tf];
+  if (!xr) return;
+  const visStart = Math.max(0, Math.floor(xr[0]));
+  const visEnd = Math.min(bars.length - 1, Math.ceil(xr[1]));
+  const visSlice = bars.slice(visStart, visEnd + 1);
+  const highs = visSlice.map(b => b.high).filter(v => v != null);
+  const lows = visSlice.map(b => b.low).filter(v => v != null);
+  if (!highs.length || !lows.length) return;
+  const yMin = Math.min(...lows) - 5;
+  const yMax = Math.max(...highs) + 5;
+  Plotly.relayout('candle-chart', {'yaxis.range': [yMin, yMax]});
+}
+
 function _attachChartRelayoutListener() {
   if (chartRelayoutAttached.attached) return;
   const el = document.getElementById('candle-chart');
   if (!el || !el.on) return;
   chartRelayoutAttached.attached = true;
   el.on('plotly_relayout', function(eventData) {
-    if (eventData['xaxis.range[0]'] !== undefined && eventData['xaxis.range[1]'] !== undefined) {
+    const hasXRange = eventData['xaxis.range[0]'] !== undefined && eventData['xaxis.range[1]'] !== undefined;
+    const hasOnlyYRange = eventData['yaxis.range[0]'] !== undefined && !hasXRange;
+    if (hasXRange) {
       savedXRange[chartTimeframe] = [eventData['xaxis.range[0]'], eventData['xaxis.range[1]']];
       if (eventData['xaxis.range[0]'] < 20) {
         _fetchOlderBars(chartTimeframe);
       }
+      _rescaleYToVisible(chartTimeframe);
     }
   });
 }
