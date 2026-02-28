@@ -172,6 +172,11 @@ tag_n_turn:
   min_dte: 3
   max_dte: 7
 
+  # Weekend hold prevention: exit profitable swings Friday afternoon
+  weekend_exit_enabled: true
+  weekend_exit_time: "15:00"          # ET, start checking at this time on Fridays
+  weekend_exit_min_profit_pct: 30     # % of price progress toward target required (0-100)
+
 # B&B (Bed & Breakfast) Strategy - Production Line Trading p.23-25
 # Detects end-of-day pulse setups as directional confluence for DI
 bnb:

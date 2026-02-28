@@ -1769,7 +1769,8 @@ class TradingBot:
                             # Reset state machine so it can re-signal on next tick
                             self.tag_n_turn._reset_to_idle("Trade execution failed")
 
-                tnt_exit = self.tag_n_turn.check_exit_conditions(current_price)
+                current_et = datetime.now(self.tz)
+                tnt_exit = self.tag_n_turn.check_exit_conditions(current_price, current_time=current_et)
                 if tnt_exit:
                     logger.info(
                         f"TAG 'N TURN EXIT SIGNAL: {tnt_exit['reason']} @ ${current_price:,.2f}"

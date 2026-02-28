@@ -952,7 +952,7 @@ class BacktestEngine:
         # Check target/stop via TNT strategy (works with simulated price)
         tnt_exit = None
         if self._tnt_strat:
-            tnt_exit = self._tnt_strat.check_exit_conditions(bar.close)
+            tnt_exit = self._tnt_strat.check_exit_conditions(bar.close, current_time=bar_dt)
 
         # Manual max_hold check (TNT uses datetime.now() internally, wrong for backtest)
         if not tnt_exit and self._tnt_entry_date and self._tnt_strat:

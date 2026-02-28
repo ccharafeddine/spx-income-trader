@@ -24,6 +24,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional, Dict, Any
 
+import pytz
+
 from .bollinger_filter import BollingerFilter
 from .pulse_detector import PulseBarDetector
 from ..models.bar import Bar, BarType
@@ -80,6 +82,11 @@ class TagNTurnStrategy:
         self.min_credit = config.get('min_credit', 2.00)
         self.min_dte = config.get('min_dte', 3)
         self.max_dte = config.get('max_dte', 7)
+
+        # Weekend hold prevention
+        self.weekend_exit_enabled = config.get('weekend_exit_enabled', True)
+        self.weekend_exit_time = config.get('weekend_exit_time', '15:00')
+        self.weekend_exit_min_profit_pct = config.get('weekend_exit_min_profit_pct', 30)
 
         # State machine
         self.state = TNTState.IDLE
@@ -231,12 +238,13 @@ class TagNTurnStrategy:
             f"stop=${position.get('stop_price', 0):,.2f}"
         )
 
-    def check_exit_conditions(self, current_price: float) -> Optional[Dict]:
+    def check_exit_conditions(self, current_price: float, current_time: datetime = None) -> Optional[Dict]:
         """
         Check if exit conditions are met for open position.
 
         Args:
             current_price: Current SPX price
+            current_time: Current datetime (ET-aware). Defaults to now in ET.
 
         Returns:
             Exit signal dict if exit triggered, None otherwise
@@ -247,10 +255,17 @@ class TagNTurnStrategy:
         if self.active_position is None:
             return None
 
+        et = pytz.timezone('America/New_York')
+        if current_time is None:
+            current_time = datetime.now(et)
+        elif current_time.tzinfo is None:
+            current_time = et.localize(current_time)
+
         pos = self.active_position
         direction = pos.get('direction', '').lower()
         target = pos.get('target_price', 0)
         stop = pos.get('stop_price', 0)
+        entry_price = pos.get('entry_price', 0)
         entry_time_str = pos.get('entry_time')
 
         exit_signal = None
@@ -276,10 +291,32 @@ class TagNTurnStrategy:
         if entry_time_str and not exit_reason:
             try:
                 entry_time = datetime.fromisoformat(entry_time_str)
-                days_held = (datetime.now() - entry_time).days
+                days_held = (current_time - entry_time).days
                 if days_held >= self.max_hold_days:
                     exit_reason = 'max_hold_exceeded'
                     logger.info(f"TAG 'N TURN MAX HOLD: {days_held} days >= {self.max_hold_days}")
+            except (ValueError, TypeError):
+                pass
+
+        # Weekend hold prevention: exit profitable swings on Friday afternoon
+        if not exit_reason and self.weekend_exit_enabled and current_time.weekday() == 4:
+            try:
+                exit_hour, exit_minute = map(int, self.weekend_exit_time.split(':'))
+                if current_time.hour > exit_hour or (current_time.hour == exit_hour and current_time.minute >= exit_minute):
+                    # Calculate directional progress toward target
+                    if direction == 'bullish' and target != entry_price:
+                        progress = (current_price - entry_price) / (target - entry_price)
+                    elif direction == 'bearish' and entry_price != target:
+                        progress = (entry_price - current_price) / (entry_price - target)
+                    else:
+                        progress = 0
+
+                    if progress >= (self.weekend_exit_min_profit_pct / 100):
+                        exit_reason = 'weekend_hold_prevention'
+                        logger.info(
+                            f"TAG 'N TURN WEEKEND EXIT: Friday {current_time.strftime('%H:%M')} ET, "
+                            f"position {progress * 100:.0f}% toward target, triggering exit"
+                        )
             except (ValueError, TypeError):
                 pass
 
@@ -289,7 +326,7 @@ class TagNTurnStrategy:
                 'reason': exit_reason,
                 'exit_price': current_price,
                 'position': pos,
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': current_time.isoformat(),
             }
 
         return exit_signal
