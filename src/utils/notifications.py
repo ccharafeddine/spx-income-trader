@@ -5,6 +5,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Optional, Tuple, List, Dict
 
+import pytz
 import requests
 
 logger = logging.getLogger(__name__)
@@ -417,16 +418,19 @@ class NotificationManager:
         """Send market open notification at 9:30 ET.
 
         Args:
-            data: dict with keys: vix_level, vix_regime, open_positions, mode
+            data: dict with keys: vix_level, vix_regime, open_positions, mode, spx_price
         """
         vix_level = data.get('vix_level')
         vix_regime = data.get('vix_regime', 'unknown')
         open_positions = data.get('open_positions', 0)
         mode = data.get('mode', 'dry-run')
+        spx_price = data.get('spx_price')
 
         fields = [
             {'name': 'Mode', 'value': mode, 'inline': True},
         ]
+        if spx_price is not None:
+            fields.append({'name': 'SPX', 'value': f"${spx_price:,.2f}", 'inline': True})
         if vix_level is not None:
             fields.append({'name': 'VIX', 'value': f"{vix_level:.1f} ({vix_regime})", 'inline': True})
         # Omit VIX field entirely when unavailable (don't show "unknown")
@@ -458,9 +462,12 @@ class NotificationManager:
             fields.append({'name': 'Equity', 'value': f"${equity:,.0f}", 'inline': True})
         fields.append({'name': 'Open Positions', 'value': str(open_positions), 'inline': True})
 
+        et_now = datetime.now(pytz.timezone('America/New_York'))
+        et_time_str = et_now.strftime('%I:%M %p ET').lstrip('0')
+
         self._send_rich(
             "Trading Bot Started",
-            f"Started at {datetime.now(timezone.utc).strftime('%H:%M UTC')}",
+            f"Started at {et_time_str}",
             level='info',
             fields=fields,
             color=DISCORD_GREEN,
@@ -553,7 +560,8 @@ class NotificationManager:
         Args:
             summary_data: dict with keys: trades_count, wins, losses, daily_pnl,
                 weekly_pnl, monthly_pnl, win_rate, equity, streak,
-                open_swings, no_trade_reason, bnb_signal
+                open_swings, no_trade_reason, bnb_signal,
+                spx_close, spx_high, spx_low, spx_change_pct, close_time_str
         """
         trades = summary_data.get('trades_count', 0)
         wins = summary_data.get('wins', 0)
@@ -565,6 +573,11 @@ class NotificationManager:
         equity = summary_data.get('equity')
         streak = summary_data.get('streak', '')
         open_swings = summary_data.get('open_swings', [])
+        spx_close = summary_data.get('spx_close')
+        spx_high = summary_data.get('spx_high')
+        spx_low = summary_data.get('spx_low')
+        spx_change_pct = summary_data.get('spx_change_pct')
+        close_time_str = summary_data.get('close_time_str')
 
         color = DISCORD_GREEN if daily_pnl >= 0 else DISCORD_RED
 
@@ -580,6 +593,15 @@ class NotificationManager:
             fields.append({'name': 'Win Rate', 'value': f"{win_rate:.0f}%", 'inline': True})
         if equity is not None:
             fields.append({'name': 'Equity', 'value': f"${equity:,.0f}", 'inline': True})
+
+        # SPX market data (inserted before no_trade_reason)
+        if spx_close is not None:
+            spx_val = f"${spx_close:,.2f}"
+            if spx_change_pct is not None:
+                spx_val += f" ({spx_change_pct:+.2f}%)"
+            fields.append({'name': 'SPX Close', 'value': spx_val, 'inline': True})
+        if spx_low is not None and spx_high is not None:
+            fields.append({'name': 'Session Range', 'value': f"${spx_low:,.2f} \u2013 ${spx_high:,.2f}", 'inline': True})
 
         if open_swings:
             swing_lines = []
@@ -602,9 +624,81 @@ class NotificationManager:
         if bnb:
             fields.append({'name': 'B&B Signal', 'value': bnb, 'inline': True})
 
+        # Build subtitle with ET close time
+        if close_time_str:
+            subtitle = f"Market closed at {close_time_str} ET - daily results"
+        else:
+            subtitle = "Market closed - daily results"
+
         self._send_rich(
             "End of Day Summary",
-            f"Market closed - daily results",
+            subtitle,
+            level='info',
+            fields=fields,
+            color=color,
+        )
+
+    def send_hourly_update(self, data: dict):
+        """Send hourly market update notification during market hours.
+
+        Args:
+            data: dict with keys: current_time_str, spx_price, spx_change_pct,
+                vix_level, vix_regime, spx_high, spx_low, bars_built, pulse_count,
+                open_positions (list of dicts), next_bar_time
+        """
+        current_time_str = data.get('current_time_str', '')
+        spx_price = data.get('spx_price')
+        spx_change_pct = data.get('spx_change_pct')
+        vix_level = data.get('vix_level')
+        vix_regime = data.get('vix_regime', '')
+        spx_high = data.get('spx_high')
+        spx_low = data.get('spx_low')
+        bars_built = data.get('bars_built', 0)
+        pulse_count = data.get('pulse_count', 0)
+        open_positions = data.get('open_positions', [])
+        next_bar_time = data.get('next_bar_time', '')
+
+        # Color based on SPX change
+        if spx_change_pct is not None and spx_change_pct < -1.0:
+            color = DISCORD_RED
+        elif spx_change_pct is not None and spx_change_pct < -0.5:
+            color = DISCORD_YELLOW
+        else:
+            color = DISCORD_BLUE
+
+        pulse_str = f"{pulse_count} pulse bar{'s' if pulse_count != 1 else ''}" if pulse_count > 0 else "No pulse bars yet"
+
+        fields = []
+        if spx_price is not None:
+            spx_val = f"${spx_price:,.2f}"
+            if spx_change_pct is not None:
+                spx_val += f" ({spx_change_pct:+.2f}%)"
+            fields.append({'name': 'SPX', 'value': spx_val, 'inline': True})
+        if vix_level is not None:
+            fields.append({'name': 'VIX', 'value': f"{vix_level:.1f} ({vix_regime})", 'inline': True})
+        if spx_low is not None and spx_high is not None:
+            fields.append({'name': 'Session Range', 'value': f"${spx_low:,.2f} \u2013 ${spx_high:,.2f}", 'inline': True})
+        fields.append({'name': 'Bars Built', 'value': f"{bars_built} bars built", 'inline': True})
+        fields.append({'name': 'Pulse Bars', 'value': pulse_str, 'inline': True})
+        if next_bar_time:
+            fields.append({'name': 'Next Bar', 'value': next_bar_time, 'inline': True})
+
+        if open_positions:
+            pos_lines = []
+            for p in open_positions:
+                pos_lines.append(
+                    f"{p.get('direction', '').upper()} {p.get('short_strike', 0)}/{p.get('long_strike', 0)} "
+                    f"\u2022 P&L: ${p.get('unrealized_pnl', 0):+.2f} \u2022 {p.get('time_held', 'N/A')}"
+                )
+            fields.append({
+                'name': 'Open Positions',
+                'value': "\n".join(pos_lines),
+                'inline': False,
+            })
+
+        self._send_rich(
+            f"Market Update \u2014 {current_time_str} ET",
+            f"{bars_built} bars built \u2022 {pulse_str}",
             level='info',
             fields=fields,
             color=color,

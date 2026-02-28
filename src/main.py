@@ -9,7 +9,7 @@ import os
 import argparse
 import logging
 from pathlib import Path
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import time as time_module
 import signal
 import json
@@ -244,6 +244,7 @@ class TradingBot:
         self._eod_summary_sent_today = False  # Prevent duplicate EOD notifications
         self._reconciliation_done_today = False
         self._market_open_notified = False  # Send market open notification once per day
+        self._last_hourly_update = None  # Track last hourly update notification time
         self._danger_alerts_sent = {}  # Track danger alerts sent per trade (avoid spam)
         self._best_trade_today = None  # Best single trade P&L today {pnl, strategy}
 
@@ -782,6 +783,7 @@ class TradingBot:
                     self._eod_summary_sent_today = False
                     self._reconciliation_done_today = False
                     self._market_open_notified = False
+                    self._last_hourly_update = None
                     self._danger_alerts_sent = {}
                     self._best_trade_today = None
 
@@ -898,6 +900,7 @@ class TradingBot:
                         'vix_regime': _vr,
                         'open_positions': len(_open_pos),
                         'mode': TRADING_MODE,
+                        'spx_price': self._current_spx_price if self._current_spx_price > 0 else None,
                     })
 
                 self._market_was_open = market_open_now
@@ -1349,6 +1352,7 @@ class TradingBot:
             spx_open = None
             spx_close = None
             spx_change_pct = None
+            spx_quote = None
             vix_level = None
             vix_regime = None
 
@@ -1469,6 +1473,10 @@ class TradingBot:
                             'unrealized_pnl': _t.pnl or 0,
                         })
 
+                    # Build ET close time string for EOD subtitle
+                    _et_now = datetime.now(self.tz)
+                    _close_time_str = _et_now.strftime('%I:%M %p').lstrip('0')
+
                     self.notifier.send_eod_summary({
                         'trades_count': db_trades,
                         'wins': _wins,
@@ -1480,6 +1488,11 @@ class TradingBot:
                         'streak': _streak,
                         'open_swings': _open_swings,
                         'no_trade_reason': no_trade_summary if db_trades == 0 else None,
+                        'spx_close': spx_close,
+                        'spx_high': spx_quote.get('high') if spx_quote else None,
+                        'spx_low': spx_quote.get('low') if spx_quote else None,
+                        'spx_change_pct': spx_change_pct,
+                        'close_time_str': _close_time_str,
                     })
                 except Exception as eod_err:
                     logger.warning(f"Failed to send EOD summary: {eod_err}")
@@ -1518,6 +1531,96 @@ class TradingBot:
         except Exception as e:
             logger.warning(f"Reconciliation failed: {e}")
 
+    def _send_hourly_update_if_due(self, current_time):
+        """Send hourly market update notification if on the hour boundary."""
+        if not self.notifier:
+            return
+        if not self._is_market_open(current_time):
+            return
+
+        current_et = datetime.now(self.tz)
+        if current_et.minute != 0 and current_et.minute != 30:
+            # Only check on half-hour boundaries (when bars complete)
+            pass
+        if self._last_hourly_update is not None and current_et.hour == self._last_hourly_update.hour:
+            return
+
+        self._last_hourly_update = current_et
+
+        try:
+            # SPX data
+            spx_price = self._current_spx_price if self._current_spx_price > 0 else None
+            spx_open = self.position_manager._day_open
+            spx_change_pct = None
+            if spx_price and spx_open and spx_open > 0:
+                spx_change_pct = ((spx_price - spx_open) / spx_open) * 100
+
+            # Session high/low from completed bars
+            spx_high = None
+            spx_low = None
+            bars = self.bar_builder.bars if hasattr(self.bar_builder, 'bars') else []
+            if bars:
+                spx_high = max(b.high for b in bars)
+                spx_low = min(b.low for b in bars)
+            # Include current building bar
+            if self.bar_builder.high_price and (spx_high is None or self.bar_builder.high_price > spx_high):
+                spx_high = self.bar_builder.high_price
+            if self.bar_builder.low_price and (spx_low is None or self.bar_builder.low_price < spx_low):
+                spx_low = self.bar_builder.low_price
+
+            # VIX
+            _vl, _vr = None, None
+            try:
+                from src.data.vix_provider import VixProvider
+                _vix = VixProvider()
+                _vl, _vr = _vix.get_vix_with_regime()
+            except Exception:
+                pass
+
+            # Open positions
+            open_positions = []
+            for _t in self.position_manager.get_open_trades():
+                entry_time_str = getattr(_t, 'entry_time', None) or ''
+                time_held = 'N/A'
+                if entry_time_str:
+                    try:
+                        _et = datetime.fromisoformat(str(entry_time_str))
+                        delta = current_et - _et
+                        hours = int(delta.total_seconds() // 3600)
+                        minutes = int((delta.total_seconds() % 3600) // 60)
+                        time_held = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+                    except (ValueError, TypeError):
+                        pass
+                open_positions.append({
+                    'direction': _t.spread.direction.value,
+                    'short_strike': _t.spread.short_leg.strike,
+                    'long_strike': _t.spread.long_leg.strike,
+                    'unrealized_pnl': _t.pnl or 0,
+                    'time_held': time_held,
+                })
+
+            # Next bar time
+            next_bar_time = ''
+            if self.bar_builder.current_bar_start:
+                next_close = self.bar_builder.current_bar_start + timedelta(minutes=30)
+                next_bar_time = next_close.strftime('%I:%M %p ET').lstrip('0')
+
+            self.notifier.send_hourly_update({
+                'current_time_str': current_et.strftime('%I:%M %p').lstrip('0'),
+                'spx_price': spx_price,
+                'spx_change_pct': spx_change_pct,
+                'vix_level': _vl,
+                'vix_regime': _vr or '',
+                'spx_high': spx_high,
+                'spx_low': spx_low,
+                'bars_built': self._journal_bars_built,
+                'pulse_count': self._journal_pulse_bars,
+                'open_positions': open_positions,
+                'next_bar_time': next_bar_time,
+            })
+        except Exception as e:
+            logger.warning(f"Failed to send hourly update: {e}")
+
     def _build_no_trade_summary(self, spx_open, spx_close, spx_change_pct, vix_level, vix_regime):
         """Build a human-readable summary of why no trades were taken."""
         parts = []
@@ -1546,8 +1649,7 @@ class TradingBot:
         # Add market context
         market_bits = []
         if spx_change_pct is not None:
-            direction = 'up' if spx_change_pct > 0 else 'down'
-            market_bits.append(f"SPX {direction} {abs(spx_change_pct):.2f}%")
+            market_bits.append(f"SPX {spx_change_pct:+.2f}%")
         if vix_level and vix_regime:
             market_bits.append(f"VIX {vix_level:.1f} ({vix_regime})")
         if market_bits:
@@ -1716,6 +1818,9 @@ class TradingBot:
                 # B&B: Process bar for end-of-day signals (15:00-16:00)
                 if self.bnb_enabled and self.bnb_strategy:
                     self.bnb_strategy.on_bar_complete(bar, current_price)
+
+                # Hourly market update notification
+                self._send_hourly_update_if_due(current_time)
 
             # Check parallel strategy tick-level signals (run every cycle, own timing)
             # These execute BEFORE the Daily Income limit gate so they're never

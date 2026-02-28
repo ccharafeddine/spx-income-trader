@@ -782,3 +782,183 @@ class TestAutoRestartCount:
         assert 'Restart #' in field_map
         assert '3/3' in field_map['Restart #']
         assert embed['color'] == 16776960  # yellow
+
+
+# ------------------------------------------------------------------
+# FIX 1-6 notification improvement tests
+# ------------------------------------------------------------------
+
+class TestBotStartedETTime:
+    """FIX 1: send_bot_started shows ET time, not UTC."""
+
+    @patch('requests.post')
+    def test_bot_started_shows_et_not_utc(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+        nm.send_bot_started({'mode': 'dry-run', 'equity': 50000, 'open_positions': 0})
+        embed = _get_discord_embed(mock_post)
+        assert 'ET' in embed['description']
+        assert 'UTC' not in embed['description']
+
+
+class TestMarketOpenSPXField:
+    """FIX 2: send_market_open includes SPX field when spx_price provided."""
+
+    @patch('requests.post')
+    def test_market_open_includes_spx_price(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+        nm.send_market_open({
+            'vix_level': 18.5,
+            'vix_regime': 'low',
+            'open_positions': 0,
+            'mode': 'dry-run',
+            'spx_price': 5842.15,
+        })
+        embed = _get_discord_embed(mock_post)
+        field_map = {f['name']: f['value'] for f in embed['fields']}
+        assert 'SPX' in field_map
+        assert '$5,842.15' in field_map['SPX']
+
+    @patch('requests.post')
+    def test_market_open_omits_spx_when_none(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+        nm.send_market_open({
+            'vix_level': 18.5,
+            'vix_regime': 'low',
+            'open_positions': 0,
+            'mode': 'dry-run',
+            'spx_price': None,
+        })
+        embed = _get_discord_embed(mock_post)
+        field_names = {f['name'] for f in embed['fields']}
+        assert 'SPX' not in field_names
+
+
+class TestEODSummarySPXFields:
+    """FIX 3 + 5: send_eod_summary includes SPX Close/Session Range and ET close time."""
+
+    @patch('requests.post')
+    def test_eod_summary_includes_spx_close(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+        nm.send_eod_summary({
+            'trades_count': 1, 'wins': 1, 'losses': 0,
+            'daily_pnl': 100.0, 'weekly_pnl': 100.0, 'monthly_pnl': 100.0,
+            'spx_close': 5842.15, 'spx_change_pct': 0.42,
+            'spx_high': 5860.0, 'spx_low': 5820.0,
+            'close_time_str': '4:05 PM',
+        })
+        embed = _get_discord_embed(mock_post)
+        field_map = {f['name']: f['value'] for f in embed['fields']}
+        assert 'SPX Close' in field_map
+        assert '$5,842.15' in field_map['SPX Close']
+        assert '+0.42%' in field_map['SPX Close']
+        assert 'Session Range' in field_map
+        assert '$5,820.00' in field_map['Session Range']
+        assert '$5,860.00' in field_map['Session Range']
+
+    @patch('requests.post')
+    def test_eod_summary_omits_spx_when_none(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+        nm.send_eod_summary({
+            'trades_count': 1, 'wins': 1, 'losses': 0,
+            'daily_pnl': 100.0, 'weekly_pnl': 100.0, 'monthly_pnl': 100.0,
+            'spx_close': None, 'spx_high': None, 'spx_low': None,
+        })
+        embed = _get_discord_embed(mock_post)
+        field_names = {f['name'] for f in embed['fields']}
+        assert 'SPX Close' not in field_names
+        assert 'Session Range' not in field_names
+
+    @patch('requests.post')
+    def test_eod_summary_shows_et_close_time(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+        nm.send_eod_summary({
+            'trades_count': 0, 'wins': 0, 'losses': 0,
+            'daily_pnl': 0.0, 'weekly_pnl': 0.0, 'monthly_pnl': 0.0,
+            'close_time_str': '4:05 PM',
+        })
+        embed = _get_discord_embed(mock_post)
+        assert '4:05 PM' in embed['description']
+        assert 'ET' in embed['description']
+
+
+class TestHourlyUpdate:
+    """FIX 6: send_hourly_update includes expected fields."""
+
+    @patch('requests.post')
+    def test_hourly_update_title_contains_market_update(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+        nm.send_hourly_update({
+            'current_time_str': '11:00 AM',
+            'spx_price': 5842.15, 'spx_change_pct': 0.42,
+            'vix_level': 18.5, 'vix_regime': 'low',
+            'spx_high': 5860.0, 'spx_low': 5820.0,
+            'bars_built': 3, 'pulse_count': 1,
+            'open_positions': [], 'next_bar_time': '11:30 AM ET',
+        })
+        embed = _get_discord_embed(mock_post)
+        assert 'Market Update' in embed['title']
+        assert '11:00 AM' in embed['title']
+
+    @patch('requests.post')
+    def test_hourly_update_includes_spx_and_vix(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+        nm.send_hourly_update({
+            'current_time_str': '11:00 AM',
+            'spx_price': 5842.15, 'spx_change_pct': 0.42,
+            'vix_level': 18.5, 'vix_regime': 'low',
+            'spx_high': 5860.0, 'spx_low': 5820.0,
+            'bars_built': 3, 'pulse_count': 1,
+            'open_positions': [], 'next_bar_time': '11:30 AM ET',
+        })
+        embed = _get_discord_embed(mock_post)
+        field_map = {f['name']: f['value'] for f in embed['fields']}
+        assert 'SPX' in field_map
+        assert '$5,842.15' in field_map['SPX']
+        assert 'VIX' in field_map
+        assert '18.5' in field_map['VIX']
+
+    @patch('requests.post')
+    def test_hourly_update_shows_open_positions(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+        nm.send_hourly_update({
+            'current_time_str': '11:00 AM',
+            'spx_price': 5842.15, 'spx_change_pct': 0.42,
+            'vix_level': 18.5, 'vix_regime': 'low',
+            'spx_high': 5860.0, 'spx_low': 5820.0,
+            'bars_built': 3, 'pulse_count': 1,
+            'open_positions': [{
+                'direction': 'bullish', 'short_strike': 5800,
+                'long_strike': 5795, 'unrealized_pnl': 45.0,
+                'time_held': '2h 15m',
+            }],
+            'next_bar_time': '11:30 AM ET',
+        })
+        embed = _get_discord_embed(mock_post)
+        field_names = {f['name'] for f in embed['fields']}
+        assert 'Open Positions' in field_names
+
+    @patch('requests.post')
+    def test_hourly_update_omits_positions_when_empty(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord=DISCORD_CFG)
+        nm.send_hourly_update({
+            'current_time_str': '11:00 AM',
+            'spx_price': 5842.15, 'spx_change_pct': 0.42,
+            'vix_level': 18.5, 'vix_regime': 'low',
+            'spx_high': 5860.0, 'spx_low': 5820.0,
+            'bars_built': 3, 'pulse_count': 0,
+            'open_positions': [],
+            'next_bar_time': '11:30 AM ET',
+        })
+        embed = _get_discord_embed(mock_post)
+        field_names = {f['name'] for f in embed['fields']}
+        assert 'Open Positions' not in field_names
