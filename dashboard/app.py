@@ -3533,27 +3533,57 @@ def api_risk_status():
         'period_label': '',
     }
     try:
+        from datetime import date as _date
+        today = _date.today()
+        iso_year, iso_week, _ = today.isocalendar()
+
         dd_path = BASE_DIR / 'database' / 'drawdown_state.json'
         if dd_path.exists():
             import json
-            from datetime import date as _date, datetime as _dt
             with open(dd_path, 'r') as f:
                 dd = json.load(f)
-
-            today = _date.today()
-            iso_year, iso_week, _ = today.isocalendar()
 
             # Weekly (only if period matches)
             if dd.get('current_iso_year') == iso_year and dd.get('current_iso_week') == iso_week:
                 weekly['realized_pnl'] = round(dd.get('weekly_realized_pnl', 0.0), 2)
                 weekly['breaker_triggered'] = dd.get('weekly_breaker_triggered', False)
-            weekly['period_label'] = f'W{iso_week}'
 
             # Monthly (only if period matches)
             if dd.get('current_month_year') == today.year and dd.get('current_month') == today.month:
                 monthly['realized_pnl'] = round(dd.get('monthly_realized_pnl', 0.0), 2)
                 monthly['breaker_triggered'] = dd.get('monthly_breaker_triggered', False)
-            monthly['period_label'] = today.strftime('%b %Y')
+
+        # DB fallback: if state file missing or pnl is zero, query DB directly
+        _db_path = Path(DATABASE_PATH)
+        if _db_path.exists():
+            import sqlite3 as _sql
+            _conn = _sql.connect(str(_db_path), timeout=10)
+
+            if weekly['realized_pnl'] == 0.0:
+                _monday = _date.fromisocalendar(iso_year, iso_week, 1)
+                _wsum = _conn.execute(
+                    "SELECT COALESCE(SUM(pnl), 0) FROM trades "
+                    "WHERE LOWER(status) IN ('closed', 'expired') AND pnl < 0 "
+                    "AND exit_time >= ?", (str(_monday),)
+                ).fetchone()[0]
+                if _wsum != 0.0:
+                    weekly['realized_pnl'] = round(_wsum, 2)
+
+            if monthly['realized_pnl'] == 0.0:
+                _first = _date(today.year, today.month, 1)
+                _msum = _conn.execute(
+                    "SELECT COALESCE(SUM(pnl), 0) FROM trades "
+                    "WHERE LOWER(status) IN ('closed', 'expired') AND pnl < 0 "
+                    "AND exit_time >= ?", (str(_first),)
+                ).fetchone()[0]
+                if _msum != 0.0:
+                    monthly['realized_pnl'] = round(_msum, 2)
+
+            _conn.close()
+
+        # Always set period labels
+        weekly['period_label'] = f'W{iso_week}'
+        monthly['period_label'] = today.strftime('%b %Y')
     except Exception:
         pass
 
@@ -3564,8 +3594,33 @@ def api_risk_status():
         if db_path.exists():
             import sqlite3
             conn = sqlite3.connect(str(db_path), timeout=10)
+
+            # Diagnostic logging for streak debugging
+            _total = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+            _closed_nz = conn.execute(
+                "SELECT COUNT(*) FROM trades "
+                "WHERE LOWER(status) = 'closed' AND pnl != 0 AND pnl IS NOT NULL"
+            ).fetchone()[0]
+            _statuses = [r[0] for r in conn.execute(
+                "SELECT DISTINCT status FROM trades"
+            ).fetchall()]
+            _diag_rows = conn.execute(
+                "SELECT id, status, pnl, exit_time, strategy_type FROM trades "
+                "ORDER BY exit_time DESC"
+            ).fetchall()
+            logger.info(
+                f"[STREAK DIAG] db_path={db_path}, total_rows={_total}, "
+                f"closed_nonzero={_closed_nz}, statuses={_statuses}"
+            )
+            for _r in _diag_rows:
+                logger.info(
+                    f"[STREAK DIAG]   id={_r[0][:8]}.. status={_r[1]} "
+                    f"pnl={_r[2]} exit={_r[3]} strat={_r[4]}"
+                )
+
             rows = conn.execute(
-                "SELECT pnl FROM trades WHERE LOWER(status) = 'closed' "
+                "SELECT pnl FROM trades "
+                "WHERE LOWER(status) IN ('closed', 'expired') "
                 "AND pnl IS NOT NULL AND pnl != 0 "
                 "ORDER BY exit_time DESC"
             ).fetchall()

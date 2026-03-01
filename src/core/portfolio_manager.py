@@ -139,7 +139,8 @@ class PortfolioManager:
         if persistence_path:
             self.persistence_path = persistence_path
         else:
-            self.persistence_path = Path(__file__).parent.parent.parent / 'database' / 'portfolio_state.json'
+            from src.utils.app_paths import DATA_DIR
+            self.persistence_path = DATA_DIR / 'database' / 'portfolio_state.json'
 
         # Load persisted state (for positions that survive restarts)
         self._load_state()

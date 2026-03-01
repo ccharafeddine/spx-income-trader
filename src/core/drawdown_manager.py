@@ -97,14 +97,13 @@ class DrawdownManager:
         if persistence_path:
             self.persistence_path = persistence_path
         else:
-            self.persistence_path = (
-                Path(__file__).parent.parent.parent / 'database' / 'drawdown_state.json'
-            )
+            from src.utils.app_paths import DATA_DIR
+            self.persistence_path = DATA_DIR / 'database' / 'drawdown_state.json'
 
         self._load_state()
 
         # Startup backfill from database when state is stale or missing
-        if self._needs_backfill and self.db_path:
+        if self._needs_backfill() and self.db_path:
             self.check_and_apply_resets()
             self._backfill_from_db()
 
@@ -417,8 +416,6 @@ class DrawdownManager:
 
     def _load_state(self):
         """Load persisted drawdown state from disk."""
-        self._needs_backfill = True  # Assume backfill needed until proven otherwise
-
         try:
             if not self.persistence_path.exists():
                 return
@@ -428,19 +425,11 @@ class DrawdownManager:
             today_str = str(today)
             iso_year, iso_week, _ = today.isocalendar()
 
-            # Determine if backfill is needed: all periods must match today
             stored_date = data.get('current_date')
             stored_iso_week = data.get('current_iso_week')
             stored_iso_year = data.get('current_iso_year')
             stored_month = data.get('current_month')
             stored_month_year = data.get('current_month_year')
-
-            if (stored_date == today_str
-                    and stored_iso_year == iso_year
-                    and stored_iso_week == iso_week
-                    and stored_month_year == today.year
-                    and stored_month == today.month):
-                self._needs_backfill = False
 
             # Daily (only if date matches)
             if stored_date == today_str:
@@ -513,6 +502,29 @@ class DrawdownManager:
             self.persistence_path.write_text(json.dumps(data, indent=2))
         except Exception as e:
             logger.error(f"Failed to save drawdown state: {e}")
+
+    def _needs_backfill(self) -> bool:
+        """Decide whether startup backfill from the database is needed.
+
+        Triggers backfill when:
+        1. Any period tracker is stale (date/week/month doesn't match today).
+        2. Weekly or monthly realized_pnl is 0.0 -- catches the case where the
+           state file was freshly created (or reset) mid-period after losses
+           had already occurred.  Safe because _backfill_from_db() queries the
+           DB for actual losses; if there are none, values stay at 0.0.
+        """
+        today = date.today()
+        if today.month != self.current_month or today.year != self.current_month_year:
+            return True
+        iso_year, iso_week, _ = today.isocalendar()
+        if iso_week != self.current_iso_week or iso_year != self.current_iso_year:
+            return True
+        if str(today) != self.current_date:
+            return True
+        # Also backfill if stored pnl is zero but DB may have losses this period
+        if self.monthly_realized_pnl == 0.0 or self.weekly_realized_pnl == 0.0:
+            return True
+        return False
 
     # =========================================================================
     # STARTUP BACKFILL

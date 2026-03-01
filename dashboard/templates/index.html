@@ -6884,7 +6884,6 @@ async function updateRiskStatus() {
       html += '<span class="risk-label">Weekly</span>';
       html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + wLed + '" style="width:' + wPct.toFixed(0) + '%"></div></div>';
       html += '<span class="risk-value">' + fmt$(wc.realized_pnl) + ' / ' + fmt$(wc.max_loss_dollars) + '</span>';
-      html += '<span class="risk-period">' + wc.period_label + '</span>';
       html += '</div>';
     }
 
@@ -6898,7 +6897,6 @@ async function updateRiskStatus() {
       html += '<span class="risk-label">Monthly</span>';
       html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + mLed + '" style="width:' + mPct.toFixed(0) + '%"></div></div>';
       html += '<span class="risk-value">' + fmt$(mc.realized_pnl) + ' / ' + fmt$(mc.max_loss_dollars) + '</span>';
-      html += '<span class="risk-period">' + mc.period_label + '</span>';
       html += '</div>';
     }
 
