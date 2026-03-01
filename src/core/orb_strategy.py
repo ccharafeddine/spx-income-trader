@@ -69,7 +69,8 @@ class ORBStrategy:
         if persistence_path:
             self.persistence_path = persistence_path
         else:
-            self.persistence_path = Path(__file__).parent.parent.parent / 'database' / 'orb_state.json'
+            from src.utils.app_paths import DATA_DIR
+            self.persistence_path = DATA_DIR / 'database' / 'orb_state.json'
 
         self._load_state()
 

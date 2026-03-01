@@ -546,7 +546,7 @@ class DrawdownManager:
             # Daily losses (since midnight today)
             daily_sum = conn.execute(
                 "SELECT COALESCE(SUM(pnl), 0) FROM trades "
-                "WHERE LOWER(status) = 'closed' AND pnl < 0 "
+                "WHERE LOWER(status) IN ('closed', 'expired') AND pnl < 0 "
                 "AND exit_time >= ?",
                 (str(today),),
             ).fetchone()[0]
@@ -557,7 +557,7 @@ class DrawdownManager:
             monday = date.fromisocalendar(iso_year, iso_week, 1)
             weekly_sum = conn.execute(
                 "SELECT COALESCE(SUM(pnl), 0) FROM trades "
-                "WHERE LOWER(status) = 'closed' AND pnl < 0 "
+                "WHERE LOWER(status) IN ('closed', 'expired') AND pnl < 0 "
                 "AND exit_time >= ?",
                 (str(monday),),
             ).fetchone()[0]
@@ -567,7 +567,7 @@ class DrawdownManager:
             first_of_month = date(today.year, today.month, 1)
             monthly_sum = conn.execute(
                 "SELECT COALESCE(SUM(pnl), 0) FROM trades "
-                "WHERE LOWER(status) = 'closed' AND pnl < 0 "
+                "WHERE LOWER(status) IN ('closed', 'expired') AND pnl < 0 "
                 "AND exit_time >= ?",
                 (str(first_of_month),),
             ).fetchone()[0]

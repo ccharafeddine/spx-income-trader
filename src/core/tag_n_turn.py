@@ -100,8 +100,8 @@ class TagNTurnStrategy:
         if persistence_path:
             self.persistence_path = persistence_path
         else:
-            # Default path relative to project root
-            self.persistence_path = Path(__file__).parent.parent.parent / 'database' / 'tag_n_turn_positions.json'
+            from src.utils.app_paths import DATA_DIR
+            self.persistence_path = DATA_DIR / 'database' / 'tag_n_turn_positions.json'
 
         # Load persisted state if exists
         self._load_state()
