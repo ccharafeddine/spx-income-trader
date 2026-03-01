@@ -18,7 +18,7 @@ Covers:
 import json
 import sqlite3
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -219,11 +219,9 @@ class TestPeriodRollover:
         dm.record_realized_pnl(-1500.0)
         assert dm.weekly_realized_pnl == -1500.0
 
-        # Simulate next week
-        today = date.today()
-        iso_year, iso_week, _ = today.isocalendar()
-        next_week = iso_week + 1
-        next_year = iso_year
+        # Simulate next week (derive from manager's ET-based period)
+        next_week = dm.current_iso_week + 1
+        next_year = dm.current_iso_year
         if next_week > 52:
             next_week = 1
             next_year += 1
@@ -241,11 +239,11 @@ class TestPeriodRollover:
         dm.monthly_breaker_triggered = False  # Not triggered yet
         assert dm.monthly_realized_pnl == -3000.0
 
-        today = date.today()
-        if today.month == 12:
-            next_month_date = date(today.year + 1, 1, 5)
+        # Derive next month from manager's ET-based period
+        if dm.current_month == 12:
+            next_month_date = date(dm.current_month_year + 1, 1, 5)
         else:
-            next_month_date = date(today.year, today.month + 1, 5)
+            next_month_date = date(dm.current_month_year, dm.current_month + 1, 5)
 
         dm.check_period_rollovers(now=next_month_date)
 
@@ -270,10 +268,9 @@ class TestPeriodRollover:
         """Double-calling after a week change doesn't double-reset."""
         dm.record_realized_pnl(-1200.0)
 
-        today = date.today()
-        iso_year, iso_week, _ = today.isocalendar()
-        next_week = iso_week + 1
-        next_year = iso_year
+        # Derive from manager's ET-based period
+        next_week = dm.current_iso_week + 1
+        next_year = dm.current_iso_year
         if next_week > 52:
             next_week = 1
             next_year += 1
@@ -635,8 +632,9 @@ class TestMonthlyPersistence:
             'circuit_breaker_triggered': False,
         }))
 
-        # drawdown_state.json with monthly loss (same period as today)
-        today = date.today()
+        # drawdown_state.json with monthly loss (same period as today in ET)
+        import pytz
+        today = datetime.now(pytz.timezone('America/New_York')).date()
         iso_year, iso_week, _ = today.isocalendar()
         (db_dir / 'drawdown_state.json').write_text(json.dumps({
             'weekly_realized_pnl': -200.0,
@@ -696,7 +694,8 @@ class TestBackfillFromDB:
 
     def test_daily_backfill_from_db(self, tmp_path):
         """Fresh state + $675 loss trade today -> daily_realized_pnl == -675."""
-        today = date.today()
+        import pytz
+        today = datetime.now(pytz.timezone('America/New_York')).date()
         exit_time = f"{today} 11:00:00"
         db_file = _create_test_db(tmp_path, [('bf1', -675.0, exit_time)])
 
@@ -714,7 +713,8 @@ class TestBackfillFromDB:
 
     def test_weekly_backfill_from_db(self, tmp_path):
         """Fresh state + $675 loss trade this week -> weekly_realized_pnl == -675."""
-        today = date.today()
+        import pytz
+        today = datetime.now(pytz.timezone('America/New_York')).date()
         iso_year, iso_week, _ = today.isocalendar()
         monday = date.fromisocalendar(iso_year, iso_week, 1)
         exit_time = f"{monday} 11:00:00"
@@ -734,7 +734,8 @@ class TestBackfillFromDB:
 
     def test_monthly_backfill_from_db(self, tmp_path):
         """Fresh state + $675 loss trade this month -> monthly_realized_pnl == -675."""
-        today = date.today()
+        import pytz
+        today = datetime.now(pytz.timezone('America/New_York')).date()
         first_of_month = date(today.year, today.month, 1)
         exit_time = f"{first_of_month} 11:00:00"
         db_file = _create_test_db(tmp_path, [('bf3', -675.0, exit_time)])
@@ -753,7 +754,8 @@ class TestBackfillFromDB:
 
     def test_backfill_skipped_when_state_current(self, tmp_path):
         """Valid state with -675 -> values unchanged after init (no backfill)."""
-        today = date.today()
+        import pytz
+        today = datetime.now(pytz.timezone('America/New_York')).date()
         iso_year, iso_week, _ = today.isocalendar()
 
         state = {
@@ -931,8 +933,10 @@ class TestCanTradeBreakers:
         allowed, _ = dm.can_trade()
         assert allowed is False
 
-        # Reset to next day
-        tomorrow = date.today() + timedelta(days=1)
+        # Reset to next day (derive from manager's ET-based date)
+        import pytz
+        today_et = datetime.now(pytz.timezone('America/New_York')).date()
+        tomorrow = today_et + timedelta(days=1)
         dm.check_and_apply_resets(now=tomorrow)
 
         assert dm.daily_breaker_triggered is False

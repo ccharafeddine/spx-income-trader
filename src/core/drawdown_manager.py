@@ -426,7 +426,8 @@ class DrawdownManager:
                 return
 
             data = json.loads(self.persistence_path.read_text())
-            today = date.today()
+            _et = pytz.timezone('America/New_York')
+            today = datetime.now(_et).date()
             today_str = str(today)
             iso_year, iso_week, _ = today.isocalendar()
 
@@ -547,7 +548,8 @@ class DrawdownManager:
                 return
 
             conn = sqlite3.connect(str(db_file), timeout=10)
-            today = date.today()
+            _et = pytz.timezone('America/New_York')
+            today = datetime.now(_et).date()
 
             # Daily losses (since midnight today)
             daily_sum = conn.execute(

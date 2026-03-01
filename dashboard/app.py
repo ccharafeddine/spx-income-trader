@@ -3533,8 +3533,9 @@ def api_risk_status():
         'period_label': '',
     }
     try:
-        from datetime import date as _date
-        today = _date.today()
+        from datetime import date as _date, datetime as _datetime
+        import pytz as _pytz
+        today = _datetime.now(_pytz.timezone('America/New_York')).date()
         iso_year, iso_week, _ = today.isocalendar()
 
         dd_path = BASE_DIR / 'database' / 'drawdown_state.json'

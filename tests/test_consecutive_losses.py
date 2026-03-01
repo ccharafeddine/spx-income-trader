@@ -399,11 +399,9 @@ class TestPeriodRolloverInteraction:
         mgr.record_realized_pnl(-100.0)
         assert mgr.consecutive_losses == 3
 
-        # Simulate weekly rollover
-        today = date.today()
-        iso_year, iso_week, _ = today.isocalendar()
-        next_week = iso_week + 1 if iso_week < 52 else 1
-        next_year = iso_year if iso_week < 52 else iso_year + 1
+        # Simulate weekly rollover (derive from manager's ET-based period, not date.today())
+        next_week = mgr.current_iso_week + 1 if mgr.current_iso_week < 52 else 1
+        next_year = mgr.current_iso_year if mgr.current_iso_week < 52 else mgr.current_iso_year + 1
         next_week_date = date.fromisocalendar(next_year, next_week, 1)
         mgr.check_period_rollovers(now=next_week_date)
 
@@ -421,11 +419,11 @@ class TestPeriodRolloverInteraction:
         for _ in range(4):
             mgr.record_realized_pnl(-100.0)
 
-        today = date.today()
-        if today.month == 12:
-            next_month_date = date(today.year + 1, 1, 5)
+        # Derive next month from manager's ET-based period
+        if mgr.current_month == 12:
+            next_month_date = date(mgr.current_month_year + 1, 1, 5)
         else:
-            next_month_date = date(today.year, today.month + 1, 5)
+            next_month_date = date(mgr.current_month_year, mgr.current_month + 1, 5)
 
         mgr.check_period_rollovers(now=next_month_date)
 
@@ -444,8 +442,7 @@ class TestPeriodRolloverInteraction:
         pause_time = mgr.consec_pause_until
         assert pause_time is not None
 
-        today = date.today()
-        future = date(today.year + 1, 1, 10)
+        future = date(mgr.current_month_year + 1, 1, 10)
         mgr.check_period_rollovers(now=future)
 
         assert mgr.consec_pause_until == pause_time

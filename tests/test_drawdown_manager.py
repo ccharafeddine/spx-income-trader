@@ -20,7 +20,7 @@ import json
 import os
 import sys
 import tempfile
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -139,13 +139,15 @@ class TestInitialization:
         assert mgr.monthly_max_loss == 4400.0  # 5.5% of 80k
 
     def test_period_tracking_initialized_to_today(self, manager):
-        """Period tracking starts at today's week/month."""
-        today = date.today()
-        iso_year, iso_week, _ = today.isocalendar()
+        """Period tracking starts at today's date in ET timezone."""
+        import pytz
+        from datetime import datetime as dt
+        today_et = dt.now(pytz.timezone('America/New_York')).date()
+        iso_year, iso_week, _ = today_et.isocalendar()
         assert manager.current_iso_year == iso_year
         assert manager.current_iso_week == iso_week
-        assert manager.current_month == today.month
-        assert manager.current_month_year == today.year
+        assert manager.current_month == today_et.month
+        assert manager.current_month_year == today_et.year
 
 
 # ============================================================================
@@ -321,11 +323,9 @@ class TestPeriodRollovers:
         assert manager.weekly_breaker_triggered is True
         assert manager.monthly_breaker_triggered is True
 
-        # Simulate next week (same month to isolate weekly reset)
-        today = date.today()
-        iso_year, iso_week, _ = today.isocalendar()
-        next_week = iso_week + 1
-        next_year = iso_year
+        # Simulate next week (derive from manager's ET-based period)
+        next_week = manager.current_iso_week + 1
+        next_year = manager.current_iso_year
         if next_week > 52:
             next_week = 1
             next_year += 1
@@ -344,12 +344,11 @@ class TestPeriodRollovers:
         manager.record_realized_pnl(-3500.0)
         manager.monthly_realized_pnl = -3500.0  # Set directly for clarity
 
-        today = date.today()
-        # Simulate first day of next month
-        if today.month == 12:
-            next_month_date = date(today.year + 1, 1, 5)
+        # Simulate first day of next month (derive from manager's ET-based period)
+        if manager.current_month == 12:
+            next_month_date = date(manager.current_month_year + 1, 1, 5)
         else:
-            next_month_date = date(today.year, today.month + 1, 5)
+            next_month_date = date(manager.current_month_year, manager.current_month + 1, 5)
 
         manager.check_and_apply_resets(now=next_month_date)
 
@@ -359,8 +358,10 @@ class TestPeriodRollovers:
     def test_same_period_no_reset(self, manager):
         """Same week/month does not reset anything."""
         manager.record_realized_pnl(-1000.0)
-        # Pass today's date directly to avoid timezone mismatch
-        manager.check_and_apply_resets(now=date.today())
+        # Use manager's own current_date to ensure same period
+        import pytz
+        today_et = datetime.now(pytz.timezone('America/New_York')).date()
+        manager.check_and_apply_resets(now=today_et)
         assert manager.weekly_realized_pnl == -1000.0
         assert manager.monthly_realized_pnl == -1000.0
 
@@ -370,12 +371,11 @@ class TestPeriodRollovers:
         manager.weekly_breaker_triggered = True
         manager.monthly_breaker_triggered = True
 
-        today = date.today()
-        # Force both week and month to be different
-        if today.month == 12:
-            future_date = date(today.year + 1, 2, 10)
+        # Force both week and month to be different (derive from manager's period)
+        if manager.current_month == 12:
+            future_date = date(manager.current_month_year + 1, 2, 10)
         else:
-            future_date = date(today.year + 1, 1, 10)
+            future_date = date(manager.current_month_year + 1, 1, 10)
 
         manager.check_and_apply_resets(now=future_date)
 
@@ -485,7 +485,8 @@ class TestStalePeriodDetection:
 
     def test_stale_weekly_data_discarded(self, temp_state_file, default_config):
         """State from a different ISO week is discarded on load."""
-        today = date.today()
+        import pytz
+        today = datetime.now(pytz.timezone('America/New_York')).date()
         iso_year, iso_week, _ = today.isocalendar()
 
         # Write state with a different week
@@ -516,7 +517,8 @@ class TestStalePeriodDetection:
 
     def test_stale_monthly_data_discarded(self, temp_state_file, default_config):
         """State from a different calendar month is discarded on load."""
-        today = date.today()
+        import pytz
+        today = datetime.now(pytz.timezone('America/New_York')).date()
         iso_year, iso_week, _ = today.isocalendar()
 
         stale_month = today.month - 1 if today.month > 1 else 12
@@ -599,7 +601,8 @@ class TestCorruptedFileHandling:
 
     def test_missing_keys(self, temp_state_file, default_config):
         """Partial data uses defaults for missing keys."""
-        today = date.today()
+        import pytz
+        today = datetime.now(pytz.timezone('America/New_York')).date()
         iso_year, iso_week, _ = today.isocalendar()
         partial_data = {
             'weekly_realized_pnl': -750.0,
@@ -827,13 +830,14 @@ class TestGetStatus:
 
     def test_status_period_info(self, manager):
         """Status includes current period identifiers."""
-        today = date.today()
-        iso_year, iso_week, _ = today.isocalendar()
+        import pytz
+        today_et = datetime.now(pytz.timezone('America/New_York')).date()
+        iso_year, iso_week, _ = today_et.isocalendar()
         status = manager.get_status()
         assert status['weekly']['iso_week'] == iso_week
         assert status['weekly']['iso_year'] == iso_year
-        assert status['monthly']['month'] == today.month
-        assert status['monthly']['year'] == today.year
+        assert status['monthly']['month'] == today_et.month
+        assert status['monthly']['year'] == today_et.year
 
 
 # ============================================================================
