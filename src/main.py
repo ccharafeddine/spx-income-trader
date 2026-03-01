@@ -565,15 +565,32 @@ class TradingBot:
 
         # Send startup notification
         if self.notifier:
+            # Compute equity from DB: starting capital + realized P&L
             try:
-                _eq = self.broker.get_account_balance().get(
-                    'net_account_value', None)
+                _starting = STRATEGY_PARAMS.get('portfolio', {}).get('account_size', 50000.0)
+                with self.db._get_connection() as _conn:
+                    _row = _conn.execute(
+                        "SELECT COALESCE(SUM(pnl), 0) FROM trades "
+                        "WHERE LOWER(status) IN ('closed', 'expired') "
+                        "AND credit_received >= 1.0"
+                    ).fetchone()
+                _eq = round(_starting + (_row[0] if _row else 0), 2)
             except Exception:
                 _eq = None
+            # Count open positions from DB (in-memory list is empty at startup)
+            try:
+                with self.db._get_connection() as _conn:
+                    _row = _conn.execute(
+                        "SELECT COUNT(*) FROM trades "
+                        "WHERE LOWER(status) IN ('open', 'active')"
+                    ).fetchone()
+                _open_count = _row[0] if _row else 0
+            except Exception:
+                _open_count = 0
             self.notifier.send_bot_started({
                 'mode': TRADING_MODE,
                 'equity': _eq,
-                'open_positions': len(self.position_manager.get_open_trades()),
+                'open_positions': _open_count,
             })
         
         # Log system event
