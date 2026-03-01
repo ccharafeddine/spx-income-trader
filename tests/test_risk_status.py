@@ -228,10 +228,8 @@ class TestPeriodRollover:
             next_week = 1
             next_year += 1
 
-        with patch('src.core.drawdown_manager.date') as mock_date:
-            mock_date.today.return_value = date.fromisocalendar(next_year, next_week, 1)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            dm.check_period_rollovers()
+        next_week_date = date.fromisocalendar(next_year, next_week, 1)
+        dm.check_period_rollovers(now=next_week_date)
 
         assert dm.weekly_realized_pnl == 0.0
         assert dm.weekly_breaker_triggered is False
@@ -249,10 +247,7 @@ class TestPeriodRollover:
         else:
             next_month_date = date(today.year, today.month + 1, 5)
 
-        with patch('src.core.drawdown_manager.date') as mock_date:
-            mock_date.today.return_value = next_month_date
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            dm.check_period_rollovers()
+        dm.check_period_rollovers(now=next_month_date)
 
         assert dm.monthly_realized_pnl == 0.0
         assert dm.monthly_breaker_triggered is False
@@ -283,14 +278,12 @@ class TestPeriodRollover:
             next_week = 1
             next_year += 1
 
-        with patch('src.core.drawdown_manager.date') as mock_date:
-            mock_date.today.return_value = date.fromisocalendar(next_year, next_week, 1)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            dm.check_period_rollovers()
-            # Record some P&L in the new week
-            dm.record_realized_pnl(-500.0)
-            # Call again -- should NOT reset again
-            dm.check_period_rollovers()
+        next_week_date = date.fromisocalendar(next_year, next_week, 1)
+        dm.check_period_rollovers(now=next_week_date)
+        # Record some P&L in the new week
+        dm.record_realized_pnl(-500.0)
+        # Call again -- should NOT reset again
+        dm.check_period_rollovers(now=next_week_date)
 
         assert dm.weekly_realized_pnl == -500.0  # Preserved, not re-zeroed
 
@@ -556,10 +549,7 @@ class TestMonthlyPersistence:
         dm.record_realized_pnl(-675.0)
 
         # Simulate rollover to week 9, still February (Feb 23, 2026 = Monday)
-        with patch('src.core.drawdown_manager.date') as mock_date:
-            mock_date.today.return_value = date(2026, 2, 23)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            dm.check_period_rollovers()
+        dm.check_period_rollovers(now=date(2026, 2, 23))
 
         assert dm.weekly_realized_pnl == 0.0  # reset
         assert dm.monthly_realized_pnl == -675.0  # NOT reset
@@ -584,10 +574,7 @@ class TestMonthlyPersistence:
         dm.record_realized_pnl(-675.0)
 
         # Simulate rollover to March 2, 2026 (Monday, ISO week 10, month 3)
-        with patch('src.core.drawdown_manager.date') as mock_date:
-            mock_date.today.return_value = date(2026, 3, 2)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            dm.check_period_rollovers()
+        dm.check_period_rollovers(now=date(2026, 3, 2))
 
         assert dm.monthly_realized_pnl == 0.0  # reset
         assert dm.weekly_realized_pnl == 0.0  # also reset (new week)

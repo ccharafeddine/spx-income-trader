@@ -321,7 +321,7 @@ class TestPeriodRollovers:
         assert manager.weekly_breaker_triggered is True
         assert manager.monthly_breaker_triggered is True
 
-        # Simulate next week
+        # Simulate next week (same month to isolate weekly reset)
         today = date.today()
         iso_year, iso_week, _ = today.isocalendar()
         next_week = iso_week + 1
@@ -330,10 +330,8 @@ class TestPeriodRollovers:
             next_week = 1
             next_year += 1
 
-        with patch('src.core.drawdown_manager.date') as mock_date:
-            mock_date.today.return_value = date.fromisocalendar(next_year, next_week, 1)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            manager.check_period_rollovers()
+        next_week_date = date.fromisocalendar(next_year, next_week, 1)
+        manager.check_and_apply_resets(now=next_week_date)
 
         assert manager.weekly_realized_pnl == 0.0
         assert manager.weekly_breaker_triggered is False
@@ -353,11 +351,7 @@ class TestPeriodRollovers:
         else:
             next_month_date = date(today.year, today.month + 1, 5)
 
-        iso_year, iso_week, _ = next_month_date.isocalendar()
-        with patch('src.core.drawdown_manager.date') as mock_date:
-            mock_date.today.return_value = next_month_date
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            manager.check_period_rollovers()
+        manager.check_and_apply_resets(now=next_month_date)
 
         assert manager.monthly_realized_pnl == 0.0
         assert manager.monthly_breaker_triggered is False
@@ -365,7 +359,8 @@ class TestPeriodRollovers:
     def test_same_period_no_reset(self, manager):
         """Same week/month does not reset anything."""
         manager.record_realized_pnl(-1000.0)
-        manager.check_period_rollovers()
+        # Pass today's date directly to avoid timezone mismatch
+        manager.check_and_apply_resets(now=date.today())
         assert manager.weekly_realized_pnl == -1000.0
         assert manager.monthly_realized_pnl == -1000.0
 
@@ -382,11 +377,7 @@ class TestPeriodRollovers:
         else:
             future_date = date(today.year + 1, 1, 10)
 
-        iso_year, iso_week, _ = future_date.isocalendar()
-        with patch('src.core.drawdown_manager.date') as mock_date:
-            mock_date.today.return_value = future_date
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            manager.check_period_rollovers()
+        manager.check_and_apply_resets(now=future_date)
 
         assert manager.weekly_realized_pnl == 0.0
         assert manager.monthly_realized_pnl == 0.0

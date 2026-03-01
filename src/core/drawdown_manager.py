@@ -25,6 +25,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+import pytz
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,8 +88,9 @@ class DrawdownManager:
         self.consecutive_losses: int = 0
         self.consec_pause_until: Optional[datetime] = None
 
-        # Period tracking
-        today = date.today()
+        # Period tracking -- use ET timezone for consistency with check_and_apply_resets()
+        _et = pytz.timezone('America/New_York')
+        today = datetime.now(_et).date()
         self.current_date: str = str(today)
         self.current_iso_year, self.current_iso_week, _ = today.isocalendar()
         self.current_month = today.month
@@ -268,7 +271,6 @@ class DrawdownManager:
                  If None, uses datetime.now(ET).
         """
         if now is None:
-            import pytz
             now = datetime.now(pytz.timezone('America/New_York'))
 
         if isinstance(now, datetime):
@@ -320,12 +322,15 @@ class DrawdownManager:
         if any_reset:
             self._save_state()
 
-    def check_period_rollovers(self):
-        """Legacy wrapper: uses date.today() for backward compatibility.
+    def check_period_rollovers(self, now=None):
+        """Legacy wrapper for check_and_apply_resets().
 
-        Called from older code paths and tests that mock date.today().
+        Called from older code paths and tests. Accepts an optional date/datetime
+        parameter; if omitted, uses the current ET date.
         """
-        self.check_and_apply_resets(now=date.today())
+        if now is None:
+            now = datetime.now(pytz.timezone('America/New_York')).date()
+        self.check_and_apply_resets(now=now)
 
     def update_account_size(self, new_size: float):
         """Update account size and recalculate dollar limits."""
@@ -513,7 +518,8 @@ class DrawdownManager:
            had already occurred.  Safe because _backfill_from_db() queries the
            DB for actual losses; if there are none, values stay at 0.0.
         """
-        today = date.today()
+        _et = pytz.timezone('America/New_York')
+        today = datetime.now(_et).date()
         if today.month != self.current_month or today.year != self.current_month_year:
             return True
         iso_year, iso_week, _ = today.isocalendar()

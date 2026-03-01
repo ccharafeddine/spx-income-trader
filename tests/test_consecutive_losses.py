@@ -404,10 +404,8 @@ class TestPeriodRolloverInteraction:
         iso_year, iso_week, _ = today.isocalendar()
         next_week = iso_week + 1 if iso_week < 52 else 1
         next_year = iso_year if iso_week < 52 else iso_year + 1
-        with patch('src.core.drawdown_manager.date') as mock_date:
-            mock_date.today.return_value = date.fromisocalendar(next_year, next_week, 1)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            mgr.check_period_rollovers()
+        next_week_date = date.fromisocalendar(next_year, next_week, 1)
+        mgr.check_period_rollovers(now=next_week_date)
 
         # Weekly P&L reset, but consecutive counter untouched
         assert mgr.weekly_realized_pnl == 0.0
@@ -429,10 +427,7 @@ class TestPeriodRolloverInteraction:
         else:
             next_month_date = date(today.year, today.month + 1, 5)
 
-        with patch('src.core.drawdown_manager.date') as mock_date:
-            mock_date.today.return_value = next_month_date
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            mgr.check_period_rollovers()
+        mgr.check_period_rollovers(now=next_month_date)
 
         assert mgr.monthly_realized_pnl == 0.0
         assert mgr.consecutive_losses == 4
@@ -451,10 +446,7 @@ class TestPeriodRolloverInteraction:
 
         today = date.today()
         future = date(today.year + 1, 1, 10)
-        with patch('src.core.drawdown_manager.date') as mock_date:
-            mock_date.today.return_value = future
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            mgr.check_period_rollovers()
+        mgr.check_period_rollovers(now=future)
 
         assert mgr.consec_pause_until == pause_time
 
