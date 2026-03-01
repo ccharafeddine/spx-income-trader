@@ -58,6 +58,7 @@ def manager(temp_state_file, default_config):
         account_size=50000.0,
         config=default_config,
         persistence_path=temp_state_file,
+        max_daily_loss_pct=100.0,  # High so daily breaker doesn't interfere
     )
 
 
@@ -193,6 +194,7 @@ class TestWeeklyBreaker:
             account_size=50000.0,
             config=cfg,
             persistence_path=temp_state_file,
+            max_daily_loss_pct=100.0,
         )
         mgr.record_realized_pnl(-5000.0)
         assert mgr.weekly_breaker_triggered is False
@@ -224,7 +226,8 @@ class TestMonthlyBreaker:
     def test_monthly_only_triggers_when_weekly_disabled(self, temp_state_file):
         """Monthly reason returned when weekly is disabled."""
         cfg = {'weekly': {'enabled': False}, 'monthly': {'enabled': True, 'max_loss_pct': 8.0}}
-        mgr = DrawdownManager(account_size=50000.0, config=cfg, persistence_path=temp_state_file)
+        mgr = DrawdownManager(account_size=50000.0, config=cfg, persistence_path=temp_state_file,
+                              max_daily_loss_pct=100.0)
         mgr.record_realized_pnl(-4000.0)
         assert mgr.monthly_breaker_triggered is True
         allowed, reason = mgr.can_trade()
@@ -246,6 +249,7 @@ class TestMonthlyBreaker:
             account_size=50000.0,
             config=cfg,
             persistence_path=temp_state_file,
+            max_daily_loss_pct=100.0,
         )
         mgr.record_realized_pnl(-10000.0)
         assert mgr.monthly_breaker_triggered is False
@@ -713,6 +717,7 @@ class TestCanTradeGating:
             account_size=50000.0,
             config=cfg,
             persistence_path=temp_state_file,
+            max_daily_loss_pct=100.0,
         )
         mgr.record_realized_pnl(-4000.0)  # Triggers both
         assert mgr.weekly_breaker_triggered is True
@@ -727,6 +732,7 @@ class TestCanTradeGating:
             account_size=50000.0,
             config=None,
             persistence_path=temp_state_file,
+            max_daily_loss_pct=9999999.0,
         )
         mgr.record_realized_pnl(-999999.0)
         allowed, reason = mgr.can_trade()
@@ -742,6 +748,7 @@ class TestCanTradeGating:
             account_size=50000.0,
             config=cfg,
             persistence_path=temp_state_file,
+            max_daily_loss_pct=100.0,
         )
         mgr.record_realized_pnl(-3000.0)  # Under monthly threshold
         allowed, _ = mgr.can_trade()
@@ -763,9 +770,16 @@ class TestGetStatus:
     def test_status_structure(self, manager):
         """Status has correct top-level keys and nested structure."""
         status = manager.get_status()
+        assert 'daily' in status
         assert 'weekly' in status
         assert 'monthly' in status
         assert 'consecutive_losses' in status
+
+        daily = status['daily']
+        assert set(daily.keys()) == {
+            'realized_pnl', 'max_loss_pct',
+            'max_loss_dollars', 'breaker_triggered',
+        }
 
         weekly = status['weekly']
         assert set(weekly.keys()) == {
@@ -977,6 +991,7 @@ class TestEdgeCases:
             account_size=1000.0,
             config=default_config,
             persistence_path=temp_state_file,
+            max_daily_loss_pct=100.0,
         )
         assert mgr.weekly_max_loss == 40.0  # 4% of 1k
         mgr.record_realized_pnl(-40.0)

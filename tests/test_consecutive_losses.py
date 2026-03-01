@@ -71,6 +71,7 @@ def manager(temp_state_file, consec_config):
         account_size=50000.0,
         config=consec_config,
         persistence_path=temp_state_file,
+        max_daily_loss_pct=100.0,  # High so daily breaker doesn't interfere
     )
 
 
@@ -193,6 +194,7 @@ class TestPauseActivation:
             account_size=50000.0,
             config=cfg,
             persistence_path=temp_state_file,
+            max_daily_loss_pct=100.0,
         )
         for _ in range(10):
             mgr.record_realized_pnl(-100.0)
@@ -470,6 +472,7 @@ class TestBreakerInteraction:
             account_size=50000.0,
             config=full_config,
             persistence_path=temp_state_file,
+            max_daily_loss_pct=100.0,
         )
         # Trigger all: 5 losses of $500 each = -$2500 total (>$2000 weekly limit)
         for _ in range(5):
@@ -488,6 +491,7 @@ class TestBreakerInteraction:
             account_size=50000.0,
             config=full_config,
             persistence_path=temp_state_file,
+            max_daily_loss_pct=100.0,
         )
         for _ in range(5):
             mgr.record_realized_pnl(-500.0)

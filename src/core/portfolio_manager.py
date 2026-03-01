@@ -96,6 +96,8 @@ class PortfolioManager:
         max_contracts: int = 20,
         # Layered drawdown limits (weekly/monthly)
         drawdown_limits: Optional[Dict] = None,
+        # Database path for drawdown backfill
+        db_path: Optional[str] = None,
     ):
         self.account_size = account_size
         self.max_total_positions = max_total_positions
@@ -142,13 +144,21 @@ class PortfolioManager:
         # Load persisted state (for positions that survive restarts)
         self._load_state()
 
-        # Layered drawdown breakers (weekly/monthly)
+        # Layered drawdown breakers (daily/weekly/monthly)
         drawdown_path = self.persistence_path.parent / 'drawdown_state.json'
         self.drawdown_manager = DrawdownManager(
             account_size=account_size,
             config=drawdown_limits,
             persistence_path=drawdown_path,
+            max_daily_loss_pct=max_daily_loss_pct,
+            db_path=db_path,
         )
+
+        # Sync daily state from DrawdownManager (which may have backfilled from DB)
+        if self.drawdown_manager.daily_realized_pnl != 0.0:
+            self.daily_realized_pnl = self.drawdown_manager.daily_realized_pnl
+        if self.drawdown_manager.daily_breaker_triggered:
+            self.circuit_breaker_triggered = True
 
         logger.info(
             f"PortfolioManager initialized: "
@@ -227,23 +237,13 @@ class PortfolioManager:
         """
         total_risk = contracts * max_risk_per_contract
 
-        # Circuit breaker check
-        if self.circuit_breaker_triggered:
-            return False, "Circuit breaker active - max daily realized loss reached"
-
-        # Check daily loss limit (REALIZED losses only)
-        if self.daily_realized_pnl <= -self.max_daily_loss:
-            self.circuit_breaker_triggered = True
-            logger.warning(
-                f"CIRCUIT BREAKER: Realized loss ${abs(self.daily_realized_pnl):.2f} "
-                f"exceeds {self.max_daily_loss_pct}% limit (${self.max_daily_loss:.0f})"
-            )
-            self._save_state()
-            return False, f"Daily realized loss limit ({self.max_daily_loss_pct}%) reached"
-
-        # Check weekly/monthly drawdown limits
+        # Check ALL circuit breakers (daily, weekly, monthly, consecutive)
         dd_allowed, dd_reason = self.drawdown_manager.can_trade()
         if not dd_allowed:
+            # Sync daily breaker flag for backward compat
+            if 'Daily' in dd_reason:
+                self.circuit_breaker_triggered = True
+                self._save_state()
             return False, dd_reason
 
         # Check total position count
@@ -382,7 +382,13 @@ class PortfolioManager:
         - Resets circuit breaker
         - Checks weekly/monthly period rollovers
         """
-        self.drawdown_manager.check_period_rollovers()
+        self.drawdown_manager.check_and_apply_resets()
+        # Explicitly reset daily counters in DrawdownManager too
+        # (check_and_apply_resets handles this when date changes; this ensures
+        # reset_daily() always clears the daily breaker at market open)
+        self.drawdown_manager.daily_realized_pnl = 0.0
+        self.drawdown_manager.daily_breaker_triggered = False
+        self.drawdown_manager._save_state()
         self.daily_realized_pnl = 0.0
         self.daily_risk_used = 0.0
         self.dte0_trades_today = 0

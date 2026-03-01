@@ -322,6 +322,8 @@ class TradingBot:
             max_contracts=portfolio_cfg.get('max_contracts', 10),
             # Layered drawdown limits (weekly/monthly)
             drawdown_limits=portfolio_cfg.get('drawdown_limits'),
+            # Database path for drawdown backfill
+            db_path=DATABASE_PATH,
         )
 
         logger.info("TradingBot initialized")
@@ -1243,6 +1245,17 @@ class TradingBot:
             if bnb_enabled != self.bnb_enabled:
                 self.bnb_enabled = bnb_enabled
                 logger.info(f"B&B strategy toggled: {'ENABLED' if bnb_enabled else 'DISABLED'}")
+
+            # Reload drawdown limits so slider changes take effect immediately
+            self.portfolio.drawdown_manager.reload_config()
+
+            # Sync daily loss limit in PortfolioManager
+            portfolio_cfg = params.get('portfolio', {})
+            new_pct = portfolio_cfg.get('max_daily_loss_pct', 2.0)
+            if new_pct != self.portfolio.max_daily_loss_pct:
+                self.portfolio.max_daily_loss_pct = new_pct
+                self.portfolio.max_daily_loss = self.portfolio.account_size * (new_pct / 100)
+                logger.info(f"Daily loss limit updated: {new_pct}% (${self.portfolio.max_daily_loss:.0f})")
         except Exception as e:
             logger.warning(f"Failed to reload strategy flags: {e}")
 

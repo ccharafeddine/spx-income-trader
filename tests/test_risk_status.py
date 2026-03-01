@@ -18,7 +18,7 @@ Covers:
 import json
 import sqlite3
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -436,6 +436,8 @@ class TestCircuitBreakerBlocking:
         # Reset daily so daily breaker doesn't fire first
         portfolio.daily_realized_pnl = 0.0
         portfolio.circuit_breaker_triggered = False
+        portfolio.drawdown_manager.daily_realized_pnl = 0.0
+        portfolio.drawdown_manager.daily_breaker_triggered = False
 
         allowed, reason = portfolio.can_enter_position(
             strategy=StrategyType.DAILY_INCOME,
@@ -669,3 +671,283 @@ class TestMonthlyPersistence:
         assert data['monthly']['realized_pnl'] == -675.0
         assert data['weekly']['realized_pnl'] == -200.0
         assert data['daily']['realized_pnl'] == 0.0
+
+
+# ============================================================================
+# MULTI-TIMEFRAME CIRCUIT BREAKER TESTS
+# ============================================================================
+
+def _create_test_db(tmp_path, trades):
+    """Create a test SQLite DB with trades for backfill testing.
+
+    Args:
+        tmp_path: pytest tmp_path
+        trades: list of (trade_id, pnl, exit_time) tuples
+    Returns:
+        str path to the created DB
+    """
+    schema_path = Path(__file__).parent.parent / 'database' / 'schema.sql'
+    db_file = str(tmp_path / 'backfill_test.db')
+    conn = sqlite3.connect(db_file)
+    conn.executescript(schema_path.read_text())
+    for tid, pnl, exit_time in trades:
+        conn.execute(
+            "INSERT INTO trades (id, strategy_type, status, pnl, entry_time, exit_time, "
+            "direction, short_strike, long_strike, spread_width, credit_received, "
+            "entry_price, quantity, expiration) "
+            "VALUES (?, 'daily_income', 'closed', ?, ?, ?, 'bearish', "
+            "5800, 5795, 5.0, 1.50, 1.50, 1, '2026-02-28')",
+            (tid, pnl, exit_time, exit_time),
+        )
+    conn.commit()
+    conn.close()
+    return db_file
+
+
+class TestBackfillFromDB:
+    """Startup backfill reconstructs period P&L from database."""
+
+    def test_daily_backfill_from_db(self, tmp_path):
+        """Fresh state + $675 loss trade today -> daily_realized_pnl == -675."""
+        today = date.today()
+        exit_time = f"{today} 11:00:00"
+        db_file = _create_test_db(tmp_path, [('bf1', -675.0, exit_time)])
+
+        dm = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 4.0},
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},
+            },
+            persistence_path=tmp_path / 'drawdown_state.json',
+            max_daily_loss_pct=2.0,
+            db_path=db_file,
+        )
+        assert dm.daily_realized_pnl == -675.0
+
+    def test_weekly_backfill_from_db(self, tmp_path):
+        """Fresh state + $675 loss trade this week -> weekly_realized_pnl == -675."""
+        today = date.today()
+        iso_year, iso_week, _ = today.isocalendar()
+        monday = date.fromisocalendar(iso_year, iso_week, 1)
+        exit_time = f"{monday} 11:00:00"
+        db_file = _create_test_db(tmp_path, [('bf2', -675.0, exit_time)])
+
+        dm = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 4.0},
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},
+            },
+            persistence_path=tmp_path / 'drawdown_state.json',
+            max_daily_loss_pct=2.0,
+            db_path=db_file,
+        )
+        assert dm.weekly_realized_pnl == -675.0
+
+    def test_monthly_backfill_from_db(self, tmp_path):
+        """Fresh state + $675 loss trade this month -> monthly_realized_pnl == -675."""
+        today = date.today()
+        first_of_month = date(today.year, today.month, 1)
+        exit_time = f"{first_of_month} 11:00:00"
+        db_file = _create_test_db(tmp_path, [('bf3', -675.0, exit_time)])
+
+        dm = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 4.0},
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},
+            },
+            persistence_path=tmp_path / 'drawdown_state.json',
+            max_daily_loss_pct=2.0,
+            db_path=db_file,
+        )
+        assert dm.monthly_realized_pnl == -675.0
+
+    def test_backfill_skipped_when_state_current(self, tmp_path):
+        """Valid state with -675 -> values unchanged after init (no backfill)."""
+        today = date.today()
+        iso_year, iso_week, _ = today.isocalendar()
+
+        state = {
+            'current_date': str(today),
+            'daily_realized_pnl': -675.0,
+            'daily_breaker_triggered': False,
+            'weekly_realized_pnl': -675.0,
+            'monthly_realized_pnl': -675.0,
+            'weekly_breaker_triggered': False,
+            'monthly_breaker_triggered': False,
+            'current_iso_year': iso_year,
+            'current_iso_week': iso_week,
+            'current_month': today.month,
+            'current_month_year': today.year,
+        }
+        state_path = tmp_path / 'drawdown_state.json'
+        state_path.write_text(json.dumps(state))
+
+        # Create DB with a DIFFERENT loss (should NOT be used)
+        db_file = _create_test_db(tmp_path, [
+            ('skip1', -999.0, f"{today} 11:00:00"),
+        ])
+
+        dm = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 4.0},
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},
+            },
+            persistence_path=state_path,
+            max_daily_loss_pct=2.0,
+            db_path=db_file,
+        )
+        # Values from state file, not from DB
+        assert dm.daily_realized_pnl == -675.0
+        assert dm.weekly_realized_pnl == -675.0
+        assert dm.monthly_realized_pnl == -675.0
+
+
+class TestCheckAndApplyResets:
+    """Period resets via check_and_apply_resets()."""
+
+    @pytest.fixture
+    def dm(self, tmp_path):
+        """DrawdownManager with all breakers and a $500 loss across all periods.
+
+        Uses a fixed base date (Wed Feb 11 2026, ISO week 7, month 2)
+        so tomorrow, next Monday, and next month are deterministic.
+        """
+        dm = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 4.0},
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},
+            },
+            persistence_path=tmp_path / 'drawdown_state.json',
+            max_daily_loss_pct=2.0,
+        )
+        # Fix to Wednesday Feb 11 2026 (ISO week 7)
+        dm.current_date = '2026-02-11'
+        dm.current_iso_year = 2026
+        dm.current_iso_week = 7
+        dm.current_month = 2
+        dm.current_month_year = 2026
+        dm.record_realized_pnl(-500.0)
+        return dm
+
+    def test_daily_reset_at_midnight(self, dm):
+        """check_and_apply_resets() with tomorrow clears daily, keeps weekly/monthly."""
+        # Tomorrow = Thu Feb 12 2026 (same week 7, same month 2)
+        tomorrow = date(2026, 2, 12)
+        dm.check_and_apply_resets(now=tomorrow)
+
+        assert dm.daily_realized_pnl == 0.0
+        assert dm.weekly_realized_pnl == -500.0
+        assert dm.monthly_realized_pnl == -500.0
+
+    def test_weekly_reset_on_monday(self, dm):
+        """check_and_apply_resets() with next Monday clears weekly, monthly unchanged."""
+        # Next Monday = Feb 16 2026, ISO week 8, still month 2
+        next_monday = date(2026, 2, 16)
+        dm.check_and_apply_resets(now=next_monday)
+
+        assert dm.weekly_realized_pnl == 0.0
+        assert dm.monthly_realized_pnl == -500.0  # Same month, unchanged
+        assert dm.daily_realized_pnl == 0.0  # Different day
+
+    def test_monthly_reset_on_first(self, dm):
+        """check_and_apply_resets() with next month's 1st clears monthly."""
+        # March 1 2026 = new month
+        next_first = date(2026, 3, 1)
+        dm.check_and_apply_resets(now=next_first)
+
+        assert dm.monthly_realized_pnl == 0.0
+
+
+class TestCanTradeBreakers:
+    """can_trade() correctly blocks/allows based on each breaker."""
+
+    def test_daily_breaker_blocks(self, tmp_path):
+        """Daily loss >= limit -> can_trade() returns False."""
+        dm = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 4.0},
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},
+            },
+            persistence_path=tmp_path / 'drawdown_state.json',
+            max_daily_loss_pct=2.0,  # $1000 limit
+        )
+        dm.record_realized_pnl(-1000.0)
+        allowed, reason = dm.can_trade()
+        assert allowed is False
+        assert 'Daily' in reason
+
+    def test_weekly_breaker_blocks(self, tmp_path):
+        """Weekly loss >= limit -> can_trade() returns False."""
+        dm = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 4.0},  # $2000 limit
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},
+            },
+            persistence_path=tmp_path / 'drawdown_state.json',
+            max_daily_loss_pct=100.0,  # High daily limit so it doesn't fire first
+        )
+        dm.record_realized_pnl(-2000.0)
+        allowed, reason = dm.can_trade()
+        assert allowed is False
+        assert 'Weekly' in reason
+
+    def test_monthly_breaker_blocks(self, tmp_path):
+        """Monthly loss >= limit -> can_trade() returns False."""
+        dm = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 100.0},  # High so won't fire
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},  # $4000 limit
+            },
+            persistence_path=tmp_path / 'drawdown_state.json',
+            max_daily_loss_pct=100.0,  # High so won't fire
+        )
+        dm.record_realized_pnl(-4000.0)
+        allowed, reason = dm.can_trade()
+        assert allowed is False
+        assert 'Monthly' in reason
+
+    def test_all_under_limit_allowed(self, tmp_path):
+        """All losses under their limits -> can_trade() returns True."""
+        dm = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 4.0},
+                'monthly': {'enabled': True, 'max_loss_pct': 8.0},
+            },
+            persistence_path=tmp_path / 'drawdown_state.json',
+            max_daily_loss_pct=2.0,
+        )
+        dm.record_realized_pnl(-500.0)  # Under all limits
+        allowed, reason = dm.can_trade()
+        assert allowed is True
+
+    def test_reset_clears_daily_breaker(self, tmp_path):
+        """Daily breaker triggered, then reset with tomorrow -> can_trade() True."""
+        dm = DrawdownManager(
+            account_size=50000.0,
+            config={
+                'weekly': {'enabled': True, 'max_loss_pct': 100.0},
+                'monthly': {'enabled': True, 'max_loss_pct': 100.0},
+            },
+            persistence_path=tmp_path / 'drawdown_state.json',
+            max_daily_loss_pct=2.0,  # $1000 limit
+        )
+        dm.record_realized_pnl(-1000.0)
+        allowed, _ = dm.can_trade()
+        assert allowed is False
+
+        # Reset to next day
+        tomorrow = date.today() + timedelta(days=1)
+        dm.check_and_apply_resets(now=tomorrow)
+
+        assert dm.daily_breaker_triggered is False
+        allowed, reason = dm.can_trade()
+        assert allowed is True

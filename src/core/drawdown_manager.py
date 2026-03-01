@@ -1,23 +1,26 @@
 """
-Layered Drawdown Circuit Breakers (Weekly + Monthly + Consecutive Losses)
+Layered Drawdown Circuit Breakers (Daily + Weekly + Monthly + Consecutive Losses)
 
-Extends the daily circuit breaker with longer-horizon loss limits.
-Tracks cumulative realized P&L per ISO week (Mon-Fri) and calendar month,
-triggering circuit breakers when losses exceed configurable thresholds.
+Three independent loss limits -- Daily, Weekly, Monthly -- each on their own
+reset schedule.  If ANY ONE reaches its configured limit, the bot cannot enter
+new trades until that period resets.
 
 Also tracks consecutive losing trades and pauses trading for a configurable
 duration after hitting a streak limit. The consecutive-loss pause is time-based
 and does NOT reset on period rollovers.
 
-Design philosophy matches the daily breaker:
+Design philosophy:
 - Only REALIZED losses count (not unrealized)
 - Percentage-based limits scale with account size
-- Auto-resets on period rollover (new week / new month)
-- Backward compatible: missing config = all breakers disabled
+- Auto-resets on period rollover (new day / new week / new month)
+- Winning trades do NOT reduce accumulated loss -- only a period reset clears it
+- Startup backfill reconstructs state from the database when persisted state
+  is stale or missing
 """
 
 import json
 import logging
+import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -27,8 +30,9 @@ logger = logging.getLogger(__name__)
 
 class DrawdownManager:
     """
-    Tracks weekly and monthly realized P&L and enforces drawdown limits.
+    Tracks daily, weekly, and monthly realized P&L and enforces drawdown limits.
 
+    Daily period  = calendar day (midnight ET).
     Weekly period = ISO week (Monday through Friday).
     Monthly period = calendar month.
 
@@ -40,8 +44,11 @@ class DrawdownManager:
         account_size: float = 50000.0,
         config: Optional[Dict] = None,
         persistence_path: Optional[Path] = None,
+        max_daily_loss_pct: float = 2.0,
+        db_path: Optional[str] = None,
     ):
         self.account_size = account_size
+        self.db_path = str(db_path) if db_path else None
 
         # Parse config with safe defaults (disabled if missing)
         config = config or {}
@@ -54,6 +61,8 @@ class DrawdownManager:
         self.monthly_enabled = monthly_cfg.get('enabled', False)
         self.monthly_max_loss_pct = monthly_cfg.get('max_loss_pct', 8.0)
 
+        self.daily_max_loss_pct = max_daily_loss_pct
+
         # Consecutive loss pause config
         consec_cfg = config.get('consecutive_losses', {})
         self.consec_enabled = consec_cfg.get('enabled', False)
@@ -63,7 +72,11 @@ class DrawdownManager:
         # Calculate dollar limits
         self._recalculate_limits()
 
-        # State
+        # State -- daily
+        self.daily_realized_pnl: float = 0.0
+        self.daily_breaker_triggered: bool = False
+
+        # State -- weekly / monthly
         self.weekly_realized_pnl: float = 0.0
         self.monthly_realized_pnl: float = 0.0
         self.weekly_breaker_triggered: bool = False
@@ -73,8 +86,9 @@ class DrawdownManager:
         self.consecutive_losses: int = 0
         self.consec_pause_until: Optional[datetime] = None
 
-        # Period tracking (ISO week number + year, month + year)
+        # Period tracking
         today = date.today()
+        self.current_date: str = str(today)
         self.current_iso_year, self.current_iso_week, _ = today.isocalendar()
         self.current_month = today.month
         self.current_month_year = today.year
@@ -89,9 +103,15 @@ class DrawdownManager:
 
         self._load_state()
 
+        # Startup backfill from database when state is stale or missing
+        if self._needs_backfill and self.db_path:
+            self.check_and_apply_resets()
+            self._backfill_from_db()
+
         if self.weekly_enabled or self.monthly_enabled or self.consec_enabled:
             logger.info(
                 f"DrawdownManager initialized: "
+                f"daily={self.daily_max_loss_pct}% (${self.daily_max_loss:.0f}), "
                 f"weekly={'ON' if self.weekly_enabled else 'OFF'} "
                 f"({self.weekly_max_loss_pct}% / ${self.weekly_max_loss:.0f}), "
                 f"monthly={'ON' if self.monthly_enabled else 'OFF'} "
@@ -102,6 +122,7 @@ class DrawdownManager:
 
     def _recalculate_limits(self):
         """Recalculate dollar limits from percentages and account size."""
+        self.daily_max_loss = self.account_size * (self.daily_max_loss_pct / 100)
         self.weekly_max_loss = self.account_size * (self.weekly_max_loss_pct / 100)
         self.monthly_max_loss = self.account_size * (self.monthly_max_loss_pct / 100)
 
@@ -115,6 +136,7 @@ class DrawdownManager:
         - pnl > 0: reset consecutive_losses to 0
         - pnl == 0: no change (scratch trade)
         """
+        self.daily_realized_pnl += pnl
         self.weekly_realized_pnl += pnl
         self.monthly_realized_pnl += pnl
 
@@ -134,6 +156,18 @@ class DrawdownManager:
         elif pnl > 0:
             self.consecutive_losses = 0
             # A win does NOT clear an active pause (must wait it out)
+
+        # Check daily breaker
+        if (
+            not self.daily_breaker_triggered
+            and self.daily_realized_pnl <= -self.daily_max_loss
+        ):
+            self.daily_breaker_triggered = True
+            logger.warning(
+                f"DAILY DRAWDOWN BREAKER TRIGGERED: "
+                f"Realized loss ${abs(self.daily_realized_pnl):.2f} "
+                f"exceeds {self.daily_max_loss_pct}% limit (${self.daily_max_loss:.0f})"
+            )
 
         # Check weekly breaker
         if (
@@ -165,13 +199,19 @@ class DrawdownManager:
 
     def can_trade(self) -> Tuple[bool, str]:
         """
-        Check whether trading is allowed under drawdown limits.
+        Check whether trading is allowed under all drawdown limits.
 
-        Check order: consecutive loss pause > weekly > monthly.
+        Lazy reset: calls check_and_apply_resets() first so period resets
+        fire even if the bot has been idle.
+
+        Check order: resets > consecutive loss pause > daily > weekly > monthly.
 
         Returns:
             (allowed: bool, reason: str)
         """
+        # Lazy reset before checking breakers
+        self.check_and_apply_resets()
+
         # Consecutive loss pause (time-based, checked first)
         if self.consec_enabled and self.consec_pause_until is not None:
             now = datetime.now()
@@ -192,33 +232,67 @@ class DrawdownManager:
                 self.consec_pause_until = None
                 self._save_state()
 
+        # Daily breaker
+        if self.daily_breaker_triggered:
+            return False, (
+                f"Daily loss limit reached: "
+                f"${abs(self.daily_realized_pnl):.2f} loss "
+                f"exceeds {self.daily_max_loss_pct}% (${self.daily_max_loss:.0f})"
+            )
+
+        # Weekly breaker
         if self.weekly_enabled and self.weekly_breaker_triggered:
             return False, (
-                f"Weekly drawdown limit reached: "
+                f"Weekly loss limit reached: "
                 f"${abs(self.weekly_realized_pnl):.2f} loss "
                 f"exceeds {self.weekly_max_loss_pct}% (${self.weekly_max_loss:.0f})"
             )
 
+        # Monthly breaker
         if self.monthly_enabled and self.monthly_breaker_triggered:
             return False, (
-                f"Monthly drawdown limit reached: "
+                f"Monthly loss limit reached: "
                 f"${abs(self.monthly_realized_pnl):.2f} loss "
                 f"exceeds {self.monthly_max_loss_pct}% (${self.monthly_max_loss:.0f})"
             )
 
         return True, "Drawdown limits OK"
 
-    def check_period_rollovers(self):
+    def check_and_apply_resets(self, now=None):
         """
-        Detect new week or new month and reset the appropriate counters.
-        Called from PortfolioManager.reset_daily() at each market open.
-        """
-        today = date.today()
-        iso_year, iso_week, _ = today.isocalendar()
-        month = today.month
-        month_year = today.year
+        Detect new day, new week, or new month and reset the appropriate
+        counters.  Called lazily from can_trade() and proactively from
+        PortfolioManager.reset_daily() at market open.
 
-        # Weekly rollover
+        Args:
+            now: datetime or date to use as "current time".
+                 If None, uses datetime.now(ET).
+        """
+        if now is None:
+            import pytz
+            now = datetime.now(pytz.timezone('America/New_York'))
+
+        if isinstance(now, datetime):
+            today = now.date()
+        else:
+            today = now
+
+        today_str = str(today)
+        any_reset = False
+
+        # Daily reset
+        if today_str != self.current_date:
+            logger.info(
+                f"Daily rollover: {self.current_date} -> {today_str}. "
+                f"Final daily P&L: ${self.daily_realized_pnl:.2f}"
+            )
+            self.daily_realized_pnl = 0.0
+            self.daily_breaker_triggered = False
+            self.current_date = today_str
+            any_reset = True
+
+        # Weekly reset
+        iso_year, iso_week, _ = today.isocalendar()
         if iso_year != self.current_iso_year or iso_week != self.current_iso_week:
             logger.info(
                 f"Weekly rollover: W{self.current_iso_week}/{self.current_iso_year} -> "
@@ -229,20 +303,30 @@ class DrawdownManager:
             self.weekly_breaker_triggered = False
             self.current_iso_year = iso_year
             self.current_iso_week = iso_week
+            any_reset = True
 
-        # Monthly rollover
-        if month_year != self.current_month_year or month != self.current_month:
+        # Monthly reset
+        if today.year != self.current_month_year or today.month != self.current_month:
             logger.info(
                 f"Monthly rollover: {self.current_month}/{self.current_month_year} -> "
-                f"{month}/{month_year}. "
+                f"{today.month}/{today.year}. "
                 f"Final monthly P&L: ${self.monthly_realized_pnl:.2f}"
             )
             self.monthly_realized_pnl = 0.0
             self.monthly_breaker_triggered = False
-            self.current_month = month
-            self.current_month_year = month_year
+            self.current_month = today.month
+            self.current_month_year = today.year
+            any_reset = True
 
-        self._save_state()
+        if any_reset:
+            self._save_state()
+
+    def check_period_rollovers(self):
+        """Legacy wrapper: uses date.today() for backward compatibility.
+
+        Called from older code paths and tests that mock date.today().
+        """
+        self.check_and_apply_resets(now=date.today())
 
     def update_account_size(self, new_size: float):
         """Update account size and recalculate dollar limits."""
@@ -250,9 +334,37 @@ class DrawdownManager:
         self._recalculate_limits()
         logger.info(
             f"DrawdownManager account size updated to ${new_size:.2f}: "
+            f"daily limit=${self.daily_max_loss:.0f}, "
             f"weekly limit=${self.weekly_max_loss:.0f}, "
             f"monthly limit=${self.monthly_max_loss:.0f}"
         )
+
+    def reload_config(self):
+        """Reload config from strategy_params.yaml and recalculate limits."""
+        try:
+            from config.settings import load_strategy_params
+            params = load_strategy_params()
+            portfolio_cfg = params.get('portfolio', {})
+            dd_cfg = portfolio_cfg.get('drawdown_limits', {})
+
+            weekly_cfg = dd_cfg.get('weekly', {})
+            monthly_cfg = dd_cfg.get('monthly', {})
+
+            self.weekly_enabled = weekly_cfg.get('enabled', False)
+            self.weekly_max_loss_pct = weekly_cfg.get('max_loss_pct', 4.0)
+            self.monthly_enabled = monthly_cfg.get('enabled', False)
+            self.monthly_max_loss_pct = monthly_cfg.get('max_loss_pct', 8.0)
+            self.daily_max_loss_pct = portfolio_cfg.get('max_daily_loss_pct', 2.0)
+
+            self._recalculate_limits()
+            logger.info(
+                f"DrawdownManager config reloaded: "
+                f"daily={self.daily_max_loss_pct}%/${self.daily_max_loss:.0f}, "
+                f"weekly={self.weekly_max_loss_pct}%/${self.weekly_max_loss:.0f}, "
+                f"monthly={self.monthly_max_loss_pct}%/${self.monthly_max_loss:.0f}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to reload drawdown config: {e}")
 
     def get_status(self) -> dict:
         """Return status dict for dashboard/API."""
@@ -262,6 +374,12 @@ class DrawdownManager:
             and datetime.now() < self.consec_pause_until
         )
         return {
+            'daily': {
+                'realized_pnl': round(self.daily_realized_pnl, 2),
+                'max_loss_pct': self.daily_max_loss_pct,
+                'max_loss_dollars': round(self.daily_max_loss, 2),
+                'breaker_triggered': self.daily_breaker_triggered,
+            },
             'weekly': {
                 'enabled': self.weekly_enabled,
                 'realized_pnl': round(self.weekly_realized_pnl, 2),
@@ -299,37 +417,62 @@ class DrawdownManager:
 
     def _load_state(self):
         """Load persisted drawdown state from disk."""
+        self._needs_backfill = True  # Assume backfill needed until proven otherwise
+
         try:
             if not self.persistence_path.exists():
                 return
 
             data = json.loads(self.persistence_path.read_text())
-
-            # Validate period currency - stale data from a prior period is discarded
             today = date.today()
+            today_str = str(today)
             iso_year, iso_week, _ = today.isocalendar()
 
-            saved_iso_year = data.get('current_iso_year')
-            saved_iso_week = data.get('current_iso_week')
-            if saved_iso_year == iso_year and saved_iso_week == iso_week:
+            # Determine if backfill is needed: all periods must match today
+            stored_date = data.get('current_date')
+            stored_iso_week = data.get('current_iso_week')
+            stored_iso_year = data.get('current_iso_year')
+            stored_month = data.get('current_month')
+            stored_month_year = data.get('current_month_year')
+
+            if (stored_date == today_str
+                    and stored_iso_year == iso_year
+                    and stored_iso_week == iso_week
+                    and stored_month_year == today.year
+                    and stored_month == today.month):
+                self._needs_backfill = False
+
+            # Daily (only if date matches)
+            if stored_date == today_str:
+                self.daily_realized_pnl = data.get('daily_realized_pnl', 0.0)
+                self.daily_breaker_triggered = data.get('daily_breaker_triggered', False)
+                self.current_date = stored_date
+            else:
+                if stored_date is not None:
+                    logger.info(
+                        f"Drawdown: Daily state stale "
+                        f"(saved {stored_date}, now {today_str}), resetting"
+                    )
+
+            # Weekly (only if period matches)
+            if stored_iso_year == iso_year and stored_iso_week == iso_week:
                 self.weekly_realized_pnl = data.get('weekly_realized_pnl', 0.0)
                 self.weekly_breaker_triggered = data.get('weekly_breaker_triggered', False)
             else:
                 logger.info(
                     f"Drawdown: Weekly state stale "
-                    f"(saved W{saved_iso_week}/{saved_iso_year}, "
+                    f"(saved W{stored_iso_week}/{stored_iso_year}, "
                     f"now W{iso_week}/{iso_year}), resetting"
                 )
 
-            saved_month = data.get('current_month')
-            saved_month_year = data.get('current_month_year')
-            if saved_month_year == today.year and saved_month == today.month:
+            # Monthly (only if period matches)
+            if stored_month_year == today.year and stored_month == today.month:
                 self.monthly_realized_pnl = data.get('monthly_realized_pnl', 0.0)
                 self.monthly_breaker_triggered = data.get('monthly_breaker_triggered', False)
             else:
                 logger.info(
                     f"Drawdown: Monthly state stale "
-                    f"(saved {saved_month}/{saved_month_year}, "
+                    f"(saved {stored_month}/{stored_month_year}, "
                     f"now {today.month}/{today.year}), resetting"
                 )
 
@@ -348,6 +491,9 @@ class DrawdownManager:
         """Persist drawdown state to disk."""
         try:
             data = {
+                'current_date': self.current_date,
+                'daily_realized_pnl': self.daily_realized_pnl,
+                'daily_breaker_triggered': self.daily_breaker_triggered,
                 'weekly_realized_pnl': self.weekly_realized_pnl,
                 'monthly_realized_pnl': self.monthly_realized_pnl,
                 'weekly_breaker_triggered': self.weekly_breaker_triggered,
@@ -367,3 +513,70 @@ class DrawdownManager:
             self.persistence_path.write_text(json.dumps(data, indent=2))
         except Exception as e:
             logger.error(f"Failed to save drawdown state: {e}")
+
+    # =========================================================================
+    # STARTUP BACKFILL
+    # =========================================================================
+
+    def _backfill_from_db(self):
+        """Reconstruct period P&L from the database after a stale or missing state file."""
+        if not self.db_path:
+            return
+        try:
+            db_file = Path(self.db_path)
+            if not db_file.exists():
+                logger.info("Backfill skipped: database file does not exist")
+                return
+
+            conn = sqlite3.connect(str(db_file), timeout=10)
+            today = date.today()
+
+            # Daily losses (since midnight today)
+            daily_sum = conn.execute(
+                "SELECT COALESCE(SUM(pnl), 0) FROM trades "
+                "WHERE LOWER(status) = 'closed' AND pnl < 0 "
+                "AND exit_time >= ?",
+                (str(today),),
+            ).fetchone()[0]
+            self.daily_realized_pnl = daily_sum
+
+            # Weekly losses (since Monday of current ISO week)
+            iso_year, iso_week, _ = today.isocalendar()
+            monday = date.fromisocalendar(iso_year, iso_week, 1)
+            weekly_sum = conn.execute(
+                "SELECT COALESCE(SUM(pnl), 0) FROM trades "
+                "WHERE LOWER(status) = 'closed' AND pnl < 0 "
+                "AND exit_time >= ?",
+                (str(monday),),
+            ).fetchone()[0]
+            self.weekly_realized_pnl = weekly_sum
+
+            # Monthly losses (since 1st of current month)
+            first_of_month = date(today.year, today.month, 1)
+            monthly_sum = conn.execute(
+                "SELECT COALESCE(SUM(pnl), 0) FROM trades "
+                "WHERE LOWER(status) = 'closed' AND pnl < 0 "
+                "AND exit_time >= ?",
+                (str(first_of_month),),
+            ).fetchone()[0]
+            self.monthly_realized_pnl = monthly_sum
+
+            conn.close()
+
+            # Re-check breakers after backfill
+            if self.daily_realized_pnl <= -self.daily_max_loss:
+                self.daily_breaker_triggered = True
+            if self.weekly_enabled and self.weekly_realized_pnl <= -self.weekly_max_loss:
+                self.weekly_breaker_triggered = True
+            if self.monthly_enabled and self.monthly_realized_pnl <= -self.monthly_max_loss:
+                self.monthly_breaker_triggered = True
+
+            self._save_state()
+            logger.info(
+                f"Backfill complete: "
+                f"daily=${self.daily_realized_pnl:.2f}, "
+                f"weekly=${self.weekly_realized_pnl:.2f}, "
+                f"monthly=${self.monthly_realized_pnl:.2f}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to backfill from database: {e}")
