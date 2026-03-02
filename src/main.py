@@ -913,11 +913,20 @@ class TradingBot:
                             _vl, _vr = _vix.get_vix_with_regime()
                     except Exception:
                         _vl, _vr = None, None
-                    _open_pos = self.position_manager.get_open_trades()
+                    # Count carry-over positions from DB (in-memory list may not have them)
+                    try:
+                        with self.db._get_connection() as _conn:
+                            _row = _conn.execute(
+                                "SELECT COUNT(*) FROM trades "
+                                "WHERE LOWER(status) IN ('open', 'active')"
+                            ).fetchone()
+                        _open_count = _row[0] if _row else 0
+                    except Exception:
+                        _open_count = len(self.position_manager.get_open_trades())
                     self.notifier.send_market_open({
                         'vix_level': _vl,
                         'vix_regime': _vr,
-                        'open_positions': len(_open_pos),
+                        'open_positions': _open_count,
                         'mode': TRADING_MODE,
                         'spx_price': self._current_spx_price if self._current_spx_price > 0 else None,
                     })
@@ -1471,11 +1480,16 @@ class TradingBot:
                     db_trades = db_summary.get('trades_count', 0)
                     db_pnl = db_summary.get('realized_pnl', 0.0)
 
-                    # Use live broker balance (never config initial_balance)
+                    # Compute equity from DB: starting capital + realized P&L
                     try:
-                        live_equity = self.broker.get_account_balance().get(
-                            'net_account_value', None
-                        )
+                        _starting = STRATEGY_PARAMS.get('portfolio', {}).get('account_size', 50000.0)
+                        with self.db._get_connection() as _conn:
+                            _row = _conn.execute(
+                                "SELECT COALESCE(SUM(pnl), 0) FROM trades "
+                                "WHERE LOWER(status) IN ('closed', 'expired') "
+                                "AND credit_received >= 1.0"
+                            ).fetchone()
+                        live_equity = round(_starting + (_row[0] if _row else 0), 2)
                     except Exception:
                         live_equity = None
 
@@ -2853,10 +2867,16 @@ class TradingBot:
         # Send notification
         if self.notifier:
             try:
-                # Query live equity from broker (never fall back to config initial_balance)
+                # Compute equity from DB: starting capital + realized P&L
                 try:
-                    _eq = self.broker.get_account_balance().get(
-                        'net_account_value', None)
+                    _starting = STRATEGY_PARAMS.get('portfolio', {}).get('account_size', 50000.0)
+                    with self.db._get_connection() as _conn:
+                        _row = _conn.execute(
+                            "SELECT COALESCE(SUM(pnl), 0) FROM trades "
+                            "WHERE LOWER(status) IN ('closed', 'expired') "
+                            "AND credit_received >= 1.0"
+                        ).fetchone()
+                    _eq = round(_starting + (_row[0] if _row else 0), 2)
                 except Exception:
                     _eq = None
                 # Query DB for authoritative trade counts and P&L
@@ -2893,10 +2913,20 @@ class TradingBot:
                 _hb = 'N/A'
                 if self._last_heartbeat:
                     _hb = self._last_heartbeat.strftime('%H:%M:%S ET')
+                # Count open positions from DB for consistency
+                try:
+                    with self.db._get_connection() as _conn:
+                        _row = _conn.execute(
+                            "SELECT COUNT(*) FROM trades "
+                            "WHERE LOWER(status) IN ('open', 'active')"
+                        ).fetchone()
+                    _open_count = _row[0] if _row else 0
+                except Exception:
+                    _open_count = len(self.position_manager.get_open_trades())
                 self.notifier.send_bot_stopped({
                     'mode': TRADING_MODE,
                     'equity': _eq,
-                    'open_positions': len(self.position_manager.get_open_trades()),
+                    'open_positions': _open_count,
                     'trades_today': total_trades,
                     'daily_pnl': _daily_pnl,
                     'streak': _streak,
