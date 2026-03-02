@@ -1984,6 +1984,7 @@ def api_chart_bars():
         if df is None or df.empty:
             return jsonify({'success': True, 'bars': [], 'bb': None, 'oldest_date': None})
 
+        from src.utils.market_calendar import is_trading_day
         et_tz = pytz.timezone('US/Eastern')
         bars = []
         oldest_dt = None
@@ -1992,6 +1993,8 @@ def api_chart_bars():
             if ts.tzinfo is None:
                 ts = pytz.utc.localize(ts)
             ts_et = ts.astimezone(et_tz)
+            if not is_trading_day(ts_et):
+                continue
             if oldest_dt is None:
                 oldest_dt = ts_et.date()
             label = ts_et.strftime('%Y-%m-%d %H:%M')
