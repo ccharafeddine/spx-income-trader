@@ -4579,6 +4579,7 @@ async function updateStatus() {
 
 function setChartTimeframe(tf) {
   chartTimeframe = tf;
+  delete savedXRange[tf];  // Force fresh range showing most recent candles
   // Reset relayout listener for new timeframe
   chartRelayoutAttached.attached = false;
   // Update toggle button styles for all 4 buttons
@@ -4601,11 +4602,13 @@ function setChartTimeframe(tf) {
       }
       if (latestTodayData) renderChart(latestTodayData);
       _attachChartRelayoutListener();
+      _fitVisibleOnLoad(tf);
       if (!histTradesLoaded) _loadHistoricalTrades();
     });
   } else {
     if (latestTodayData) renderChart(latestTodayData);
     _attachChartRelayoutListener();
+    _fitVisibleOnLoad(tf);
   }
 }
 
@@ -5165,7 +5168,10 @@ function renderChart(d) {
     Plotly.react('candle-chart', [candleTrace, ...bbTraces], layout, {displayModeBar: false, responsive: true, scrollZoom: true});
     _attachChartRelayoutListener();
     // Auto-fit y-axis to visible bars on load/refresh (skip when open position sets yRange)
-    if (chartBars && chartBars.length > 0 && yRangeMin == null) _rescaleYToVisible(chartTimeframe);
+    if (chartBars && chartBars.length > 0 && !window._chartInitialFitDone) {
+      window._chartInitialFitDone = true;
+      _fitVisibleOnLoad(chartTimeframe);
+    }
   } else {
     document.getElementById('candle-chart').innerHTML = '<div class="empty">No bar data yet (market may be closed)</div>';
   }
@@ -5215,6 +5221,49 @@ function _rescaleYToVisible(tf) {
   Plotly.relayout('candle-chart', {'yaxis.range': [yMin, yMax]}).then(() => {
     isRescaling = false;
   });
+}
+
+function _fitVisibleOnLoad(tf) {
+  const bars = allChartBars[tf];
+  if (!bars || !bars.length) return;
+  const totalBars = bars.length;
+  const windowSize = {'30m': 65, '5m': 78, '1h': 40, '4h': 30}[tf] || 65;
+  const rightEdge = totalBars - 0.5;
+  const leftEdge = totalBars - windowSize - 0.5;
+
+  // Save so relayout listener and _rescaleYToVisible work correctly after
+  savedXRange[tf] = [leftEdge, rightEdge];
+
+  // Visible candle range
+  const visStart = Math.max(0, Math.floor(leftEdge));
+  const visEnd = Math.min(totalBars - 1, Math.ceil(rightEdge));
+  const visSlice = bars.slice(visStart, visEnd + 1);
+  const highs = visSlice.map(b => b.high).filter(v => v != null);
+  const lows = visSlice.map(b => b.low).filter(v => v != null);
+  if (!highs.length || !lows.length) return;
+
+  let yMin = Math.min(...lows);
+  let yMax = Math.max(...highs);
+
+  // Include active strike lines so they don't get clipped
+  if (latestTodayData && latestTodayData.open_positions) {
+    latestTodayData.open_positions.forEach(pos => {
+      if (pos.short_strike) { yMin = Math.min(yMin, pos.short_strike); yMax = Math.max(yMax, pos.short_strike); }
+      if (pos.long_strike) { yMin = Math.min(yMin, pos.long_strike); yMax = Math.max(yMax, pos.long_strike); }
+    });
+  }
+
+  // Padding
+  yMin = yMin * 0.9995;
+  yMax = yMax * 1.0005;
+
+  isRescaling = true;
+  Plotly.relayout('candle-chart', {
+    'xaxis.range': [leftEdge, rightEdge],
+    'yaxis.range': [yMin, yMax],
+    'xaxis.autorange': false,
+    'yaxis.autorange': false,
+  }).then(() => { isRescaling = false; });
 }
 
 function _attachChartRelayoutListener() {
