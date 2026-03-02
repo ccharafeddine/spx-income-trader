@@ -4745,14 +4745,18 @@ function renderChart(d) {
       const todayPrefix = today.getFullYear() + '-'
         + String(today.getMonth() + 1).padStart(2, '0') + '-'
         + String(today.getDate()).padStart(2, '0');
+      // Check if bars are actually from today (skip stale pre-market data)
+      const firstRaw = String(liveBars[0].timestamp || liveBars[0].time || '');
+      const hasDate = firstRaw.match(/\d{4}-\d{2}-\d{2}/);
+      const barsFromToday = !hasDate || firstRaw.includes(todayPrefix);
       // Normalize live bar timestamps to YYYY-MM-DD HH:MM
-      const normalizedLive = liveBars.map(b => {
+      const normalizedLive = barsFromToday ? liveBars.map(b => {
         const raw = b.timestamp || b.time || '';
         const m = String(raw).match(/(\d{2}:\d{2})/);
         const ts = m ? m[1] : raw;
         return {time: todayPrefix + ' ' + ts, open: b.open, high: b.high, low: b.low, close: b.close};
-      });
-      if (allChartBars['30m'] && allChartBars['30m'].length) {
+      }) : [];
+      if (normalizedLive.length && allChartBars['30m'] && allChartBars['30m'].length) {
         // Strip existing today bars, then append fresh ones
         allChartBars['30m'] = allChartBars['30m'].filter(b => b.time.substring(0, 10) !== todayPrefix);
         allChartBars['30m'] = _dedupBars([...allChartBars['30m'], ...normalizedLive]);

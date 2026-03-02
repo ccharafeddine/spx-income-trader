@@ -1755,6 +1755,9 @@ def api_today():
                 'low': b['low'],
                 'close': b['close'],
             })
+        # Drop bars not from today (Yahoo returns stale data before market open)
+        today_str = datetime.now(ET).strftime('%Y-%m-%d')
+        chart_bars = [b for b in chart_bars if today_str in str(b['timestamp'])]
     except Exception as e:
         logger.debug(f"Yahoo intraday bars unavailable: {e}")
 
