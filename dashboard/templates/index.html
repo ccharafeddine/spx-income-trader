@@ -4733,12 +4733,15 @@ function _entryTimeForTF(isoStr) {
 
 function renderChart(d) {
   // Merge today's live bars into allChartBars['30m'] when on 30m timeframe
-  if (chartTimeframe === '30m') {
+  // Skip on weekends to prevent stale Friday bars appearing as today
+  const _today = new Date();
+  const _isWeekday = _today.getDay() !== 0 && _today.getDay() !== 6;
+  if (chartTimeframe === '30m' && _isWeekday) {
     const liveBars = (d.bot_bars && d.bot_bars.length) ? d.bot_bars
                    : (d.chart_bars && d.chart_bars.length) ? d.chart_bars
                    : d.log_bars;
     if (liveBars && liveBars.length) {
-      const today = new Date();
+      const today = _today;
       const todayPrefix = today.getFullYear() + '-'
         + String(today.getMonth() + 1).padStart(2, '0') + '-'
         + String(today.getDate()).padStart(2, '0');

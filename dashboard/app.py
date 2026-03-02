@@ -1738,9 +1738,12 @@ def api_today():
         bot_bars = get_bot_bars()
 
     # 2) Yahoo intraday bars for candlestick chart (cached, fast after first call)
+    #    Skip on non-trading days to prevent stale echo bars
+    from src.utils.market_calendar import is_trading_day
     chart_bars = []
     try:
-        intraday = yahoo.get_intraday_bars('30m', '1d') or []
+        intraday = yahoo.get_intraday_bars('30m', '1d') if is_trading_day(datetime.now(ET)) else []
+        intraday = intraday or []
         for b in intraday:
             ts = b['timestamp']
             if hasattr(ts, 'isoformat'):
@@ -2028,8 +2031,8 @@ def api_chart_bars():
                 for ab in agg_bars
             ]
 
-        # For 30m: check bot bars for today's live data
-        if tf == '30m' and end_date > datetime.now(ET).date():
+        # For 30m: check bot bars for today's live data (skip on weekends/holidays)
+        if tf == '30m' and end_date > datetime.now(ET).date() and is_trading_day(datetime.now(ET)):
             get_bot_bars = getattr(app, '_desktop_get_bot_bars', None)
             if get_bot_bars:
                 live_bars = get_bot_bars()
