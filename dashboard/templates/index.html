@@ -5876,7 +5876,14 @@ function renderCalendar() {
           const cls = st.replace('_', '-');
           html += '<span class="strategy-tag ' + cls + '">' + (stratNames[st] || st) + '</span>';
         });
+        if (openCount > 0 && closedCount === 0) {
+          html += '<span class="strategy-tag" style="background:rgba(59,130,246,0.15);color:#60a5fa;border-color:rgba(59,130,246,0.3)">OPEN</span>';
+        }
         html += '</div>';
+      }
+      if (dayData.tnt_close_date) {
+        const cd = dayData.tnt_close_date;
+        html += '<div class="cal-trades-count" style="font-size:9px;margin-top:1px;color:#6b7280">closed ' + cd.substring(5).replace('-', '/') + '</div>';
       }
     } else if (isWeekend || isHoliday) {
       html += '<div class="cal-closed">Market Closed';

@@ -308,8 +308,8 @@ def test_api_today_includes_closed_today_count(mock_yahoo, client_with_db):
     assert data2['closed_today_count'] == 2
 
 
-def test_calendar_attributes_tnt_pnl_to_exit_date(client_with_db):
-    """TNT swing trade P&L appears on exit date when cross-day."""
+def test_calendar_attributes_tnt_pnl_to_entry_date(client_with_db):
+    """TNT swing trade P&L appears on entry date (open date), not exit date."""
     client, db_file = client_with_db
     now = datetime.now(ET)
     month = now.month
@@ -318,7 +318,6 @@ def test_calendar_attributes_tnt_pnl_to_exit_date(client_with_db):
     entry_date = f'{year:04d}-{month:02d}-15'
     exit_date = f'{year:04d}-{month:02d}-16'
 
-    # Only tag_n_turn strategy shifts to exit date
     _insert_trade(db_file, 'tnt-cross-1',
                   entry_time=f'{entry_date} 14:00:00',
                   exit_time=f'{exit_date} 10:00:00',
@@ -329,14 +328,14 @@ def test_calendar_attributes_tnt_pnl_to_exit_date(client_with_db):
     assert resp.status_code == 200
     data = resp.get_json()
 
-    # P&L should be on exit date for TNT swing
-    exit_info = data['days'].get(exit_date)
-    assert exit_info is not None, f"No calendar entry for exit date {exit_date}"
-    assert exit_info['pnl'] == 960.0
-
-    # Entry date should have no P&L entry
+    # P&L should be on entry date
     entry_info = data['days'].get(entry_date)
-    assert entry_info is None or entry_info['pnl'] == 0.0
+    assert entry_info is not None, f"No calendar entry for entry date {entry_date}"
+    assert entry_info['pnl'] == 960.0
+
+    # Exit date should have no P&L entry
+    exit_info = data['days'].get(exit_date)
+    assert exit_info is None or exit_info['pnl'] == 0.0
 
 
 def test_daily_trade_stays_on_entry_date_even_with_cross_day_exit(client_with_db):
@@ -492,8 +491,8 @@ def test_calendar_shows_open_tnt_on_entry_date(client_with_db):
     assert day_info['trades'] == 0, "Closed trade count should be 0"
 
 
-def test_calendar_tnt_closed_multiday_on_exit_sameday_on_entry(client_with_db):
-    """Closed TNT trade: exit date when multi-day, entry date when same-day."""
+def test_calendar_tnt_closed_multiday_on_entry_sameday_on_entry(client_with_db):
+    """Closed TNT trade: always on entry date, both multi-day and same-day."""
     client, db_file = client_with_db
     now = datetime.now(ET)
     month = now.month
@@ -520,14 +519,14 @@ def test_calendar_tnt_closed_multiday_on_exit_sameday_on_entry(client_with_db):
     assert resp.status_code == 200
     data = resp.get_json()
 
-    # Multi-day: P&L on exit date
-    exit_info = data['days'].get(exit_date_multi)
-    assert exit_info is not None, f"Multi-day TNT should appear on exit date {exit_date_multi}"
-    assert exit_info['pnl'] == 500.0
-
-    # Multi-day: entry date should have no P&L
+    # Multi-day: P&L on entry date
     entry_info = data['days'].get(entry_date_multi)
-    assert entry_info is None or entry_info['pnl'] == 0.0
+    assert entry_info is not None, f"Multi-day TNT should appear on entry date {entry_date_multi}"
+    assert entry_info['pnl'] == 500.0
+
+    # Multi-day: exit date should have no P&L
+    exit_info = data['days'].get(exit_date_multi)
+    assert exit_info is None or exit_info['pnl'] == 0.0
 
     # Same-day: P&L on entry date (which equals exit date)
     same_info = data['days'].get(same_date)
