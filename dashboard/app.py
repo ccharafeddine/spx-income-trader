@@ -5594,6 +5594,7 @@ ALLOWED_SETTINGS_PATHS = {
     'notifications.webhook.enabled',
     'notifications.webhook.url',
     'notifications.webhook.min_level',
+    'broker.shadow.enabled',
 }
 
 

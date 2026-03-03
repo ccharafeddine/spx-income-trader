@@ -642,6 +642,7 @@ Recordings are saved to `database/demo_recordings/` and can be browsed from the 
 ## Expansion Roadmap
 - Text message (SMS) notifications via Twilio
 - Tastytrade broker integration
+- Broker-agnostic shadow comparator: use whichever broker is configured (Schwab or E*TRADE) for shadow quotes instead of hardcoded Schwab
 
 ---
 
