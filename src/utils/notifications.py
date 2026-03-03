@@ -46,7 +46,7 @@ class NotificationManager:
         self._load_webhook_config()
 
     def _load_webhook_config(self):
-        """Load Slack/Discord/webhook config from strategy params."""
+        """Load webhook config from strategy params (new array or legacy format)."""
         try:
             from config.settings import load_strategy_params
             params = load_strategy_params()
@@ -54,15 +54,41 @@ class NotificationManager:
         except Exception:
             notif = {}
 
+        # Always populate legacy configs (used by send_test backward compat)
         self.slack_config = notif.get('slack', {})
         self.discord_config = notif.get('discord', {})
         self.webhook_config = notif.get('webhook', {})
 
-        for name, cfg in [('Slack', self.slack_config),
-                          ('Discord', self.discord_config),
-                          ('Webhook', self.webhook_config)]:
-            if cfg.get('enabled'):
-                logger.info(f"{name} notifications enabled (min_level={cfg.get('min_level', 'info')})")
+        # Build unified webhooks list
+        if 'webhooks' in notif and isinstance(notif['webhooks'], list):
+            self.webhooks = [wh for wh in notif['webhooks'] if wh.get('enabled') and wh.get('url')]
+            # Populate legacy configs from first entry of each type (for send_test)
+            for wh in notif['webhooks']:
+                wh_type = wh.get('type', 'custom')
+                if wh_type == 'slack' and not self.slack_config.get('webhook_url'):
+                    self.slack_config = {'enabled': wh.get('enabled', False), 'webhook_url': wh.get('url', ''), 'min_level': wh.get('min_level', 'info')}
+                elif wh_type == 'discord' and not self.discord_config.get('webhook_url'):
+                    self.discord_config = {'enabled': wh.get('enabled', False), 'webhook_url': wh.get('url', ''), 'min_level': wh.get('min_level', 'info')}
+                elif wh_type == 'custom' and not self.webhook_config.get('url'):
+                    self.webhook_config = {'enabled': wh.get('enabled', False), 'url': wh.get('url', ''), 'min_level': wh.get('min_level', 'warning')}
+        else:
+            # Legacy format: build webhooks from individual configs
+            self.webhooks = []
+            for cfg_type, cfg, url_key in [
+                ('slack', self.slack_config, 'webhook_url'),
+                ('discord', self.discord_config, 'webhook_url'),
+                ('custom', self.webhook_config, 'url'),
+            ]:
+                if cfg.get('enabled') and cfg.get(url_key):
+                    self.webhooks.append({
+                        'type': cfg_type,
+                        'url': cfg[url_key],
+                        'min_level': cfg.get('min_level', 'info'),
+                        'enabled': True,
+                    })
+
+        for wh in self.webhooks:
+            logger.info(f"{wh.get('type', 'custom').title()} notifications enabled (min_level={wh.get('min_level', 'info')})")
 
     def reload_config(self):
         """Re-read webhook config from strategy params (called on settings change)."""
@@ -87,13 +113,18 @@ class NotificationManager:
         if self.sms_enabled:
             self._send_sms(subject, message)
 
-        # Webhook channels: level-filtered
-        if self._should_send(self.slack_config, level):
-            self._send_slack(subject, message, level)
-        if self._should_send(self.discord_config, level):
-            self._send_discord(subject, message, level)
-        if self._should_send(self.webhook_config, level):
-            self._send_webhook(subject, message, level)
+        # Webhook channels: iterate unified list
+        for wh in self.webhooks:
+            if not self._should_send(wh, level):
+                continue
+            url = wh.get('url', '')
+            wh_type = wh.get('type', 'custom')
+            if wh_type == 'slack':
+                self._send_slack(subject, message, level, url=url)
+            elif wh_type == 'discord':
+                self._send_discord(subject, message, level, url=url)
+            else:
+                self._send_webhook(subject, message, level, url=url)
 
     def _send_rich(self, subject: str, message: str, level: str,
                    fields: Optional[List[Dict]] = None,
@@ -115,20 +146,21 @@ class NotificationManager:
             plain = self._fields_to_plain(message, fields)
             self._send_sms(subject, plain)
 
-        # Slack: plain text (Slack has its own field format, not worth maintaining)
-        if self._should_send(self.slack_config, level):
-            plain = self._fields_to_plain(message, fields)
-            self._send_slack(subject, plain, level)
-
-        # Discord: rich embed with fields
-        if self._should_send(self.discord_config, level):
-            self._send_discord_embed(subject, message, level,
-                                     fields=fields, color=color)
-
-        # Generic webhook: plain text
-        if self._should_send(self.webhook_config, level):
-            plain = self._fields_to_plain(message, fields)
-            self._send_webhook(subject, plain, level)
+        # Webhook channels: iterate unified list
+        for wh in self.webhooks:
+            if not self._should_send(wh, level):
+                continue
+            url = wh.get('url', '')
+            wh_type = wh.get('type', 'custom')
+            if wh_type == 'slack':
+                plain = self._fields_to_plain(message, fields)
+                self._send_slack(subject, plain, level, url=url)
+            elif wh_type == 'discord':
+                self._send_discord_embed(subject, message, level,
+                                         fields=fields, color=color, url=url)
+            else:
+                plain = self._fields_to_plain(message, fields)
+                self._send_webhook(subject, plain, level, url=url)
 
     @staticmethod
     def _fields_to_plain(message: str, fields: Optional[List[Dict]]) -> str:
@@ -154,9 +186,9 @@ class NotificationManager:
     # Channel-specific senders
     # ------------------------------------------------------------------
 
-    def _send_slack(self, subject: str, message: str, level: str):
+    def _send_slack(self, subject: str, message: str, level: str, url: str = None):
         """Send Slack notification via incoming webhook."""
-        url = self.slack_config.get('webhook_url', '')
+        url = url or self.slack_config.get('webhook_url', '')
         color = LEVEL_COLORS.get(level, LEVEL_COLORS['info'])['slack']
         payload = {
             'attachments': [{
@@ -178,9 +210,9 @@ class NotificationManager:
         """Build footer string with mode."""
         return f"The Daily Melt \u2022 {self.mode}"
 
-    def _send_discord(self, subject: str, message: str, level: str):
+    def _send_discord(self, subject: str, message: str, level: str, url: str = None):
         """Send Discord notification via webhook (plain embed, no fields)."""
-        url = self.discord_config.get('webhook_url', '')
+        url = url or self.discord_config.get('webhook_url', '')
         color = LEVEL_COLORS.get(level, LEVEL_COLORS['info'])['discord']
         payload = {
             'embeds': [{
@@ -202,7 +234,8 @@ class NotificationManager:
 
     def _send_discord_embed(self, subject: str, description: str, level: str,
                             fields: Optional[List[Dict]] = None,
-                            color: Optional[int] = None):
+                            color: Optional[int] = None,
+                            url: str = None):
         """Send Discord notification with structured embed fields.
 
         Args:
@@ -211,8 +244,9 @@ class NotificationManager:
             level: For level filtering only (color is set via color param)
             fields: List of {name, value, inline} dicts
             color: Discord embed color (int). If None, uses level default.
+            url: Override webhook URL.
         """
-        url = self.discord_config.get('webhook_url', '')
+        url = url or self.discord_config.get('webhook_url', '')
         if color is None:
             color = LEVEL_COLORS.get(level, LEVEL_COLORS['info'])['discord']
 
@@ -236,9 +270,9 @@ class NotificationManager:
         except Exception as e:
             logger.error(f"Failed to send Discord embed: {e}")
 
-    def _send_webhook(self, subject: str, message: str, level: str):
+    def _send_webhook(self, subject: str, message: str, level: str, url: str = None):
         """Send generic webhook notification."""
-        url = self.webhook_config.get('url', '')
+        url = url or self.webhook_config.get('url', '')
         payload = {
             'subject': subject,
             'message': message,
@@ -708,8 +742,12 @@ class NotificationManager:
     # Utility methods
     # ------------------------------------------------------------------
 
-    def send_test(self, channel: str) -> Tuple[bool, Optional[str]]:
+    def send_test(self, channel: str, url: str = None) -> Tuple[bool, Optional[str]]:
         """Send a test notification to a single channel.
+
+        Args:
+            channel: 'slack', 'discord', 'webhook', or 'custom'
+            url: Optional URL override (used by API test endpoint)
 
         Returns:
             (success, error_message) tuple
@@ -720,20 +758,20 @@ class NotificationManager:
 
         try:
             if channel == 'slack':
-                url = self.slack_config.get('webhook_url', '')
+                url = url or self.slack_config.get('webhook_url', '')
                 if not url:
                     return False, "Slack webhook URL is empty"
-                self._send_slack(subject, message, level)
+                self._send_slack(subject, message, level, url=url)
             elif channel == 'discord':
-                url = self.discord_config.get('webhook_url', '')
+                url = url or self.discord_config.get('webhook_url', '')
                 if not url:
                     return False, "Discord webhook URL is empty"
-                self._send_discord(subject, message, level)
-            elif channel == 'webhook':
-                url = self.webhook_config.get('url', '')
+                self._send_discord(subject, message, level, url=url)
+            elif channel in ('webhook', 'custom'):
+                url = url or self.webhook_config.get('url', '')
                 if not url:
                     return False, "Webhook URL is empty"
-                self._send_webhook(subject, message, level)
+                self._send_webhook(subject, message, level, url=url)
             else:
                 return False, f"Unknown channel: {channel}"
             return True, None

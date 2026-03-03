@@ -5652,12 +5652,13 @@ def _notify_bot_settings_changed():
 def _redact_secrets(d: dict, parent_key: str = '') -> dict:
     """Deep-copy a dict, replacing sensitive values with '****'."""
     secret_keys = {'app_key', 'app_secret', 'consumer_key', 'consumer_secret',
-                   'password', 'secret', 'token', 'twilio_token', 'twilio_sid',
-                   'webhook_url'}
+                   'password', 'secret', 'token', 'twilio_token', 'twilio_sid'}
     out = {}
     for k, v in d.items():
         if isinstance(v, dict):
             out[k] = _redact_secrets(v, k)
+        elif isinstance(v, list):
+            out[k] = [_redact_secrets(item, k) if isinstance(item, dict) else item for item in v]
         elif k in secret_keys and isinstance(v, str) and v:
             out[k] = '****' + v[-4:] if len(v) > 4 else '****'
         else:
@@ -5669,6 +5670,27 @@ def _redact_secrets(d: dict, parent_key: str = '') -> dict:
 def api_get_settings():
     """Get current settings (YAML + runtime overrides), with secrets redacted."""
     settings = _load_settings()
+
+    # Migrate legacy notification format to webhooks array for frontend
+    notif = settings.get('notifications', {})
+    if 'webhooks' not in notif:
+        webhooks = []
+        for cfg_type, cfg, url_key in [
+            ('slack', notif.get('slack', {}), 'webhook_url'),
+            ('discord', notif.get('discord', {}), 'webhook_url'),
+            ('custom', notif.get('webhook', {}), 'url'),
+        ]:
+            url_val = cfg.get(url_key, '')
+            if cfg.get('enabled') or url_val:
+                webhooks.append({
+                    'type': cfg_type,
+                    'url': url_val,
+                    'min_level': cfg.get('min_level', 'info'),
+                    'enabled': bool(cfg.get('enabled', False)),
+                })
+        notif['webhooks'] = webhooks
+        settings['notifications'] = notif
+
     return jsonify(_redact_secrets(settings))
 
 
@@ -5728,24 +5750,16 @@ def api_reset_settings():
 def api_notifications_test():
     """Send a test notification to a single channel."""
     data = request.json or {}
-    channel = data.get('channel')
-    if channel not in ('slack', 'discord', 'webhook'):
-        return jsonify({'success': False, 'message': 'Invalid channel'}), 400
+    channel = data.get('type') or data.get('channel', '')
+    url = data.get('url') or data.get('webhook_url', '')
+    if channel not in ('slack', 'discord', 'custom', 'webhook'):
+        return jsonify({'success': False, 'message': 'Invalid channel type'}), 400
 
     try:
         from src.utils.notifications import NotificationManager
         nm = NotificationManager()
 
-        # Override config from request data so test uses the URL being configured
-        # (not yet saved to YAML)
-        if channel == 'slack' and data.get('webhook_url'):
-            nm.slack_config = {'enabled': True, 'webhook_url': data['webhook_url'], 'min_level': 'info'}
-        elif channel == 'discord' and data.get('webhook_url'):
-            nm.discord_config = {'enabled': True, 'webhook_url': data['webhook_url'], 'min_level': 'info'}
-        elif channel == 'webhook' and data.get('url'):
-            nm.webhook_config = {'enabled': True, 'url': data['url'], 'min_level': 'info'}
-
-        success, error = nm.send_test(channel)
+        success, error = nm.send_test(channel, url=url or None)
         if success:
             return jsonify({'success': True, 'message': 'Test notification sent!'})
         else:
@@ -5757,7 +5771,7 @@ def api_notifications_test():
 
 @app.route('/api/notifications/save', methods=['POST'])
 def api_notifications_save():
-    """Save notification settings directly to strategy_params.yaml."""
+    """Save notification settings as webhooks array to strategy_params.yaml."""
     data = request.json
     if not data:
         return jsonify({'success': False, 'error': 'No data provided'}), 400
@@ -5769,25 +5783,31 @@ def api_notifications_save():
             with open(SETTINGS_FILE, 'r') as f:
                 settings = yaml.safe_load(f) or {}
 
-        # Build notifications section from request
-        notifications = {
-            'slack': {
-                'enabled': bool(data.get('slack_enabled', False)),
-                'webhook_url': data.get('slack_webhook_url', ''),
-                'min_level': data.get('slack_min_level', 'info'),
-            },
-            'discord': {
-                'enabled': bool(data.get('discord_enabled', False)),
-                'webhook_url': data.get('discord_webhook_url', ''),
-                'min_level': data.get('discord_min_level', 'info'),
-            },
-            'webhook': {
-                'enabled': bool(data.get('webhook_enabled', False)),
-                'url': data.get('webhook_url', ''),
-                'min_level': data.get('webhook_min_level', 'warning'),
-            },
-        }
+        webhooks_raw = data.get('webhooks', [])
+        if not isinstance(webhooks_raw, list):
+            return jsonify({'success': False, 'error': 'webhooks must be an array'}), 400
+        if len(webhooks_raw) > 5:
+            return jsonify({'success': False, 'error': 'Maximum 5 webhooks allowed'}), 400
 
+        # Sanitize and validate each entry
+        webhooks = []
+        for wh in webhooks_raw:
+            wh_type = wh.get('type', 'custom')
+            if wh_type not in ('discord', 'slack', 'custom'):
+                wh_type = 'custom'
+            webhooks.append({
+                'type': wh_type,
+                'url': (wh.get('url') or '').strip(),
+                'min_level': wh.get('min_level', 'info') if wh.get('min_level') in ('info', 'warning', 'critical') else 'info',
+                'enabled': bool(wh.get('enabled', True)),
+            })
+
+        # Store new format; remove legacy keys
+        notifications = settings.get('notifications', {})
+        notifications.pop('slack', None)
+        notifications.pop('discord', None)
+        notifications.pop('webhook', None)
+        notifications['webhooks'] = webhooks
         settings['notifications'] = notifications
 
         # Write back to YAML
