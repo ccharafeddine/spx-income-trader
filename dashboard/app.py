@@ -2205,6 +2205,75 @@ def api_signals():
     return jsonify({'signals': filtered, 'date': today_str})
 
 
+@app.route('/api/shadow')
+def api_shadow():
+    """Shadow mode comparison log.
+
+    Returns recent shadow comparisons and summary statistics.
+    GET-only, no CSRF needed.
+    """
+    shadow_log = DATA_DIR / 'logs' / 'shadow.jsonl'
+    if not shadow_log.exists():
+        return jsonify({
+            'enabled': False,
+            'comparisons': [],
+            'summary': {},
+        })
+
+    limit = request.args.get('limit', 50, type=int)
+    limit = min(limit, 500)
+
+    comparisons = []
+    try:
+        with open(shadow_log, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        comparisons.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+    except Exception as e:
+        logger.warning(f"Failed to read shadow log: {e}")
+        return jsonify({'enabled': False, 'comparisons': [], 'summary': {}})
+
+    # Summary stats
+    total = len(comparisons)
+    entry_comps = [c for c in comparisons if c.get('type') == 'entry_comparison']
+    exit_comps = [c for c in comparisons if c.get('type') == 'exit_comparison']
+    periodic_comps = [c for c in comparisons if c.get('type') == 'periodic_comparison']
+
+    price_diffs = [
+        c['divergence']['price_pts']
+        for c in entry_comps
+        if c.get('divergence', {}).get('price_pts') is not None
+    ]
+    would_differ = sum(
+        1 for c in entry_comps
+        if c.get('divergence', {}).get('decision_would_differ')
+    )
+
+    summary = {
+        'total_comparisons': total,
+        'entry_comparisons': len(entry_comps),
+        'exit_comparisons': len(exit_comps),
+        'periodic_comparisons': len(periodic_comps),
+        'avg_price_divergence_pts': round(sum(price_diffs) / len(price_diffs), 2) if price_diffs else None,
+        'max_price_divergence_pts': round(max(price_diffs), 2) if price_diffs else None,
+        'decisions_would_differ': would_differ,
+    }
+
+    # Return most recent N
+    recent = comparisons[-limit:]
+    recent.reverse()  # newest first
+
+    return jsonify({
+        'enabled': True,
+        'comparisons': recent,
+        'summary': summary,
+    })
+
+
 @app.route('/api/history')
 def api_history():
     """Historical: daily_stats, aggregate metrics, trade history with running total.

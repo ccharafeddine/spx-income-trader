@@ -136,6 +136,17 @@ class TradingBot:
         self.skip_confirm = skip_confirm
         self.recorder = recorder
 
+        # Shadow mode: read-only Schwab comparison during dry-run
+        self.shadow = None
+        shadow_cfg = STRATEGY_PARAMS.get('broker', {}).get('shadow', {})
+        if shadow_cfg.get('enabled', False):
+            try:
+                from src.shadow.comparator import ShadowComparator
+                self.shadow = ShadowComparator(STRATEGY_PARAMS)
+                logger.info("Shadow mode: ENABLED (Schwab read-only comparison)")
+            except Exception as e:
+                logger.warning(f"Shadow mode failed to initialize: {e}")
+
         # Initialize PDT Tracker
         pdt_cfg = STRATEGY_PARAMS.get('pdt', {})
         pdt_enabled = pdt_cfg.get('pdt_protection', True)
@@ -867,6 +878,9 @@ class TradingBot:
                             bars_built=self._journal_bars_built,
                             pulse_bars=self._journal_pulse_bars,
                             positions_count=len(self.position_manager.get_open_trades()))
+
+                    if self.shadow:
+                        self.shadow.periodic_check()
 
                 # Check for dashboard settings changes
                 settings_changed_file = Path(BASE_DIR) / 'database' / '.settings_changed'
@@ -1731,6 +1745,10 @@ class TradingBot:
                     exit_reason=closed.get('exit_reason', ''),
                     duration_minutes=closed.get('duration_minutes', 0))
 
+            if self.shadow and closed.get('spread'):
+                dry_val = closed.get('exit_value', closed.get('current_value', 0))
+                self.shadow.compare_at_exit(closed['spread'], dry_val)
+
             # Check consecutive loss streak for notification
             if closed['pnl'] < 0 and self.notifier:
                 dm = self.portfolio.drawdown_manager
@@ -2250,6 +2268,11 @@ class TradingBot:
                 low=current_price, close=current_price,
             )
 
+            if self.shadow and spread:
+                self.shadow.compare_at_entry(
+                    direction, current_price, options_chain,
+                    spread, quantity, chain_exp)
+
             trade = self.position_manager.enter_trade(
                 spread, dummy_bar, quantity,
                 strategy_type=strategy_name,
@@ -2638,6 +2661,11 @@ class TradingBot:
                 f"max risk ${quantity * max_risk_per_contract:.2f}, "
                 f"account ${self.portfolio.account_size:,.0f})"
             )
+            if self.shadow and spread:
+                self.shadow.compare_at_entry(
+                    direction, current_price, options_chain,
+                    spread, quantity, expiration)
+
             trade = self.position_manager.enter_trade(
                 spread,
                 setup_bar,

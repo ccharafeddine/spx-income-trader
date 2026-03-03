@@ -9,6 +9,9 @@ broker:
     callback_url: "https://127.0.0.1"
     token_path: "database/schwab_token.json"
     account_number: ""       # Your Schwab account number
+  shadow:
+    enabled: false           # Requires Schwab credentials in keyring
+    compare_interval_min: 15 # Minutes between periodic price/balance checks
   ibkr:
     host: "127.0.0.1"
     port: 7496
