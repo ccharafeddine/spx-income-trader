@@ -330,12 +330,14 @@ class DatabaseManager:
             cursor.execute("""
                 SELECT
                     COUNT(*) as trades_count,
-                    COALESCE(SUM(CASE WHEN status = 'closed' THEN pnl ELSE 0 END), 0.0) as realized_pnl
+                    COALESCE(SUM(CASE WHEN status = 'closed' THEN pnl ELSE 0 END), 0.0) as realized_pnl,
+                    COALESCE(SUM(CASE WHEN status = 'closed' AND pnl > 0 THEN 1 ELSE 0 END), 0) as wins,
+                    COALESCE(SUM(CASE WHEN status = 'closed' AND pnl < 0 THEN 1 ELSE 0 END), 0) as losses
                 FROM trades
                 WHERE DATE(entry_time) = ?
             """, (trade_date,))
             row = cursor.fetchone()
-            return {'trades_count': row[0], 'realized_pnl': row[1]}
+            return {'trades_count': row[0], 'realized_pnl': row[1], 'wins': row[2], 'losses': row[3]}
 
     def update_daily_stats(self, trade_date: date):
         """Update daily statistics"""

@@ -1507,13 +1507,13 @@ class TradingBot:
                     except Exception:
                         live_equity = None
 
-                    # Compute wins/losses and streak for EOD summary
-                    _wins = 0
-                    _losses = 0
+                    # Wins/losses from DB (authoritative source)
+                    _wins = db_summary.get('wins', 0)
+                    _losses = db_summary.get('losses', 0)
+
+                    # Streak from DrawdownManager (tracks consecutive wins/losses)
                     _streak = ''
                     if dm:
-                        _wins = getattr(dm, 'daily_wins', 0)
-                        _losses = getattr(dm, 'daily_losses', 0)
                         _cl = getattr(dm, 'consecutive_losses', 0)
                         _cw = getattr(dm, 'consecutive_wins', 0)
                         if _cl > 0:
