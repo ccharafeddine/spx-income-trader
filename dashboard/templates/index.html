@@ -2540,6 +2540,123 @@ header::after {
   flex: 1; max-width: 300px; height: 4px;
   accent-color: #06b6d4;
 }
+
+/* ---------------------------------------------------------------
+   Micro-interaction animations
+   --------------------------------------------------------------- */
+
+/* Button press effect */
+.bot-ctrl-btn, .header-btn, .tab-btn, #mute-btn, .btn-primary, .btn-secondary {
+  transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s, color 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.bot-ctrl-btn:active:not(:disabled), .header-btn:active, .tab-btn:active,
+#mute-btn:active, .btn-primary:active, .btn-secondary:active {
+  transform: scale(0.93);
+}
+
+/* Tab content fade-in */
+@keyframes tab-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.tab-content.active {
+  animation: tab-fade-in 0.25s ease-out;
+}
+
+/* P&L glow flashes */
+@keyframes pnl-glow-green {
+  0%   { text-shadow: 0 0 8px rgba(16, 185, 129, 0.9); }
+  100% { text-shadow: none; }
+}
+@keyframes pnl-glow-red {
+  0%   { text-shadow: 0 0 8px rgba(239, 68, 68, 0.9); }
+  100% { text-shadow: none; }
+}
+.pnl-flash-up {
+  animation: pnl-glow-green 0.6s ease-out;
+}
+.pnl-flash-down {
+  animation: pnl-glow-red 0.6s ease-out;
+}
+
+/* Position card entrance */
+@keyframes card-enter {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.position-card.card-entering {
+  animation: card-enter 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Mute button bounce */
+@keyframes mute-bounce {
+  0%   { transform: scale(0.85) rotate(-8deg); }
+  50%  { transform: scale(1.1) rotate(4deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+#mute-btn.mute-animating {
+  animation: mute-bounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Toggle squeeze */
+@keyframes toggle-squeeze {
+  0%   { width: 18px; }
+  50%  { width: 22px; }
+  100% { width: 18px; }
+}
+.switch.toggling .slider-toggle:before {
+  animation: toggle-squeeze 0.3s ease-in-out;
+}
+.switch.toggling input:checked + .slider-toggle:before {
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+
+/* Risk bar pulse */
+@keyframes risk-bar-pulse {
+  0%   { box-shadow: 0 0 6px rgba(255,255,255,0.5); }
+  100% { box-shadow: 0 0 0 rgba(255,255,255,0); }
+}
+.risk-bar-fill.bar-pulsing {
+  animation: risk-bar-pulse 0.6s ease-out;
+}
+
+/* LED state flash */
+@keyframes led-flash {
+  from { filter: brightness(2); }
+  to   { filter: brightness(1); }
+}
+.status-light .led.led-changed {
+  animation: led-flash 0.4s ease-out;
+}
+
+/* Settings gear spin */
+@keyframes gear-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(90deg); }
+}
+#settings-toggle.settings-open svg {
+  animation: gear-spin 0.3s ease-out forwards;
+}
+#settings-toggle:not(.settings-open) svg {
+  transition: transform 0.3s ease-out;
+}
+
+/* Ripple effect */
+.ripple-container {
+  position: relative;
+  overflow: hidden;
+}
+.ripple-circle {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.15);
+  transform: scale(0);
+  animation: ripple-expand 0.5s ease-out forwards;
+  pointer-events: none;
+}
+@keyframes ripple-expand {
+  to { transform: scale(4); opacity: 0; }
+}
 </style>
 </head>
 <body>
@@ -3731,6 +3848,7 @@ class SoundManager {
   constructor() {
     this.ctx = null;
     this.muted = false;
+    this._master = null;
   }
   init() {
     if (!this.ctx) {
@@ -3745,59 +3863,286 @@ class SoundManager {
       this.ctx.resume();
     }
   }
-  _tone(freq, duration, vol, type) {
-    if (this.muted || !this.ctx) return;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = type || 'sine';
-    osc.frequency.value = freq;
-    gain.gain.setValueAtTime(vol || 0.08, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
-    osc.connect(gain);
-    gain.connect(this.ctx.destination);
-    osc.start();
-    osc.stop(this.ctx.currentTime + duration);
+
+  // Shared master gain node
+  _getMaster() {
+    if (!this._master || !this.ctx) return null;
+    return this._master;
   }
+  _ensureMaster() {
+    if (!this.ctx) return null;
+    if (!this._master) {
+      this._master = this.ctx.createGain();
+      this._master.gain.value = 0.7;
+      this._master.connect(this.ctx.destination);
+    }
+    return this._master;
+  }
+
+  // Create 2-3 detuned oscillators through a BiquadFilter
+  // opts: { types, detunes, filterType, filterFreq, filterQ, gain }
+  _pad(freq, opts) {
+    if (!this.ctx) return null;
+    const master = this._ensureMaster();
+    const types = opts.types || ['sine', 'sine'];
+    const detunes = opts.detunes || [-6, 6];
+    const filterType = opts.filterType || 'lowpass';
+    const filterFreq = opts.filterFreq || 4000;
+    const filterQ = opts.filterQ || 1;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = filterType;
+    filter.frequency.value = filterFreq;
+    filter.Q.value = filterQ;
+
+    const env = this.ctx.createGain();
+    env.gain.value = 0;
+    filter.connect(env);
+    env.connect(master);
+
+    const oscs = types.map((type, i) => {
+      const osc = this.ctx.createOscillator();
+      osc.type = type;
+      osc.frequency.value = freq;
+      osc.detune.value = detunes[i] || 0;
+      osc.connect(filter);
+      return osc;
+    });
+
+    return { oscs, filter, env };
+  }
+
+  // ADSR envelope shaping. Returns the time when release ends (stop time)
+  _adsr(gainNode, opts) {
+    const t = this.ctx.currentTime + (opts.delay || 0);
+    const a = opts.attack || 0.005;
+    const d = opts.decay || 0.1;
+    const s = opts.sustain || 0.3;
+    const r = opts.release || 0.2;
+    const peak = opts.peak || 0.15;
+    const dur = opts.duration || 0.3;
+
+    gainNode.gain.setValueAtTime(0, t);
+    gainNode.gain.linearRampToValueAtTime(peak, t + a);
+    gainNode.gain.linearRampToValueAtTime(peak * s, t + a + d);
+    // Hold at sustain level until release
+    const releaseStart = t + dur - r;
+    gainNode.gain.setValueAtTime(peak * s, Math.max(releaseStart, t + a + d));
+    gainNode.gain.linearRampToValueAtTime(0.0001, t + dur);
+    return t + dur + 0.05;
+  }
+
+  // Animate filter cutoff over time
+  _filterSweep(filter, from, to, dur, delay) {
+    const t = this.ctx.currentTime + (delay || 0);
+    filter.frequency.setValueAtTime(from, t);
+    filter.frequency.linearRampToValueAtTime(to, t + dur);
+  }
+
+  // Start all oscillators and schedule stop
+  _startStop(oscs, stopTime) {
+    const t = this.ctx.currentTime;
+    oscs.forEach(o => { o.start(t); o.stop(stopTime); });
+  }
+
   play(type) {
     if (this.muted || !this.ctx) return;
     console.debug('[Sound]', type);
+
     switch (type) {
-      case 'bar-complete':
-        this._tone(800, 0.05, 0.12, 'sine');
+
+      // "Woody tick" - triangle+sine through bandpass, 120ms
+      case 'bar-complete': {
+        const pad = this._pad(800, {
+          types: ['triangle', 'sine'],
+          detunes: [-4, 4],
+          filterType: 'bandpass', filterFreq: 900, filterQ: 3
+        });
+        if (!pad) break;
+        const stop = this._adsr(pad.env, { attack: 0.003, decay: 0.06, sustain: 0.1, release: 0.05, peak: 0.14, duration: 0.12 });
+        this._startStop(pad.oscs, stop);
         break;
+      }
+
+      // D5-to-A5 rising chime, 2 voices each, lowpass sweep up, 320ms
       case 'pulse-detected': {
-        this._tone(600, 0.08, 0.18, 'sine');
-        setTimeout(() => this._tone(900, 0.08, 0.18, 'sine'), 100);
+        const notes = [587.33, 880]; // D5, A5
+        notes.forEach((freq, i) => {
+          const pad = this._pad(freq, {
+            types: ['sine', 'triangle'],
+            detunes: [-5, 5],
+            filterType: 'lowpass', filterFreq: 1200, filterQ: 1.5
+          });
+          if (!pad) return;
+          const delay = i * 0.12;
+          const stop = this._adsr(pad.env, { delay, attack: 0.008, decay: 0.08, sustain: 0.2, release: 0.1, peak: 0.18, duration: 0.2 });
+          this._filterSweep(pad.filter, 1200, 4000, 0.2, delay);
+          pad.oscs.forEach(o => { o.start(this.ctx.currentTime + delay); o.stop(stop); });
+        });
         break;
       }
+
+      // E4-G#4-B4 staggered arpeggio, 3 voices per note, 440ms
       case 'trade-opened': {
-        [523, 659, 784].forEach(f => this._tone(f, 0.2, 0.25, 'sine'));
+        const notes = [329.63, 415.30, 493.88]; // E4, G#4, B4
+        notes.forEach((freq, i) => {
+          const pad = this._pad(freq, {
+            types: ['sine', 'triangle', 'sine'],
+            detunes: [-8, 0, 8],
+            filterType: 'lowpass', filterFreq: 3000, filterQ: 1
+          });
+          if (!pad) return;
+          const delay = i * 0.045;
+          const stop = this._adsr(pad.env, { delay, attack: 0.01, decay: 0.12, sustain: 0.35, release: 0.15, peak: 0.2, duration: 0.35 });
+          this._filterSweep(pad.filter, 2000, 5000, 0.3, delay);
+          pad.oscs.forEach(o => { o.start(this.ctx.currentTime + delay); o.stop(stop); });
+        });
         break;
       }
+
+      // C5-E5-G5-C6 fast 4-note fanfare, sine+triangle, filter opens per note, 710ms
       case 'trade-closed-profit': {
-        this._tone(523, 0.1, 0.25, 'sine');
-        setTimeout(() => this._tone(659, 0.1, 0.25, 'sine'), 100);
-        setTimeout(() => this._tone(784, 0.15, 0.25, 'sine'), 200);
+        const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+        notes.forEach((freq, i) => {
+          const pad = this._pad(freq, {
+            types: ['sine', 'triangle'],
+            detunes: [-6, 6],
+            filterType: 'lowpass', filterFreq: 1500 + i * 800, filterQ: 1.2
+          });
+          if (!pad) return;
+          const delay = i * 0.09;
+          const dur = i === 3 ? 0.35 : 0.18;
+          const stop = this._adsr(pad.env, { delay, attack: 0.008, decay: 0.06, sustain: 0.4, release: 0.1, peak: 0.22, duration: dur });
+          this._filterSweep(pad.filter, 1500 + i * 500, 3000 + i * 1000, dur, delay);
+          pad.oscs.forEach(o => { o.start(this.ctx.currentTime + delay); o.stop(stop); });
+        });
         break;
       }
-      case 'trade-closed-loss':
-        this._tone(220, 0.3, 0.25, 'sine');
+
+      // E4 down to Eb4, heavy lowpass (muffled), slow attack, 800ms
+      case 'trade-closed-loss': {
+        const pad = this._pad(329.63, {
+          types: ['sine', 'sine', 'triangle'],
+          detunes: [-10, 0, 10],
+          filterType: 'lowpass', filterFreq: 600, filterQ: 0.7
+        });
+        if (!pad) break;
+        // Gentle pitch descent E4 -> Eb4
+        pad.oscs.forEach(o => {
+          o.frequency.setValueAtTime(329.63, this.ctx.currentTime);
+          o.frequency.linearRampToValueAtTime(311.13, this.ctx.currentTime + 0.8);
+        });
+        const stop = this._adsr(pad.env, { attack: 0.08, decay: 0.25, sustain: 0.5, release: 0.3, peak: 0.18, duration: 0.8 });
+        this._filterSweep(pad.filter, 600, 300, 0.8);
+        this._startStop(pad.oscs, stop);
         break;
+      }
+
+      // A5-D6-D6 triple through bandpass (resonant), triangle wave, 360ms
       case 'alert': {
-        this._tone(1000, 0.06, 0.3, 'square');
-        setTimeout(() => this._tone(1000, 0.06, 0.3, 'square'), 120);
+        const notes = [880, 1174.66, 1174.66]; // A5, D6, D6
+        notes.forEach((freq, i) => {
+          const pad = this._pad(freq, {
+            types: ['triangle', 'triangle'],
+            detunes: [-4, 4],
+            filterType: 'bandpass', filterFreq: 2000, filterQ: 2.5
+          });
+          if (!pad) return;
+          const delay = i * 0.1;
+          const stop = this._adsr(pad.env, { delay, attack: 0.005, decay: 0.04, sustain: 0.2, release: 0.06, peak: 0.25, duration: 0.12 });
+          pad.oscs.forEach(o => { o.start(this.ctx.currentTime + delay); o.stop(stop); });
+        });
         break;
       }
+
+      // Bell synthesis: A4 with inharmonic partials, 12 detuned oscillators, double-strike, 2.3s
       case 'market-open': {
-        this._tone(523, 0.3, 0.25, 'sine');
-        setTimeout(() => this._tone(659, 0.3, 0.25, 'sine'), 150);
-        setTimeout(() => this._tone(784, 0.5, 0.3, 'sine'), 300);
+        const master = this._ensureMaster();
+        if (!master) break;
+        const baseFreq = 440; // A4
+        const partials = [1, 2.4, 4.5, 6.8]; // Inharmonic bell ratios
+        const strikes = [0, 0.15]; // Double-strike timing
+
+        strikes.forEach(strikeDelay => {
+          const strikeVol = strikeDelay === 0 ? 1.0 : 0.6;
+          partials.forEach((ratio, pi) => {
+            const freq = baseFreq * ratio;
+            const vol = strikeVol * (1 - pi * 0.2);
+            const filter = this.ctx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.value = 6000;
+            filter.Q.value = 0.5;
+            const env = this.ctx.createGain();
+            env.gain.value = 0;
+            filter.connect(env);
+            env.connect(master);
+
+            // 3 detuned oscillators per partial
+            const oscs = [-8, 0, 8].map(det => {
+              const osc = this.ctx.createOscillator();
+              osc.type = pi < 2 ? 'sine' : 'triangle';
+              osc.frequency.value = freq;
+              osc.detune.value = det;
+              osc.connect(filter);
+              return osc;
+            });
+
+            const dur = 2.3 - pi * 0.3;
+            const t = this.ctx.currentTime + strikeDelay;
+            env.gain.setValueAtTime(0, t);
+            env.gain.linearRampToValueAtTime(0.12 * vol, t + 0.003);
+            env.gain.exponentialRampToValueAtTime(0.04 * vol, t + 0.3);
+            env.gain.exponentialRampToValueAtTime(0.001, t + dur);
+
+            // Filter decay for natural bell timbre
+            filter.frequency.setValueAtTime(6000, t);
+            filter.frequency.exponentialRampToValueAtTime(1500, t + dur * 0.7);
+
+            oscs.forEach(o => { o.start(t); o.stop(t + dur + 0.05); });
+          });
+        });
         break;
       }
+
+      // Same bell technique at E4 (lower), single strike, longer decay, 2.5s
       case 'market-close': {
-        this._tone(784, 0.3, 0.2, 'sine');
-        setTimeout(() => this._tone(659, 0.3, 0.2, 'sine'), 200);
-        setTimeout(() => this._tone(523, 0.5, 0.25, 'sine'), 400);
+        const master = this._ensureMaster();
+        if (!master) break;
+        const baseFreq = 329.63; // E4
+        const partials = [1, 2.4, 4.5, 6.8];
+
+        partials.forEach((ratio, pi) => {
+          const freq = baseFreq * ratio;
+          const filter = this.ctx.createBiquadFilter();
+          filter.type = 'lowpass';
+          filter.frequency.value = 5000;
+          filter.Q.value = 0.5;
+          const env = this.ctx.createGain();
+          env.gain.value = 0;
+          filter.connect(env);
+          env.connect(master);
+
+          const oscs = [-8, 0, 8].map(det => {
+            const osc = this.ctx.createOscillator();
+            osc.type = pi < 2 ? 'sine' : 'triangle';
+            osc.frequency.value = freq;
+            osc.detune.value = det;
+            osc.connect(filter);
+            return osc;
+          });
+
+          const dur = 2.5 - pi * 0.3;
+          const t = this.ctx.currentTime;
+          env.gain.setValueAtTime(0, t);
+          env.gain.linearRampToValueAtTime(0.1 * (1 - pi * 0.2), t + 0.004);
+          env.gain.exponentialRampToValueAtTime(0.03, t + 0.4);
+          env.gain.exponentialRampToValueAtTime(0.001, t + dur);
+
+          filter.frequency.setValueAtTime(5000, t);
+          filter.frequency.exponentialRampToValueAtTime(1200, t + dur * 0.7);
+
+          oscs.forEach(o => { o.start(t); o.stop(t + dur + 0.05); });
+        });
         break;
       }
     }
@@ -3811,8 +4156,57 @@ soundMgr.init();  // eager init (may start suspended, user interaction resumes)
 
 function toggleMute() {
   soundMgr.muted = !soundMgr.muted;
-  document.getElementById('mute-btn').textContent = soundMgr.muted ? '\u{1F507}' : '\u{1F50A}';
+  const btn = document.getElementById('mute-btn');
+  btn.textContent = soundMgr.muted ? '\u{1F507}' : '\u{1F50A}';
+  btn.classList.remove('mute-animating');
+  void btn.offsetWidth; // reflow
+  btn.classList.add('mute-animating');
+  btn.addEventListener('animationend', () => btn.classList.remove('mute-animating'), { once: true });
 }
+
+// Ripple effect utility
+function addRipple(e) {
+  const btn = e.currentTarget;
+  if (!btn.classList.contains('ripple-container')) btn.classList.add('ripple-container');
+  const rect = btn.getBoundingClientRect();
+  const size = Math.max(rect.width, rect.height) * 2;
+  const x = e.clientX - rect.left - size / 2;
+  const y = e.clientY - rect.top - size / 2;
+  const circle = document.createElement('span');
+  circle.className = 'ripple-circle';
+  circle.style.width = circle.style.height = size + 'px';
+  circle.style.left = x + 'px';
+  circle.style.top = y + 'px';
+  btn.appendChild(circle);
+  circle.addEventListener('animationend', () => circle.remove());
+}
+
+// P&L glow helper
+function flashPnl(el, newVal, prevVal) {
+  if (prevVal === null || newVal === prevVal) return;
+  el.classList.remove('pnl-flash-up', 'pnl-flash-down');
+  void el.offsetWidth;
+  el.classList.add(newVal > prevVal ? 'pnl-flash-up' : 'pnl-flash-down');
+  el.addEventListener('animationend', () => el.classList.remove('pnl-flash-up', 'pnl-flash-down'), { once: true });
+}
+
+// Wire up interactions on DOMContentLoaded
+document.addEventListener('DOMContentLoaded', () => {
+  // Ripple on all interactive buttons
+  document.querySelectorAll('.bot-ctrl-btn, .header-btn, .tab-btn, #mute-btn, .btn-primary, .btn-secondary').forEach(btn => {
+    btn.addEventListener('click', addRipple);
+  });
+
+  // Toggle squeeze on switch inputs
+  document.querySelectorAll('.switch input').forEach(input => {
+    input.addEventListener('change', function() {
+      const sw = this.closest('.switch');
+      if (!sw) return;
+      sw.classList.add('toggling');
+      setTimeout(() => sw.classList.remove('toggling'), 300);
+    });
+  });
+});
 
 // ---------------------------------------------------------------
 // State tracking for sound triggers
@@ -3845,6 +4239,13 @@ let prevClosedTodayCount = -1;
 let bellPlayedOpen = false;
 let bellPlayedClose = false;
 let prevMarketOpen = null;
+
+// Micro-interaction state tracking
+let prevDailyPnl = null;
+let prevRealizedPnl = null;
+let prevUnrealizedPnl = null;
+let prevPositionIds = new Set();
+let prevRiskPcts = { daily: null, weekly: null, monthly: null };
 
 // ---------------------------------------------------------------
 // CSRF token (embedded by server, validated on all POST/PUT/DELETE)
@@ -4040,7 +4441,18 @@ function isPreORB() {
 
 function setLightState(lightEl, labelEl, state, labelText) {
   if (lightEl) {
+    const prevState = lightEl.getAttribute('data-state');
     lightEl.setAttribute('data-state', state);
+    // Flash LED on state change
+    if (prevState && prevState !== state) {
+      const led = lightEl.querySelector('.led');
+      if (led) {
+        led.classList.remove('led-changed');
+        void led.offsetWidth;
+        led.classList.add('led-changed');
+        led.addEventListener('animationend', () => led.classList.remove('led-changed'), { once: true });
+      }
+    }
   }
   if (labelEl) {
     labelEl.textContent = labelText;
@@ -4438,14 +4850,20 @@ async function updateStatus() {
     const urEl = document.getElementById('acct-unrealized');
     urEl.textContent = fmt$(a.unrealized_pnl);
     urEl.className = 'val ' + colorClass(a.unrealized_pnl);
+    if (!initialLoad) flashPnl(urEl, a.unrealized_pnl, prevUnrealizedPnl);
+    prevUnrealizedPnl = a.unrealized_pnl;
 
     const dayEl = document.getElementById('acct-daily');
     dayEl.textContent = fmt$(a.daily_pnl);
     dayEl.className = 'val ' + colorClass(a.daily_pnl);
+    if (!initialLoad) flashPnl(dayEl, a.daily_pnl, prevDailyPnl);
+    prevDailyPnl = a.daily_pnl;
 
     const rlEl = document.getElementById('acct-realized');
     rlEl.textContent = fmt$(a.realized_pnl);
     rlEl.className = 'val ' + colorClass(a.realized_pnl);
+    if (!initialLoad) flashPnl(rlEl, a.realized_pnl, prevRealizedPnl);
+    prevRealizedPnl = a.realized_pnl;
 
     const retEl = document.getElementById('acct-return');
     retEl.textContent = fmtPct(a.total_return_pct);
@@ -4504,7 +4922,7 @@ async function updateStatus() {
           '<span class="tt-line">' + ttLine3 + '</span>' +
         '</span>';
 
-        html += '<div class="position-card ' + st + '">' +
+        html += '<div class="position-card ' + st + '" data-pos-id="' + (p.id || '') + '">' +
           '<div class="pos-header">' +
             '<span class="pos-dir ' + dirCls + '">' + spread + ' ' + p.short_strike + '/' + p.long_strike + '</span>' +
             '<span class="pos-status ' + st + '">' + (p.position_status || 'UNKNOWN') + tooltipHtml + '</span>' +
@@ -4521,8 +4939,20 @@ async function updateStatus() {
         '</div>';
       });
       posBody.innerHTML = html;
+      // Animate newly appeared position cards
+      if (!initialLoad) {
+        posBody.querySelectorAll('.position-card').forEach(card => {
+          const posId = card.getAttribute('data-pos-id');
+          if (posId && !prevPositionIds.has(posId)) {
+            card.classList.add('card-entering');
+            card.addEventListener('animationend', () => card.classList.remove('card-entering'), { once: true });
+          }
+        });
+      }
+      prevPositionIds = new Set(Array.from(posBody.querySelectorAll('.position-card')).map(c => c.getAttribute('data-pos-id')).filter(Boolean));
     } else {
       posBody.innerHTML = '<div class="empty">No open positions</div>';
+      prevPositionIds = new Set();
     }
   }
 
@@ -6933,7 +7363,7 @@ async function updateRiskStatus() {
     html += '<div class="risk-row">';
     html += '<span class="risk-led ' + dLed + '"></span>';
     html += '<span class="risk-label">Daily</span>';
-    html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + dLed + '" style="width:' + dPct.toFixed(0) + '%"></div></div>';
+    html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + dLed + '" data-risk-period="daily" style="width:' + dPct.toFixed(0) + '%"></div></div>';
     html += '<span class="risk-value">' + fmt$(Math.max(0, -dc.realized_pnl)) + ' / ' + fmt$(dc.max_loss_dollars) + '</span>';
     html += '</div>';
 
@@ -6945,7 +7375,7 @@ async function updateRiskStatus() {
       html += '<div class="risk-row">';
       html += '<span class="risk-led ' + wLed + '"></span>';
       html += '<span class="risk-label">Weekly</span>';
-      html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + wLed + '" style="width:' + wPct.toFixed(0) + '%"></div></div>';
+      html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + wLed + '" data-risk-period="weekly" style="width:' + wPct.toFixed(0) + '%"></div></div>';
       html += '<span class="risk-value">' + fmt$(Math.max(0, -wc.realized_pnl)) + ' / ' + fmt$(wc.max_loss_dollars) + '</span>';
       html += '</div>';
     }
@@ -6958,7 +7388,7 @@ async function updateRiskStatus() {
       html += '<div class="risk-row">';
       html += '<span class="risk-led ' + mLed + '"></span>';
       html += '<span class="risk-label">Monthly</span>';
-      html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + mLed + '" style="width:' + mPct.toFixed(0) + '%"></div></div>';
+      html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + mLed + '" data-risk-period="monthly" style="width:' + mPct.toFixed(0) + '%"></div></div>';
       html += '<span class="risk-value">' + fmt$(Math.max(0, -mc.realized_pnl)) + ' / ' + fmt$(mc.max_loss_dollars) + '</span>';
       html += '</div>';
     }
@@ -6983,6 +7413,22 @@ async function updateRiskStatus() {
     }
 
     el.innerHTML = html || '<span class="econ-no-events">No risk limits configured</span>';
+
+    // Pulse risk bars on >5% jump
+    var periods = {daily: dPct, weekly: r.weekly.enabled ? wPct : null, monthly: r.monthly.enabled ? mPct : null};
+    Object.keys(periods).forEach(function(period) {
+      var newPct = periods[period];
+      if (newPct === null) return;
+      var prev = prevRiskPcts[period];
+      if (prev !== null && Math.abs(newPct - prev) > 5) {
+        var barEl = el.querySelector('[data-risk-period="' + period + '"]');
+        if (barEl) {
+          barEl.classList.add('bar-pulsing');
+          barEl.addEventListener('animationend', function() { barEl.classList.remove('bar-pulsing'); }, { once: true });
+        }
+      }
+      prevRiskPcts[period] = newPct;
+    });
   } catch(e) {
     var el = document.getElementById('risk-status-body');
     if (el) el.innerHTML = '<span class="econ-no-events">Risk status unavailable</span>';
@@ -7277,14 +7723,17 @@ let pendingChanges = {};
 function toggleSettings() {
   const panel = document.getElementById('settings-panel');
   const overlay = document.getElementById('settings-overlay');
+  const toggle = document.getElementById('settings-toggle');
   const isOpen = panel.classList.contains('open');
 
   if (isOpen) {
     panel.classList.remove('open');
     overlay.classList.remove('visible');
+    if (toggle) toggle.classList.remove('settings-open');
   } else {
     panel.classList.add('open');
     overlay.classList.add('visible');
+    if (toggle) toggle.classList.add('settings-open');
     loadCurrentSettings();
   }
 }
