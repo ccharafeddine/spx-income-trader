@@ -46,6 +46,7 @@ header {
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   position: relative;
+  z-index: 1001;
 }
 header::after {
   content: '';
@@ -176,11 +177,16 @@ header::after {
   border: 1px solid var(--border);
   border-radius: 4px;
   color: var(--text-dim);
-  font-size: 16px;
-  padding: 2px 6px;
+  padding: 5px 8px;
   cursor: pointer;
   transition: all 0.2s;
   line-height: 1;
+  display: flex;
+  align-items: center;
+}
+#mute-btn svg {
+  width: 16px;
+  height: 16px;
 }
 #mute-btn:hover { border-color: var(--cyan); color: var(--text); }
 
@@ -2205,10 +2211,10 @@ header::after {
 /* Settings panel */
 .settings-panel {
   position: fixed;
-  top: 0;
+  top: 49px;
   right: 0;
   width: 380px;
-  height: 100vh;
+  height: calc(100vh - 49px);
   background: var(--panel);
   border-left: 1px solid var(--border);
   box-shadow: -4px 0 20px rgba(0,0,0,0.3);
@@ -2630,15 +2636,11 @@ header::after {
 }
 
 /* Settings gear spin */
-@keyframes gear-spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(90deg); }
+#settings-toggle svg {
+  transition: transform 0.3s ease-out;
 }
 #settings-toggle.settings-open svg {
-  animation: gear-spin 0.3s ease-out forwards;
-}
-#settings-toggle:not(.settings-open) svg {
-  transition: transform 0.3s ease-out;
+  transform: rotate(90deg);
 }
 
 /* Ripple effect */
@@ -2680,14 +2682,14 @@ header::after {
     </div>
   </div>
   <div class="header-right">
-    <a href="/settings" class="settings-link">Settings</a>
-    <button class="header-btn" id="settings-toggle" onclick="toggleSettings()" title="Settings" aria-label="Open settings panel">
+    <button class="header-btn" id="settings-toggle" onclick="toggleSettings()" title="Trading Settings" aria-label="Open trading settings panel">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"></circle>
         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
       </svg>
     </button>
-    <button id="mute-btn" onclick="toggleMute()" title="Toggle sounds" aria-label="Toggle sound notifications">&#x1F50A;</button>
+    <button id="mute-btn" onclick="toggleMute()" title="Toggle sounds" aria-label="Toggle sound notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path class="sound-waves" d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg></button>
+    <a href="/settings" class="settings-link">Account</a>
     <span>Next refresh: <span id="refresh-countdown">30</span>s</span>
     <span id="clock">--:--:--</span>
   </div>
@@ -4157,7 +4159,8 @@ soundMgr.init();  // eager init (may start suspended, user interaction resumes)
 function toggleMute() {
   soundMgr.muted = !soundMgr.muted;
   const btn = document.getElementById('mute-btn');
-  btn.textContent = soundMgr.muted ? '\u{1F507}' : '\u{1F50A}';
+  const waves = btn.querySelector('.sound-waves');
+  if (waves) waves.style.display = soundMgr.muted ? 'none' : '';
   btn.classList.remove('mute-animating');
   void btn.offsetWidth; // reflow
   btn.classList.add('mute-animating');
