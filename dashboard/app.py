@@ -1455,6 +1455,24 @@ def api_status():
         'contracts_display': f"{calculated} / {daily_contracts}",
     }
 
+    # Daily Income status (derived from DB, no JSON state file)
+    di_status = {'enabled': True, 'state': 'IDLE'}
+    try:
+        import sqlite3 as _di_sql
+        _di_db = Path(DATABASE_PATH)
+        if _di_db.exists():
+            _di_conn = _di_sql.connect(str(_di_db), timeout=5)
+            _open_di = _di_conn.execute(
+                "SELECT COUNT(*) FROM trades "
+                "WHERE strategy_type = 'daily_income' "
+                "AND LOWER(status) IN ('open', 'active', 'pending')"
+            ).fetchone()[0]
+            _di_conn.close()
+            if _open_di > 0:
+                di_status['state'] = 'POSITION'
+    except Exception:
+        pass
+
     # Tag 'n Turn status (read from persistence file if enabled)
     tag_n_turn_status = {'enabled': tnt_cfg.get('enabled', False)}
     if tnt_cfg.get('enabled', False):
@@ -1506,11 +1524,31 @@ def api_status():
                 import json
                 with open(bnb_path, 'r') as f:
                     bnb_data = json.load(f)
+                bnb_position_open = bnb_data.get('position_open', False)
+
+                # Cross-check DB: if JSON says position open but no open B&B trade exists, override
+                if bnb_position_open:
+                    try:
+                        import sqlite3 as _bnb_sql
+                        _bnb_db = Path(DATABASE_PATH)
+                        if _bnb_db.exists():
+                            _bnb_conn = _bnb_sql.connect(str(_bnb_db), timeout=5)
+                            _open_bnb = _bnb_conn.execute(
+                                "SELECT COUNT(*) FROM trades "
+                                "WHERE strategy_type = 'bnb' "
+                                "AND LOWER(status) IN ('open', 'active', 'pending')"
+                            ).fetchone()[0]
+                            _bnb_conn.close()
+                            if _open_bnb == 0:
+                                bnb_position_open = False
+                    except Exception:
+                        pass
+
                 bnb_status = {
                     'enabled': True,
                     'pending_signal': bnb_data.get('pending_signal'),
                     'active_signal': bnb_data.get('active_signal'),
-                    'position_open': bnb_data.get('position_open', False),
+                    'position_open': bnb_position_open,
                 }
         except Exception:
             pass
@@ -1524,11 +1562,31 @@ def api_status():
                 import json
                 with open(orb_path, 'r') as f:
                     orb_data = json.load(f)
+                orb_position_open = orb_data.get('position_open', False)
+
+                # Cross-check DB: if JSON says position open but no open ORB trade exists, override
+                if orb_position_open:
+                    try:
+                        import sqlite3 as _orb_sql
+                        _orb_db = Path(DATABASE_PATH)
+                        if _orb_db.exists():
+                            _orb_conn = _orb_sql.connect(str(_orb_db), timeout=5)
+                            _open_orb = _orb_conn.execute(
+                                "SELECT COUNT(*) FROM trades "
+                                "WHERE strategy_type = 'orb' "
+                                "AND LOWER(status) IN ('open', 'active', 'pending')"
+                            ).fetchone()[0]
+                            _orb_conn.close()
+                            if _open_orb == 0:
+                                orb_position_open = False
+                    except Exception:
+                        pass
+
                 orb_status = {
                     'enabled': True,
                     'opening_range': orb_data.get('opening_range'),
                     'triggered_today': orb_data.get('triggered_today', False),
-                    'position_open': orb_data.get('position_open', False),
+                    'position_open': orb_position_open,
                 }
         except Exception:
             pass
@@ -1623,6 +1681,7 @@ def api_status():
         'position_sizing': position_sizing,
         'account': account,
         'today_summary': today_summary,
+        'daily_income': di_status,
         'tag_n_turn': tag_n_turn_status,
         'bnb': bnb_status,
         'orb': orb_status,
