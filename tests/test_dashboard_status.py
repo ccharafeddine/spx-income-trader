@@ -703,3 +703,119 @@ def test_orb_strategy_type_persists_after_close(client_with_db):
 
     assert row[0] == 'orb', f"strategy_type was overwritten to '{row[0]}'"
     assert row[1] == 'closed'
+
+
+# --------------------------------------------------------------------------
+# 10. W Streak / L Streak proof tests
+#     Prove the counters on the Overview dashboard are correctly wired.
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def streak_client(tmp_path):
+    """Flask test client with a fresh temp database for streak tests."""
+    db_file = str(tmp_path / 'test_streaks.db')
+
+    schema_path = Path(__file__).parent.parent / 'database' / 'schema.sql'
+    conn = sqlite3.connect(db_file)
+    conn.executescript(schema_path.read_text())
+    conn.close()
+
+    app.config['TESTING'] = True
+    with patch('dashboard.app.DATABASE_PATH', db_file):
+        with app.test_client() as c:
+            yield c, db_file
+
+
+def _insert_streak_trade(db_file, trade_id, status, pnl, entry_time, exit_time,
+                         strategy_type='daily_income'):
+    """Insert a minimal trade row for streak testing."""
+    conn = sqlite3.connect(db_file)
+    conn.execute(
+        "INSERT INTO trades (id, strategy_type, status, pnl, entry_time, exit_time, "
+        "direction, short_strike, long_strike, spread_width, credit_received, "
+        "entry_price, quantity, expiration) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'bearish', 5800, 5795, 5.0, 1.50, 1.50, 1, '2026-02-28')",
+        (trade_id, strategy_type, status, pnl, entry_time, exit_time),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _get_streaks(client):
+    """Hit /api/risk-status and return the streaks dict."""
+    resp = client.get('/api/risk-status')
+    data = resp.get_json()
+    return data['streaks']
+
+
+class TestDashboardWLStreaks:
+    """Prove W Streak / L Streak counters are correctly wired end-to-end."""
+
+    def test_three_consecutive_wins(self, streak_client):
+        """After 3 consecutive winning trades, API returns win_streak=3, loss_streak=0."""
+        client, db_file = streak_client
+
+        trades = [
+            ('w1', 'closed', 120.0, '2026-02-10 09:45:00', '2026-02-10 10:30:00'),
+            ('w2', 'closed', 85.0,  '2026-02-11 09:45:00', '2026-02-11 11:00:00'),
+            ('w3', 'closed', 200.0, '2026-02-12 09:45:00', '2026-02-12 10:15:00'),
+        ]
+        for tid, status, pnl, entry_t, exit_t in trades:
+            _insert_streak_trade(db_file, tid, status, pnl, entry_t, exit_t)
+
+        streaks = _get_streaks(client)
+        assert streaks['win_streak'] == 3, f"Expected win_streak=3, got {streaks['win_streak']}"
+        assert streaks['loss_streak'] == 0, f"Expected loss_streak=0, got {streaks['loss_streak']}"
+        assert streaks['active'] == 'win'
+
+    def test_loss_after_three_wins(self, streak_client):
+        """After a loss following 3 wins, API returns win_streak=0, loss_streak=1."""
+        client, db_file = streak_client
+
+        trades = [
+            # 3 wins (oldest)
+            ('w1', 'closed', 120.0,  '2026-02-10 09:45:00', '2026-02-10 10:30:00'),
+            ('w2', 'closed', 85.0,   '2026-02-11 09:45:00', '2026-02-11 11:00:00'),
+            ('w3', 'closed', 200.0,  '2026-02-12 09:45:00', '2026-02-12 10:15:00'),
+            # 1 loss (most recent)
+            ('l1', 'closed', -150.0, '2026-02-13 09:45:00', '2026-02-13 10:00:00'),
+        ]
+        for tid, status, pnl, entry_t, exit_t in trades:
+            _insert_streak_trade(db_file, tid, status, pnl, entry_t, exit_t)
+
+        streaks = _get_streaks(client)
+        assert streaks['win_streak'] == 0, f"Expected win_streak=0, got {streaks['win_streak']}"
+        assert streaks['loss_streak'] == 1, f"Expected loss_streak=1, got {streaks['loss_streak']}"
+        assert streaks['active'] == 'loss'
+
+    def test_same_day_loss_then_win_by_entry_time(self, streak_client):
+        """2 trades same day: trade 1 loses (earlier entry), trade 2 wins (later entry).
+
+        The streak query orders by exit_time DESC.
+        Trade 2 exits after trade 1, so trade 2 is the most recent.
+        Expected: win_streak=1, loss_streak=0.
+        """
+        client, db_file = streak_client
+
+        trades = [
+            # Trade 1: enters first, exits first, loss
+            ('d1', 'closed', -100.0, '2026-02-14 09:35:00', '2026-02-14 10:00:00'),
+            # Trade 2: enters second, exits second, win
+            ('d2', 'closed', 75.0,   '2026-02-14 10:15:00', '2026-02-14 11:30:00'),
+        ]
+        for tid, status, pnl, entry_t, exit_t in trades:
+            _insert_streak_trade(db_file, tid, status, pnl, entry_t, exit_t)
+
+        streaks = _get_streaks(client)
+        assert streaks['win_streak'] == 1, f"Expected win_streak=1, got {streaks['win_streak']}"
+        assert streaks['loss_streak'] == 0, f"Expected loss_streak=0, got {streaks['loss_streak']}"
+        assert streaks['active'] == 'win'
+
+    def test_empty_db_returns_zero_streaks(self, streak_client):
+        """A fresh DB with no trades returns win_streak=0, loss_streak=0."""
+        client, _ = streak_client
+
+        streaks = _get_streaks(client)
+        assert streaks['win_streak'] == 0, f"Expected win_streak=0, got {streaks['win_streak']}"
+        assert streaks['loss_streak'] == 0, f"Expected loss_streak=0, got {streaks['loss_streak']}"
+        assert streaks['active'] == 'none'
