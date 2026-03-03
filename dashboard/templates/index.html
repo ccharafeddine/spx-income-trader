@@ -3079,7 +3079,7 @@ header::after {
 
     <!-- TRADE HISTORY + Performance -->
     <div class="panel" data-cpanel-id="ov-history">
-      <div class="panel-title cpanel-toggle">Trade History & Performance</div>
+      <div class="panel-title cpanel-toggle">Trade History & Performance <span style="font-size:10px;color:var(--text-dim);font-weight:normal;margin-left:6px">MTD</span></div>
       <div class="cpanel-body"><div>
         <div class="agg-stats" id="agg-stats"></div>
         <div class="equity-chart" id="equity-chart"></div>
@@ -5475,7 +5475,7 @@ async function updateGreeks() {
 }
 
 async function updateSignals() {
-  const d = await fetchJSON('/api/signals?days=30');
+  const d = await fetchJSON('/api/signals');
   if (!d || !d.signals || !d.signals.length) {
     document.getElementById('signal-log-body').innerHTML = '<div class="empty">No signals yet</div>';
     return;
@@ -5510,7 +5510,7 @@ async function updateSignals() {
 }
 
 async function updateHistory() {
-  const d = await fetchJSON('/api/history?days=30');
+  const d = await fetchJSON('/api/history');
   if (!d) return;
 
   // Aggregate stats

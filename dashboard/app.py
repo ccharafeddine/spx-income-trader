@@ -2186,30 +2186,37 @@ def api_chart_trades():
 
 @app.route('/api/signals')
 def api_signals():
-    """Signal log with optional days filter. Excludes signals outside market hours."""
+    """Signal log: today's signals only (resets at midnight ET).
+
+    Excludes signals outside market hours.
+    """
     if getattr(app, '_demo_mode', False) and app._replay_engine:
         return jsonify(app._replay_engine.get_signals())
-    days = request.args.get('days', 30, type=int)
-    cutoff = (datetime.now(ET).date() - timedelta(days=days)).isoformat()
+    today_str = datetime.now(ET).date().isoformat()
 
     all_signals = load_signals()
     filtered = [
         s for s in all_signals
-        if s.get('timestamp', '') >= cutoff
+        if s.get('timestamp', '').startswith(today_str)
         and _is_during_market_hours(s.get('timestamp', ''))
     ]
     filtered.sort(key=lambda s: s.get('timestamp', ''), reverse=True)
 
-    return jsonify({'signals': filtered, 'days': days})
+    return jsonify({'signals': filtered, 'date': today_str})
 
 
 @app.route('/api/history')
 def api_history():
-    """Historical: daily_stats, aggregate metrics, trade history with running total."""
+    """Historical: daily_stats, aggregate metrics, trade history with running total.
+
+    Scoped to month-to-date (MTD) by default.
+    """
     if getattr(app, '_demo_mode', False) and app._replay_engine:
         return jsonify(app._replay_engine.get_history())
-    days = request.args.get('days', 30, type=int)
-    cutoff = (datetime.now(ET).date() - timedelta(days=days)).isoformat()
+
+    # MTD scope: first day of current month in ET
+    today_et = datetime.now(ET).date()
+    mtd_cutoff = f"{today_et.year:04d}-{today_et.month:02d}-01"
 
     daily_stats = []
     trades = []
@@ -2223,10 +2230,10 @@ def api_history():
     try:
         conn = get_db_connection()
 
-        # Daily stats from table
+        # Daily stats from table (MTD)
         rows = conn.execute(
             "SELECT * FROM daily_stats WHERE date >= ? ORDER BY date DESC",
-            (cutoff,)
+            (mtd_cutoff,)
         ).fetchall()
         for r in rows:
             daily_stats.append(dict(r))
@@ -2236,10 +2243,10 @@ def api_history():
         spx_price = spx.get('price')
         _, all_closed = classify_trades(conn, spx_price)
 
-        # Filter by cutoff
+        # Filter to MTD by entry_time
         closed = [
             t for t in all_closed
-            if (t.get('entry_time', '') or '') >= cutoff
+            if (t.get('entry_time', '') or '') >= mtd_cutoff
         ]
 
         # Compute aggregate from trade-level data (more accurate than daily_stats)
@@ -2279,7 +2286,8 @@ def api_history():
         'daily_stats': daily_stats,
         'aggregate': aggregate,
         'trades': trades,
-        'days': days,
+        'scope': 'MTD',
+        'mtd_start': mtd_cutoff,
     })
 
 

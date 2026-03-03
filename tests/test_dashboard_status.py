@@ -8,6 +8,7 @@ Covers:
 - Risk bar drawdown values (winning day, losing day, circuit breaker)
 - Daily P&L in summary header
 - Open positions count
+- Strategy type persistence through trade close (regression: INSERT OR REPLACE bug)
 """
 
 import pytest
@@ -561,3 +562,144 @@ def test_open_positions_count_lifecycle(mock_yahoo, client_with_db):
     assert len(data2['open_positions']) == 0
     assert data2['closed_today_count'] == 1
     assert data2['today_pnl'] == 480.0
+
+
+# --------------------------------------------------------------------------
+# 9. Strategy type persistence through trade close
+#    Regression test: save_trade() used INSERT OR REPLACE which wiped
+#    strategy_type back to 'daily_income' on every exit save.
+# --------------------------------------------------------------------------
+
+def test_tnt_strategy_type_persists_after_close_via_update(client_with_db):
+    """TNT trade keeps strategy_type='tag_n_turn' after db.update_trade_close()."""
+    _, db_file, _ = client_with_db
+    today = datetime.now(ET).strftime('%Y-%m-%d')
+    future = (datetime.now(ET) + timedelta(days=2)).strftime('%Y-%m-%d')
+
+    # Insert a TNT trade as active
+    _insert_trade(db_file, 'tnt-persist-1',
+                  entry_time=f'{today} 13:00:00',
+                  status='active',
+                  strategy_type='tag_n_turn',
+                  expiration=f'{future} 16:00:00')
+
+    # Also store entry context columns to verify they survive
+    conn = sqlite3.connect(db_file)
+    conn.execute(
+        """UPDATE trades SET spx_at_entry=6050.25, vix_at_entry=14.3,
+           vix_regime='low' WHERE id='tnt-persist-1'""",
+    )
+    conn.commit()
+    conn.close()
+
+    # Simulate closing the trade using update_trade_close()
+    from database.db_manager import DatabaseManager
+    db = DatabaseManager(db_file)
+
+    # Build a minimal trade-like object with exit fields
+    class FakeTrade:
+        id = 'tnt-persist-1'
+        exit_time = f'{today} 14:30:00'
+        exit_price = 0.05
+        exit_order_id = 'ord-exit-1'
+        exit_reason = 'Target hit'
+        pnl = 650.0
+        pnl_percent = 43.3
+
+        class status:
+            value = 'closed'
+
+    db.update_trade_close(FakeTrade())
+
+    # Verify strategy_type and entry context survived
+    conn = sqlite3.connect(db_file)
+    row = conn.execute(
+        "SELECT strategy_type, spx_at_entry, vix_at_entry, vix_regime, status, pnl "
+        "FROM trades WHERE id='tnt-persist-1'"
+    ).fetchone()
+    conn.close()
+
+    assert row[0] == 'tag_n_turn', f"strategy_type was overwritten to '{row[0]}'"
+    assert row[1] == 6050.25, "spx_at_entry was wiped"
+    assert row[2] == 14.3, "vix_at_entry was wiped"
+    assert row[3] == 'low', "vix_regime was wiped"
+    assert row[4] == 'closed'
+    assert row[5] == 650.0
+
+
+def test_bnb_strategy_type_persists_after_close(client_with_db):
+    """B&B trade keeps strategy_type='bnb' after db.update_trade_close()."""
+    _, db_file, _ = client_with_db
+    today = datetime.now(ET).strftime('%Y-%m-%d')
+    future = (datetime.now(ET) + timedelta(days=2)).strftime('%Y-%m-%d')
+
+    _insert_trade(db_file, 'bnb-persist-1',
+                  entry_time=f'{today} 10:30:00',
+                  status='active',
+                  strategy_type='bnb',
+                  expiration=f'{future} 16:00:00')
+
+    from database.db_manager import DatabaseManager
+    db = DatabaseManager(db_file)
+
+    class FakeTrade:
+        id = 'bnb-persist-1'
+        exit_time = f'{today} 11:45:00'
+        exit_price = 0.10
+        exit_order_id = 'ord-exit-2'
+        exit_reason = 'Stop loss'
+        pnl = -300.0
+        pnl_percent = -20.0
+
+        class status:
+            value = 'closed'
+
+    db.update_trade_close(FakeTrade())
+
+    conn = sqlite3.connect(db_file)
+    row = conn.execute(
+        "SELECT strategy_type, status FROM trades WHERE id='bnb-persist-1'"
+    ).fetchone()
+    conn.close()
+
+    assert row[0] == 'bnb', f"strategy_type was overwritten to '{row[0]}'"
+    assert row[1] == 'closed'
+
+
+def test_orb_strategy_type_persists_after_close(client_with_db):
+    """ORB trade keeps strategy_type='orb' after db.update_trade_close()."""
+    _, db_file, _ = client_with_db
+    today = datetime.now(ET).strftime('%Y-%m-%d')
+    future = (datetime.now(ET) + timedelta(days=2)).strftime('%Y-%m-%d')
+
+    _insert_trade(db_file, 'orb-persist-1',
+                  entry_time=f'{today} 10:00:00',
+                  status='active',
+                  strategy_type='orb',
+                  expiration=f'{future} 16:00:00')
+
+    from database.db_manager import DatabaseManager
+    db = DatabaseManager(db_file)
+
+    class FakeTrade:
+        id = 'orb-persist-1'
+        exit_time = f'{today} 10:45:00'
+        exit_price = 0.02
+        exit_order_id = 'ord-exit-3'
+        exit_reason = 'Profit target'
+        pnl = 480.0
+        pnl_percent = 32.0
+
+        class status:
+            value = 'closed'
+
+    db.update_trade_close(FakeTrade())
+
+    conn = sqlite3.connect(db_file)
+    row = conn.execute(
+        "SELECT strategy_type, status FROM trades WHERE id='orb-persist-1'"
+    ).fetchone()
+    conn.close()
+
+    assert row[0] == 'orb', f"strategy_type was overwritten to '{row[0]}'"
+    assert row[1] == 'closed'

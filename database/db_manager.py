@@ -220,6 +220,38 @@ class DatabaseManager:
             conn.commit()
             logger.debug(f"Trade {trade.id} saved to database")
 
+    def update_trade_close(self, trade):
+        """Update trade row on close/exit using UPDATE (not INSERT OR REPLACE).
+
+        This preserves entry-context columns (strategy_type, spx_at_entry,
+        vix_at_entry, vix_regime, SMA data, etc.) that were written at entry
+        time.  Only the columns that genuinely change on exit are touched.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE trades SET
+                    exit_time = ?,
+                    status = ?,
+                    exit_price = ?,
+                    exit_order_id = ?,
+                    exit_reason = ?,
+                    pnl = ?,
+                    pnl_percent = ?
+                WHERE id = ?
+            """, (
+                trade.exit_time,
+                trade.status.value,
+                trade.exit_price,
+                trade.exit_order_id,
+                trade.exit_reason,
+                trade.pnl,
+                trade.pnl_percent,
+                trade.id,
+            ))
+            conn.commit()
+            logger.debug(f"Trade {trade.id} close fields updated (entry context preserved)")
+
     def update_trade_exit_context(self, trade_id: str, exit_context: Dict):
         """Update trade with exit context after closing"""
         with self._get_connection() as conn:

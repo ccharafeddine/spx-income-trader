@@ -516,8 +516,8 @@ class PositionManager:
                 'strategy': getattr(trade, '_strategy_type', 'unknown'),
             })
 
-            # Update database
-            self.db.save_trade(trade)
+            # Update database (use targeted UPDATE to preserve entry context)
+            self.db.update_trade_close(trade)
             self.db.update_daily_stats(trade.entry_time.date())
 
             # Build and save exit context for analytics
