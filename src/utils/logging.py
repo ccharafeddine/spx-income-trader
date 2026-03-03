@@ -71,7 +71,8 @@ def setup_logging(log_file: str, log_level: str = "INFO"):
     file_handler = RotatingFileHandler(
         log_file,
         maxBytes=10*1024*1024,  # 10MB
-        backupCount=5
+        backupCount=5,
+        encoding='utf-8',
     )
     file_handler.setLevel(getattr(logging, log_level))
     file_formatter = logging.Formatter(
@@ -87,6 +88,7 @@ def setup_logging(log_file: str, log_level: str = "INFO"):
         str(error_log),
         maxBytes=10*1024*1024,  # 10MB
         backupCount=5,
+        encoding='utf-8',
     )
     error_handler.setLevel(logging.WARNING)
     error_handler.setFormatter(file_formatter)
@@ -98,6 +100,7 @@ def setup_logging(log_file: str, log_level: str = "INFO"):
         str(json_log),
         maxBytes=10*1024*1024,  # 10MB
         backupCount=5,
+        encoding='utf-8',
     )
     json_handler.setLevel(getattr(logging, log_level))
     json_handler.setFormatter(JSONFormatter())
@@ -144,6 +147,7 @@ def get_trade_logger(log_dir: Path = None) -> logging.Logger:
         str(log_dir / 'trades.jsonl'),
         maxBytes=10*1024*1024,
         backupCount=5,
+        encoding='utf-8',
     )
     handler.setFormatter(JSONFormatter())
     _trade_logger.addHandler(handler)

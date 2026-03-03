@@ -158,7 +158,7 @@ class PositionManager:
             )
             if credit_quality['is_simulated_concern']:
                 logger.warning(
-                    f"LOW CREDIT: ${credit_quality['credit_received']:.2f} — "
+                    f"LOW CREDIT: ${credit_quality['credit_received']:.2f} - "
                     f"simulated chain may not reflect live pricing"
                 )
 
@@ -294,7 +294,7 @@ class PositionManager:
             # Save to database
             self.db.save_trade(trade, context=entry_context)
 
-            logger.info(f"✓ Trade entered successfully: {trade.id}")
+            logger.info(f"Trade entered successfully: {trade.id}")
             logger.info(f"  Entry price: ${trade.entry_price:.2f}")
             logger.info(f"  Max profit: ${spread.max_profit * quantity:.2f}")
             logger.info(f"  Max risk: ${spread.max_risk * quantity:.2f}")
@@ -304,7 +304,19 @@ class PositionManager:
         except Exception as e:
             logger.error(f"Failed to enter trade: {e}", exc_info=True)
             return None
-    
+        except BaseException as e:
+            # Catch SystemExit / KeyboardInterrupt that bypass except Exception.
+            # The trade may already be in open_trades (line 208), so log the
+            # failure clearly to aid post-mortem diagnosis.
+            try:
+                logger.critical(
+                    f"CRITICAL: BaseException during enter_trade: "
+                    f"{type(e).__name__}: {e}"
+                )
+            except Exception:
+                pass  # logging itself may be broken
+            raise  # re-raise so the caller can handle shutdown
+
     def monitor_positions(self) -> float:
         """Monitor all open positions for exit conditions.
 
@@ -483,7 +495,7 @@ class PositionManager:
                 )
                 trade.exit_order_id = order_id
 
-                logger.info(f"✓ Trade closed at ${exit_price:.2f}")
+                logger.info(f"Trade closed at ${exit_price:.2f}")
             
             logger.info(f"  P&L: ${trade.pnl:.2f}")
             logger.info(f"  Duration: {trade.duration:.1f} hours")

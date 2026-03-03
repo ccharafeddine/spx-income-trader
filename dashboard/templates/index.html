@@ -4246,6 +4246,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // State tracking for sound triggers
 // ---------------------------------------------------------------
 let currentBroker = 'dry_run';
+let currentTradingMode = 'DRY RUN';
 let prevSpxPrice = null;
 let prevBarCount = 0;
 let prevPulseCount = 0;
@@ -4690,7 +4691,8 @@ async function updateStatus() {
 
   // Mode badge
   const badge = document.getElementById('mode-badge');
-  badge.textContent = d.mode || 'UNKNOWN';
+  currentTradingMode = d.mode || 'UNKNOWN';
+  badge.textContent = currentTradingMode;
   badge.className = 'mode-badge' + (d.mode === 'DRY RUN' ? ' dry' : d.mode === 'LIVE' ? ' live' : '');
   if (d.mode === 'DEMO') {
     badge.style.background = 'rgba(6,182,212,0.2)';
@@ -4721,7 +4723,8 @@ async function updateStatus() {
   // Shadow panel + settings: visible only in dry-run mode
   const shadowPanel = document.getElementById('shadow-panel');
   const shadowSettings = document.getElementById('shadow-settings-section');
-  if (ab === 'dry_run') {
+  const isDryRun = currentTradingMode === 'DRY RUN';
+  if (isDryRun) {
     if (shadowPanel) shadowPanel.style.display = '';
     if (shadowSettings) shadowSettings.style.display = '';
   } else {
@@ -7598,7 +7601,7 @@ updateReconciliation();
 async function updateShadowPanel() {
   const el = document.getElementById('shadow-body');
   const led = document.getElementById('shadow-led');
-  if (!el || currentBroker !== 'dry_run') return;
+  if (!el || currentTradingMode !== 'DRY RUN') return;
 
   try {
     const resp = await fetch('/api/shadow?limit=10');

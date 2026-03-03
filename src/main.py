@@ -726,6 +726,17 @@ class TradingBot:
             logger.error(f"Fatal error: {e}", exc_info=True)
             self._shutdown_reason = f"crash: {e}"
             self.shutdown(error=True)
+        except BaseException as e:
+            # SystemExit or other BaseException that bypassed except Exception.
+            # Log and shutdown cleanly so the crash is visible in logs.
+            try:
+                logger.critical(
+                    f"Bot killed by {type(e).__name__}: {e}"
+                )
+            except Exception:
+                pass
+            self._shutdown_reason = f"crash: {type(e).__name__}: {e}"
+            self.shutdown(error=True)
     
     def _interruptible_sleep(self, seconds):
         """Sleep in small increments, exiting early if self.running becomes False."""
@@ -1161,7 +1172,7 @@ class TradingBot:
                 consecutive_errors += 1
                 logger.error(f"Broker/strategy error in main loop ({consecutive_errors}/{max_consecutive_errors}): {e}",
                             exc_info=True)
-            
+
                 # Degrade to monitoring-only if too many consecutive errors
                 if consecutive_errors >= max_consecutive_errors:
                     if self.position_manager.open_trades:
@@ -1178,11 +1189,33 @@ class TradingBot:
                         self._shutdown_reason = f"max_errors ({consecutive_errors} consecutive)"
                         self.shutdown(error=True)
                         break
-            
+
                 # Exponential backoff
                 sleep_time = min(60 * (2 ** consecutive_errors), 300)  # Max 5 minutes
                 logger.info(f"Sleeping {sleep_time}s before retry...")
                 self._interruptible_sleep(sleep_time)
+
+            except BaseException as e:
+                # Catch SystemExit and other BaseException subclasses that
+                # bypass except Exception.  If positions are open, we MUST
+                # keep the loop alive to monitor them.
+                try:
+                    logger.critical(
+                        f"CRITICAL: {type(e).__name__} in main loop: {e}. "
+                        f"Open positions: {len(self.position_manager.open_trades)}"
+                    )
+                except Exception:
+                    pass
+
+                if self.position_manager.open_trades:
+                    logger.critical(
+                        "Suppressing BaseException to protect open positions. "
+                        "Continuing in MONITORING-ONLY mode."
+                    )
+                    consecutive_errors += 1
+                    self._interruptible_sleep(30)
+                else:
+                    raise  # No open positions, safe to let thread exit
     
     def _restore_daily_counters(self, trade_date):
         """Restore trade counts and daily_pnl from DB (survives mid-day restarts)."""

@@ -477,10 +477,8 @@ class DrawdownManager:
             if pause_str:
                 self.consec_pause_until = datetime.fromisoformat(pause_str)
 
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
+        except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
             logger.warning(f"Drawdown state file corrupted, starting fresh: {e}")
-        except Exception as e:
-            logger.error(f"Failed to load drawdown state: {e}")
 
     def _save_state(self):
         """Persist drawdown state to disk."""

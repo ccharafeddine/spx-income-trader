@@ -26,9 +26,9 @@ import traceback
 # PyInstaller windowed mode (runw.exe) sets sys.stdout/stderr to None.
 # Redirect to devnull before any library import that might write to them.
 if sys.stdout is None:
-    sys.stdout = open(os.devnull, 'w')
+    sys.stdout = open(os.devnull, 'w', encoding='utf-8')
 if sys.stderr is None:
-    sys.stderr = open(os.devnull, 'w')
+    sys.stderr = open(os.devnull, 'w', encoding='utf-8')
 
 _CRASH_LOG = os.path.join(os.path.expanduser('~'), 'spx_crash.log')
 
@@ -523,6 +523,17 @@ class DesktopApp:
             return
         except Exception as e:
             logger.error(f"Bot thread error: {e}", exc_info=True)
+        except BaseException as e:
+            # Catch SystemExit / KeyboardInterrupt that bypass except Exception.
+            # Log the error clearly so post-mortem analysis can identify the
+            # exact exception type instead of the silent thread death we saw
+            # on 2026-03-03 (only "Bot thread finishing" was logged).
+            try:
+                logger.critical(
+                    f"Bot thread killed by {type(e).__name__}: {e}"
+                )
+            except Exception:
+                pass  # logging itself may be broken
         finally:
             # Close any active session recording before bot cleanup
             self._close_session_recorder()
