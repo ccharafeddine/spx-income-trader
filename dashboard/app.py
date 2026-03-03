@@ -1464,15 +1464,35 @@ def api_status():
                 import json
                 with open(tnt_path, 'r') as f:
                     tnt_data = json.load(f)
+                tnt_state = tnt_data.get('state', 'IDLE')
+
+                # Cross-check DB: if JSON says POSITION but no open TNT trade exists, override to IDLE
+                if tnt_state == 'POSITION':
+                    try:
+                        import sqlite3 as _tnt_sql
+                        _tnt_db = Path(DATABASE_PATH)
+                        if _tnt_db.exists():
+                            _tnt_conn = _tnt_sql.connect(str(_tnt_db), timeout=5)
+                            _open_tnt = _tnt_conn.execute(
+                                "SELECT COUNT(*) FROM trades "
+                                "WHERE strategy_type = 'tag_n_turn' "
+                                "AND LOWER(status) IN ('open', 'active', 'pending')"
+                            ).fetchone()[0]
+                            _tnt_conn.close()
+                            if _open_tnt == 0:
+                                tnt_state = 'IDLE'
+                    except Exception:
+                        pass
+
                 tag_n_turn_status = {
                     'enabled': True,
-                    'state': tnt_data.get('state', 'IDLE'),
+                    'state': tnt_state,
                     'tag_info': tnt_data.get('tag_info'),
                     'awaiting_breakout': {
                         'direction': tnt_data.get('pulse_info', {}).get('direction', '').upper() if tnt_data.get('pulse_info') else None,
                         'breakout_level': tnt_data.get('breakout_level'),
-                    } if tnt_data.get('state') == 'AWAITING_BREAKOUT' else None,
-                    'active_position': tnt_data.get('active_position'),
+                    } if tnt_state == 'AWAITING_BREAKOUT' else None,
+                    'active_position': tnt_data.get('active_position') if tnt_state == 'POSITION' else None,
                 }
         except Exception:
             pass

@@ -6934,7 +6934,7 @@ async function updateRiskStatus() {
     html += '<span class="risk-led ' + dLed + '"></span>';
     html += '<span class="risk-label">Daily</span>';
     html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + dLed + '" style="width:' + dPct.toFixed(0) + '%"></div></div>';
-    html += '<span class="risk-value">' + fmt$(dc.realized_pnl) + ' / ' + fmt$(dc.max_loss_dollars) + '</span>';
+    html += '<span class="risk-value">' + fmt$(Math.max(0, -dc.realized_pnl)) + ' / ' + fmt$(dc.max_loss_dollars) + '</span>';
     html += '</div>';
 
     // Weekly
@@ -6946,7 +6946,7 @@ async function updateRiskStatus() {
       html += '<span class="risk-led ' + wLed + '"></span>';
       html += '<span class="risk-label">Weekly</span>';
       html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + wLed + '" style="width:' + wPct.toFixed(0) + '%"></div></div>';
-      html += '<span class="risk-value">' + fmt$(wc.realized_pnl) + ' / ' + fmt$(wc.max_loss_dollars) + '</span>';
+      html += '<span class="risk-value">' + fmt$(Math.max(0, -wc.realized_pnl)) + ' / ' + fmt$(wc.max_loss_dollars) + '</span>';
       html += '</div>';
     }
 
@@ -6959,7 +6959,7 @@ async function updateRiskStatus() {
       html += '<span class="risk-led ' + mLed + '"></span>';
       html += '<span class="risk-label">Monthly</span>';
       html += '<div class="risk-bar-wrap"><div class="risk-bar-fill ' + mLed + '" style="width:' + mPct.toFixed(0) + '%"></div></div>';
-      html += '<span class="risk-value">' + fmt$(mc.realized_pnl) + ' / ' + fmt$(mc.max_loss_dollars) + '</span>';
+      html += '<span class="risk-value">' + fmt$(Math.max(0, -mc.realized_pnl)) + ' / ' + fmt$(mc.max_loss_dollars) + '</span>';
       html += '</div>';
     }
 
