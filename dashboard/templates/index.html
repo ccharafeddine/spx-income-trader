@@ -7641,11 +7641,12 @@ async function updateShadowPanel() {
     if (recent.length > 0) {
       html += '<table class="shadow-table"><tr><th>Time</th><th>Type</th><th>Price</th><th>Credit</th><th></th></tr>';
       recent.forEach(function(c) {
-        const ts = c.timestamp ? c.timestamp.substring(11, 16) : '--:--';
+        const ts = c.ts ? c.ts.substring(11, 16) : '--:--';
         const type = c.type === 'entry_comparison' ? 'ENT' : c.type === 'exit_comparison' ? 'EXT' : 'PRD';
         const div = c.divergence || {};
-        const pricePts = div.price_pts != null ? div.price_pts.toFixed(2) : '--';
-        const creditPts = div.credit_pts != null ? div.credit_pts.toFixed(2) : '--';
+        const pricePts = div.price_pts != null ? div.price_pts.toFixed(2) :
+                         div.value_diff != null ? div.value_diff.toFixed(2) : '--';
+        const creditPts = div.credit_diff != null ? div.credit_diff.toFixed(2) : '--';
         const wouldDiff = div.decision_would_differ;
         const ledClass = wouldDiff ? 'red' : 'green';
         html += '<tr>';

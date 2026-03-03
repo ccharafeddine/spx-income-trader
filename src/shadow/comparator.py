@@ -81,7 +81,7 @@ class ShadowComparator:
         )
         t.start()
 
-    def periodic_check(self):
+    def periodic_check(self, current_price=None):
         """Called every heartbeat (~5 min). Only runs at compare_interval_min."""
         now = time.monotonic()
         elapsed_min = (now - self._last_periodic) / 60.0
@@ -90,6 +90,7 @@ class ShadowComparator:
         self._last_periodic = now
         t = threading.Thread(
             target=self._do_periodic_comparison,
+            args=(current_price,),
             daemon=True,
         )
         t.start()
@@ -208,7 +209,7 @@ class ShadowComparator:
         except Exception as e:
             logger.warning(f"Shadow exit comparison failed: {e}")
 
-    def _do_periodic_comparison(self):
+    def _do_periodic_comparison(self, current_price=None):
         try:
             schwab_price = self._schwab.get_current_price('SPX')
 
@@ -221,6 +222,7 @@ class ShadowComparator:
 
             dry = {
                 'check_type': 'periodic',
+                'spx_price': current_price,
             }
 
             schwab_data = {
@@ -229,6 +231,13 @@ class ShadowComparator:
             }
 
             divergence = {}
+            if current_price is not None and schwab_price is not None:
+                price_diff = abs(schwab_price - current_price)
+                price_pct = (price_diff / current_price * 100) if current_price else None
+                divergence = {
+                    'price_pts': round(price_diff, 2),
+                    'price_pct': round(price_pct, 4) if price_pct is not None else None,
+                }
 
             self._write_log('periodic_comparison', dry, schwab_data, divergence)
 

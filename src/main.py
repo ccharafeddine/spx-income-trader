@@ -891,7 +891,7 @@ class TradingBot:
                             positions_count=len(self.position_manager.get_open_trades()))
 
                     if self.shadow:
-                        self.shadow.periodic_check()
+                        self.shadow.periodic_check(current_price=self._current_spx_price)
 
                 # Check for dashboard settings changes
                 settings_changed_file = Path(BASE_DIR) / 'database' / '.settings_changed'
