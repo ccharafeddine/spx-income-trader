@@ -3616,7 +3616,9 @@ header::after {
           <div class="cpanel-body"><div>
             <div id="an-dur-empty" style="display:none; color: var(--text-dim); font-size: 12px; padding: 16px 0; text-align: center;">No duration data available</div>
             <div id="an-dur-content" style="display:none;">
+              <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Overall (All Strategies)</div>
               <div id="an-dur-cards" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px;"></div>
+              <div id="an-dur-by-strategy" style="margin-bottom: 14px;"></div>
               <div class="an-grid-2" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 14px;">
                 <div>
                   <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Duration Distribution</div>
@@ -8818,6 +8820,35 @@ async function renderAnDuration(sourceVal) {
     cardsHtml += '</div>';
   }
   document.getElementById('an-dur-cards').innerHTML = cardsHtml;
+
+  // Per-strategy duration breakdowns
+  let stratHtml = '';
+  const byStrat = data.by_strategy || {};
+  const stratKeys = Object.keys(byStrat);
+  if (stratKeys.length > 1) {
+    stratHtml += '<div style="display:grid;grid-template-columns:repeat(' + stratKeys.length + ',1fr);gap:12px;">';
+    for (const key of stratKeys) {
+      const s = byStrat[key];
+      stratHtml += '<div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;">';
+      stratHtml += '<div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;text-align:center;">' + s.label + ' <span style="opacity:0.6;">(' + s.total_trades + ' trades)</span></div>';
+      const sCards = [
+        {label: 'Avg Winner', value: _fmtDuration(s.avg_winner_minutes), color: 'var(--green)'},
+        {label: 'Avg Loser', value: _fmtDuration(s.avg_loser_minutes), color: 'var(--red)'},
+        {label: 'Fastest Win', value: _fmtDuration(s.fastest_winner_minutes), color: 'var(--green)'},
+        {label: 'Longest Loss', value: _fmtDuration(s.longest_loser_minutes), color: 'var(--red)'},
+      ];
+      stratHtml += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">';
+      for (const c of sCards) {
+        stratHtml += '<div style="text-align:center;padding:4px;">';
+        stratHtml += '<div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">' + c.label + '</div>';
+        stratHtml += '<div style="font-size:13px;font-weight:700;font-family:var(--font-mono);color:' + c.color + ';">' + c.value + '</div>';
+        stratHtml += '</div>';
+      }
+      stratHtml += '</div></div>';
+    }
+    stratHtml += '</div>';
+  }
+  document.getElementById('an-dur-by-strategy').innerHTML = stratHtml;
 
   // Duration distribution - horizontal stacked bars
   const buckets = data.buckets || [];

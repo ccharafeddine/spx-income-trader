@@ -4995,7 +4995,8 @@ def api_analytics_duration():
                 continue
             mins = int(mins)
             pnl = t.get('pnl') or 0
-            valid.append({'minutes': mins, 'pnl': float(pnl), 'win': float(pnl) > 0})
+            strat = t.get('strategy_type') or 'daily_income'
+            valid.append({'minutes': mins, 'pnl': float(pnl), 'win': float(pnl) > 0, 'strategy': strat})
 
         if not valid:
             return {'total_trades': 0}
@@ -5005,6 +5006,20 @@ def api_analytics_duration():
 
         def _avg_mins(group):
             return round(sum(t['minutes'] for t in group) / len(group), 1) if group else 0
+
+        def _summary_stats(group):
+            """Compute summary stats for a group of trades."""
+            w = [t for t in group if t['win']]
+            lo = [t for t in group if not t['win']]
+            return {
+                'total_trades': len(group),
+                'total_winners': len(w),
+                'total_losers': len(lo),
+                'avg_winner_minutes': _avg_mins(w),
+                'avg_loser_minutes': _avg_mins(lo),
+                'fastest_winner_minutes': min((t['minutes'] for t in w), default=0),
+                'longest_loser_minutes': max((t['minutes'] for t in lo), default=0),
+            }
 
         # Summary stats
         avg_winner_mins = _avg_mins(winners)
@@ -5038,6 +5053,22 @@ def api_analytics_duration():
         else:
             interpretation = 'No significant duration difference between winners and losers.'
 
+        # Per-strategy breakdowns
+        STRATEGY_LABELS = {
+            'daily_income': 'Daily Income',
+            'tag_n_turn': "Tag 'n Turn",
+            'bnb': 'B&B',
+            'orb': 'ORB',
+        }
+        by_strategy = {}
+        for strat_key, strat_label in STRATEGY_LABELS.items():
+            strat_trades = [t for t in valid if t['strategy'] == strat_key]
+            if strat_trades:
+                by_strategy[strat_key] = {
+                    'label': strat_label,
+                    **_summary_stats(strat_trades),
+                }
+
         return {
             'total_trades': len(valid),
             'total_winners': len(winners),
@@ -5048,6 +5079,7 @@ def api_analytics_duration():
             'longest_loser_minutes': longest_loser,
             'buckets': bucket_data,
             'interpretation': interpretation,
+            'by_strategy': by_strategy,
         }
 
     if source == 'backtest':
