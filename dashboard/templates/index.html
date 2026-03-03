@@ -159,9 +159,12 @@ header::after {
   color: var(--text-dim);
   text-decoration: none;
   font-size: 12px;
-  transition: color 0.2s;
+  transition: all 0.2s;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 12px;
 }
-.settings-link:hover { color: var(--cyan); }
+.settings-link:hover { color: var(--text); border-color: var(--text-dim); }
 .header-right {
   display: flex;
   align-items: center;

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>The Daily Melt - Settings</title>
+<title>The Daily Melt - Account</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -81,11 +81,15 @@ header {
   color: var(--text-dim);
   text-decoration: none;
   font-size: 13px;
-  transition: color 0.2s;
+  transition: all 0.2s;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 12px;
 }
 
 .header-right a:hover {
   color: var(--text);
+  border-color: var(--text-dim);
 }
 
 /* Main container */
@@ -665,7 +669,7 @@ header {
 <header>
   <div class="header-left">
     <a href="/" class="logo"><img src="/static/icon.png" alt="">THE DAILY MELT</a>
-    <span class="page-title">Settings</span>
+    <span class="page-title">Account</span>
   </div>
   <div class="header-right">
     <a href="/">Back to Dashboard</a>
