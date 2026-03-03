@@ -71,7 +71,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - **E\*TRADE**: Full API integration with OAuth flow, token auto-renewal (90-min cycle), order preview/place/confirm pipeline
 - **Charles Schwab**: schwab-py integration with OAuth2 authorization, automatic token refresh, and full options order support
 - **Interactive Brokers**: ib_insync integration via TWS/IB Gateway. Snapshot market data, options chain discovery via reqSecDefOptParams, BAG combo orders for credit spreads, live/paper trading with automatic port selection. Dashboard connect/disconnect controls.
-- **Dry-run mode** (default): Real market data via Yahoo Finance with simulated fills using Black-Scholes pricing. No broker credentials needed.
+- **Dry-run mode** (default): Real market data via Yahoo Finance with simulated fills using Black-Scholes pricing. No broker credentials needed. Optional shadow mode compares simulated fills against a read-only Schwab feed.
 - Reactive 401 handling with automatic token refresh and retry on E\*TRADE and Schwab
 - Proactive token freshness checks before order placement
 - Rate limit (429) protection with exponential backoff
@@ -99,7 +99,9 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 
 ### Dashboard
 - Real-time web UI with account summary, candlestick charts, and position monitoring
-- Audio alerts via Web Audio API: market open/close chimes, trade entry/exit tones, bar completion pings, danger alerts (all mutable)
+- Layered audio synthesis via Web Audio API: detuned oscillators, ADSR envelopes, biquad filters, and inharmonic bell partials for 8 distinct sounds (market open/close bells, trade entry arpeggio, profit fanfare, loss tone, bar tick, pulse chime, alert). All mutable.
+- Visual micro-interactions: button press spring, tab fade-in, P&L glow on value change, position card entrance animation, mute bounce, toggle squeeze, risk bar pulse, LED flash on state change, settings gear rotation, click ripple effect
+- DB-backed strategy status LEDs for all four strategies (persists across page refreshes)
 - Signal log showing every detected setup with strikes, credit, risk, and SPX price
 - Five tabs: Overview, Trade Journal, Analytics, Backtest, Logs
 
@@ -131,7 +133,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Market regime analysis: VIX regime performance, market direction performance, VIX transitions, market neutrality (correlation/beta to SPX)
 - Direction drill-down: cross-tabulates market day type x trade direction to investigate regime-specific weaknesses
 - BB agreement analysis: compares win rates and P&L for trades where the Bollinger Band filter agreed vs. disagreed with direction
-- Trade duration analysis: winner vs. loser duration comparison, duration distribution chart, win rate by duration bucket
+- Trade duration analysis: per-strategy breakdown (DI vs. TNT), winner vs. loser duration comparison, duration distribution chart, win rate by duration bucket
 - Execution quality: slippage summary, slippage by time bucket and VIX regime, exit reason breakdown with drill-down
 - Portfolio Greeks: real-time delta, gamma, theta, vega exposure via Black-Scholes calculator
 - Strategy tear sheet PDF export with monthly, weekly, and custom date range options
@@ -152,9 +154,10 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Per-strategy trade breakdown and monthly return heatmaps
 
 ### Notifications
-- Slack, Discord, and generic webhook integrations
+- Dynamic webhook list: up to 5 webhooks with per-webhook type (Slack, Discord, generic), URL, and minimum severity level
+- Add, remove, reorder, and test individual webhooks from the Account page
+- Backward-compatible migration from legacy fixed-section format
 - Email and SMS (Twilio) support
-- Configurable notification levels (info, warning, critical)
 - Hot-reloadable: changes take effect without restarting the bot (the only hot-reloadable setting)
 
 ### Demo Mode
@@ -317,7 +320,7 @@ Position Manager (P&L tracking, exit management, partial fill tracking, PDT-cond
     +---> Trade Reconciler (DB vs. broker fill comparison)
 ```
 
-**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1114+ tests), GitHub Actions CI
+**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1170+ tests), GitHub Actions CI
 
 ---
 
@@ -531,7 +534,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 
 ## Testing
 
-1114+ tests covering:
+1170+ tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays, morning bias filter, TNT weekend hold prevention)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
 - Position management (sizing, P&L calculation, exit triggers, partial fill tracking)
@@ -637,13 +640,8 @@ Recordings are saved to `database/demo_recordings/` and can be browsed from the 
 ---
 
 ## Expansion Roadmap
-
-### Recently Completed
-- [x] Interactive Brokers (IBKR) TWS API integration
-- [x] Scrollable chart history with pan/zoom and historical trade overlays
-- [x] Four-timeframe chart (4h/1h/30m/5m) with Bollinger Bands on 1h and 4h
-- [x] TNT weekend hold prevention: auto-exit profitable TNT positions before market close on Friday
-- [x] Discord notifications: startup, market open, hourly updates, trade entry/exit, EOD summary
+- Text message (SMS) notifications via Twilio
+- Tastytrade broker integration
 
 ---
 
