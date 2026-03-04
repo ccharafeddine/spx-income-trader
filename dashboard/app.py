@@ -2549,6 +2549,23 @@ def api_journal():
     pct_max_count = 0
     exit_reasons = {}
 
+    # Build calendar cache: look up FRED events for each unique trade date
+    # so journal entries show economic events even if the DB column is NULL
+    _econ_cache = {}
+    try:
+        from src.data.fred_calendar import get_calendar_events as _get_cal
+        _trade_dates = {(t.get('entry_time') or '')[:10] for t in all_trades}
+        _trade_dates.discard('')
+        if _trade_dates:
+            _min_d = min(_trade_dates)
+            _max_d = max(_trade_dates)
+            _cal_result = _get_cal(from_date=_min_d, to_date=_max_d)
+            for ev in _cal_result.get('events', []):
+                if ev.get('impact') == 'high':
+                    _econ_cache.setdefault(ev['date'], []).append(ev['event'])
+    except Exception:
+        pass
+
     for trade in all_trades:
         # Correlate with signal
         signal = _correlate_trade_with_signal(trade, all_signals)
@@ -2635,7 +2652,9 @@ def api_journal():
             'actual_credit': trade.get('actual_credit'),
             'slippage': trade.get('slippage'),
             'slippage_pct': trade.get('slippage_pct'),
-            'economic_events': trade.get('economic_events'),
+            'economic_events': trade.get('economic_events')
+                              or (_econ_cache.get((trade.get('entry_time') or '')[:10])
+                                  and json.dumps(_econ_cache[(trade.get('entry_time') or '')[:10]])),
             # Market metadata
             'day_of_week': trade.get('day_of_week'),
             'day_of_week_name': trade.get('day_of_week_name'),
@@ -5291,19 +5310,24 @@ def api_export_tearsheet():
 
 @app.route('/api/economic-events')
 def api_economic_events():
-    """Today's and upcoming economic calendar events."""
+    """Today's economic events, sourced from FRED (same as Calendar tab)."""
     try:
-        from src.data.economic_calendar import get_today_events, get_upcoming_events, is_high_impact_day
-        today_events = get_today_events()
-        upcoming = get_upcoming_events(days=7)
+        from src.data.fred_calendar import get_calendar_events
+        import pytz
+        et = pytz.timezone('America/New_York')
+        today_str = datetime.now(et).strftime('%Y-%m-%d')
+
+        result = get_calendar_events(from_date=today_str, to_date=today_str)
+        today_events = result.get('events', [])
+        is_high = any(e.get('impact') == 'high' for e in today_events)
+
         return jsonify({
             'today': today_events,
-            'is_high_impact': is_high_impact_day(),
-            'upcoming': upcoming,
+            'is_high_impact': is_high,
         })
     except Exception as e:
         logger.warning(f"Economic calendar API error: {e}")
-        return jsonify({'today': [], 'is_high_impact': False, 'upcoming': []})
+        return jsonify({'today': [], 'is_high_impact': False})
 
 
 @app.route('/api/calendar')
