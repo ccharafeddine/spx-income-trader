@@ -533,10 +533,11 @@ def classify_trades(conn, spx_price):
             try:
                 conn.execute(
                     """UPDATE trades SET status=?, pnl=?, exit_time=?,
-                              exit_reason=?, exit_price=?
+                              exit_reason=?, exit_price=?, spx_at_exit=?
                        WHERE id=?""",
                     (t['status'], t['pnl'], t['exit_time'],
-                     t['exit_reason'], t['exit_price'], t['id']),
+                     t['exit_reason'], t['exit_price'],
+                     t.get('spx_at_exit'), t['id']),
                 )
                 conn.commit()
             except Exception as e:
@@ -575,6 +576,8 @@ def _resolve_expired_trade(trade, spx_price):
     trade['exit_price'] = 0.0
     trade['pnl'] = round(pnl, 2)
     trade['exit_time'] = trade.get('expiration', '')
+    if spx_price:
+        trade['spx_at_exit'] = round(spx_price, 2)
 
 
 def _annotate_trade(trade):
@@ -2190,7 +2193,7 @@ def api_chart_trades():
                           underlying_price_at_entry, spx_at_entry, spx_at_exit,
                           quantity
                    FROM trades
-                   WHERE status='closed' AND entry_time >= ? AND entry_time < ?
+                   WHERE status IN ('closed', 'expired') AND entry_time >= ? AND entry_time < ?
                    ORDER BY entry_time ASC""",
                 (since, until),
             ).fetchall()
