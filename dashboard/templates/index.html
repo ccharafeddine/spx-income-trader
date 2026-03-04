@@ -2826,7 +2826,7 @@ header::after {
     </div>
     <span class="mode-badge" id="mode-badge">--</span>
     <span class="broker-badge" id="broker-badge" style="display:none">--</span>
-    <div class="pdt-container">
+    <div class="pdt-container" style="display:none">
       <a href="/settings" class="pdt-badge" id="pdt-badge" title="PDT Rule Status - Click for settings">PDT: -/-</a>
       <div class="pdt-frees-subtitle" id="pdt-frees-subtitle"></div>
     </div>
@@ -4789,6 +4789,7 @@ async function updatePDTBadge() {
     const data = await fetchJSON('/api/pdt/status');
     if (!data) return;
 
+    const container = document.querySelector('.pdt-container');
     const badge = document.getElementById('pdt-badge');
     const subtitle = document.getElementById('pdt-frees-subtitle');
     if (!badge) return;
@@ -4796,11 +4797,11 @@ async function updatePDTBadge() {
     const remaining = data.day_trades_remaining;
     const max = data.max_day_trades || 3;
 
-    if (!data.enabled) {
-      badge.textContent = 'PDT: OFF';
-      badge.className = 'pdt-badge';
-      if (subtitle) subtitle.style.display = 'none';
+    if (!data.enabled || !data.is_restricted) {
+      if (container) container.style.display = 'none';
+      return;
     } else {
+      if (container) container.style.display = 'inline-block';
       badge.textContent = `PDT: ${remaining}/${max}`;
       if (remaining === 0) {
         badge.className = 'pdt-badge red';
