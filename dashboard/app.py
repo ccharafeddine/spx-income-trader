@@ -2491,6 +2491,7 @@ def api_greeks():
 def api_journal():
     """Trade journal with entry reasons, exit analysis, and market context."""
     days = request.args.get('days', 90, type=int)
+    date_filter = request.args.get('date', '')  # YYYY-MM-DD for single-day fetch
     direction_filter = request.args.get('direction', '')
     outcome_filter = request.args.get('outcome', '')
     flagged_only = request.args.get('flagged', '') == 'true'
@@ -2498,28 +2499,43 @@ def api_journal():
     day_type_filter = request.args.get('day_type', '')
     exit_reason_filter = request.args.get('exit_reason', '')
 
-    # days=0 means all time (no cutoff)
-    cutoff = None if days == 0 else (datetime.now(ET).date() - timedelta(days=days)).isoformat()
+    # Single-date mode: tight cutoff around that one day
+    if date_filter:
+        cutoff = date_filter
+    elif days == 0:
+        cutoff = None
+    else:
+        cutoff = (datetime.now(ET).date() - timedelta(days=days)).isoformat()
 
     # Get SPX price and all trades
-    spx = yahoo.get_spx_quote() or {}
-    spx_price = spx.get('price')
+    # Single-date mode for closed trades: skip the expensive SPX quote network call
+    if date_filter:
+        spx_price = None
+    else:
+        spx = yahoo.get_spx_quote() or {}
+        spx_price = spx.get('price')
 
     try:
         conn = get_db_connection()
         _ensure_journal_notes_table(conn)
-        _, all_closed = classify_trades(conn, spx_price)
-        open_pos, _ = classify_trades(conn, spx_price)
+        if date_filter:
+            # Fast path: query only trades for this specific date directly from DB
+            rows = conn.execute(
+                "SELECT * FROM trades WHERE entry_time LIKE ? ORDER BY entry_time",
+                (date_filter + '%',)
+            ).fetchall()
+            all_trades = [dict(r) for r in rows]
+            for t in all_trades:
+                _annotate_trade(t)
+        else:
+            open_pos, all_closed = classify_trades(conn, spx_price)
+            all_trades = all_closed + open_pos
     except Exception:
         conn = None
-        all_closed = []
-        open_pos = []
+        all_trades = []
 
-    # Include open positions as well
-    all_trades = all_closed + open_pos
-
-    # Filter by cutoff date (skip if all-time)
-    if cutoff:
+    # Filter by cutoff date (skip if all-time or single-date)
+    if cutoff and not date_filter:
         all_trades = [
             t for t in all_trades
             if (t.get('entry_time', '') or '') >= cutoff

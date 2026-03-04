@@ -197,6 +197,8 @@ header::after {
 .main-content {
   padding: 12px 8px 8px;
   margin: 0 auto;
+}
+.main-content.overview-active {
   height: calc(100vh - 60px);
   display: flex;
   flex-direction: column;
@@ -3072,7 +3074,7 @@ header::after {
   </div>
 </div>
 
-<div class="main-content">
+<div class="main-content overview-active">
 
   <!-- ACCOUNT TRACKER BAR -->
   <div class="account-bar" id="account-bar">
@@ -5362,7 +5364,14 @@ async function updateToday() {
 }
 
 function _findClosestBarIdx(sortedTimestamps, sortedCloses, timeStr) {
-  // Extract a comparable numeric value from various timestamp formats
+  // Extract date part (YYYY-MM-DD or MM/DD) for same-day matching
+  function extractDate(s) {
+    const ymd = s.match(/(\d{4}-\d{2}-\d{2})/);
+    if (ymd) return ymd[1];
+    const md = s.match(/(\d{2}\/\d{2})/);
+    if (md) return md[1];
+    return null;  // HH:MM only (single-day chart)
+  }
   function toMinutes(s) {
     // Handle "YYYY-MM-DD HH:MM" format
     const ymdMatch = s.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
@@ -5380,10 +5389,16 @@ function _findClosestBarIdx(sortedTimestamps, sortedCloses, timeStr) {
     const p = s.split(':');
     return parseInt(p[0]) * 60 + parseInt(p[1]);
   }
+  const eDate = extractDate(timeStr);
   const eMins = toMinutes(timeStr);
   let bestIdx = -1, bestDist = Infinity;
   sortedTimestamps.forEach((t, i) => {
     if (sortedCloses[i] == null) return;
+    // On multi-day charts, only match bars from the same date
+    if (eDate) {
+      const bDate = extractDate(t);
+      if (bDate && bDate !== eDate) return;
+    }
     const bMins = toMinutes(t);
     const dist = Math.abs(bMins - eMins);
     if (dist < bestDist) { bestDist = dist; bestIdx = i; }
@@ -6396,6 +6411,7 @@ function switchTab(tabId) {
   document.querySelectorAll('.tab-content').forEach(el => {
     el.classList.toggle('active', el.id === 'tab-' + tabId);
   });
+  document.querySelector('.main-content').classList.toggle('overview-active', tabId === 'overview');
   if (tabId === 'calendar') loadCalendarTab();
   if (tabId === 'journal') updateJournal();
   if (tabId === 'analytics') loadAnalytics();
@@ -6670,13 +6686,10 @@ async function selectCalDay(dateStr) {
   const hasTrades = dayData && (dayData.trades > 0 || (dayData.open_count || 0) > 0);
 
   if (hasTrades) {
-    // Fetch journal trade entries for trade days
-    const clickedDate = new Date(dateStr + 'T12:00:00');
-    const now = new Date();
-    const diffDays = Math.ceil((now - clickedDate) / (1000 * 60 * 60 * 24)) + 1;
-    const d = await fetchJSON('/api/journal?days=' + Math.max(diffDays, 7));
+    // Fetch journal trade entries for this specific day only
+    const d = await fetchJSON('/api/journal?date=' + dateStr);
     if (!d) return;
-    let entries = (d.journal || []).filter(e => (e.entry_time || '').startsWith(dateStr));
+    let entries = d.journal || [];
     if (entries.length) {
       html += renderJournalCards(entries, 'cal');
     } else {
