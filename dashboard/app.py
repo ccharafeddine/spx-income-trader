@@ -3766,47 +3766,41 @@ def api_risk_status():
         today = _datetime.now(_pytz.timezone('America/New_York')).date()
         iso_year, iso_week, _ = today.isocalendar()
 
+        # Breaker flags from drawdown state file (if period matches)
         dd_path = BASE_DIR / 'database' / 'drawdown_state.json'
         if dd_path.exists():
             import json
             with open(dd_path, 'r') as f:
                 dd = json.load(f)
 
-            # Weekly (only if period matches)
             if dd.get('current_iso_year') == iso_year and dd.get('current_iso_week') == iso_week:
-                weekly['realized_pnl'] = round(dd.get('weekly_realized_pnl', 0.0), 2)
                 weekly['breaker_triggered'] = dd.get('weekly_breaker_triggered', False)
 
-            # Monthly (only if period matches)
             if dd.get('current_month_year') == today.year and dd.get('current_month') == today.month:
-                monthly['realized_pnl'] = round(dd.get('monthly_realized_pnl', 0.0), 2)
                 monthly['breaker_triggered'] = dd.get('monthly_breaker_triggered', False)
 
-        # DB fallback: if state file missing or pnl is zero, query DB directly
+        # Always compute weekly/monthly realized P&L from DB (source of truth)
+        # so dashboard-resolved expired trades are included
         _db_path = Path(DATABASE_PATH)
         if _db_path.exists():
             import sqlite3 as _sql
             _conn = _sql.connect(str(_db_path), timeout=10)
 
-            if weekly['realized_pnl'] == 0.0:
-                _monday = _date.fromisocalendar(iso_year, iso_week, 1)
-                _wsum = _conn.execute(
-                    "SELECT COALESCE(SUM(pnl), 0) FROM trades "
-                    "WHERE LOWER(status) IN ('closed', 'expired') AND pnl < 0 "
-                    "AND exit_time >= ?", (str(_monday),)
-                ).fetchone()[0]
-                if _wsum != 0.0:
-                    weekly['realized_pnl'] = round(_wsum, 2)
+            _monday = _date.fromisocalendar(iso_year, iso_week, 1)
+            _wsum = _conn.execute(
+                "SELECT COALESCE(SUM(pnl), 0) FROM trades "
+                "WHERE LOWER(status) IN ('closed', 'expired') AND pnl < 0 "
+                "AND exit_time >= ?", (str(_monday),)
+            ).fetchone()[0]
+            weekly['realized_pnl'] = round(_wsum, 2)
 
-            if monthly['realized_pnl'] == 0.0:
-                _first = _date(today.year, today.month, 1)
-                _msum = _conn.execute(
-                    "SELECT COALESCE(SUM(pnl), 0) FROM trades "
-                    "WHERE LOWER(status) IN ('closed', 'expired') AND pnl < 0 "
-                    "AND exit_time >= ?", (str(_first),)
-                ).fetchone()[0]
-                if _msum != 0.0:
-                    monthly['realized_pnl'] = round(_msum, 2)
+            _first = _date(today.year, today.month, 1)
+            _msum = _conn.execute(
+                "SELECT COALESCE(SUM(pnl), 0) FROM trades "
+                "WHERE LOWER(status) IN ('closed', 'expired') AND pnl < 0 "
+                "AND exit_time >= ?", (str(_first),)
+            ).fetchone()[0]
+            monthly['realized_pnl'] = round(_msum, 2)
 
             _conn.close()
 
@@ -3828,7 +3822,7 @@ def api_risk_status():
             _total = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
             _closed_nz = conn.execute(
                 "SELECT COUNT(*) FROM trades "
-                "WHERE LOWER(status) = 'closed' AND pnl != 0 AND pnl IS NOT NULL"
+                "WHERE LOWER(status) IN ('closed', 'expired') AND pnl != 0 AND pnl IS NOT NULL"
             ).fetchone()[0]
             _statuses = [r[0] for r in conn.execute(
                 "SELECT DISTINCT status FROM trades"
@@ -6470,7 +6464,7 @@ def api_health():
         today_str = datetime.now(ET).date().isoformat()
         cursor.execute(
             "SELECT COALESCE(SUM(pnl), 0) FROM trades "
-            "WHERE status = 'closed' AND date(entry_time) = ?",
+            "WHERE status IN ('closed', 'expired') AND date(entry_time) = ?",
             (today_str,)
         )
         daily_pnl = round(cursor.fetchone()[0], 2)

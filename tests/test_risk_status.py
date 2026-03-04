@@ -621,24 +621,63 @@ class TestMonthlyPersistence:
             assert dm.weekly_realized_pnl == -500.0
             assert dm.monthly_realized_pnl == -500.0
 
-    def test_api_returns_monthly_from_drawdown_state(self, tmp_path):
-        """API returns monthly P&L from drawdown_state.json after reset_daily()."""
+    def test_api_returns_monthly_from_db(self, tmp_path):
+        """API returns weekly/monthly P&L from DB (source of truth),
+        not from drawdown_state.json which may be stale after a crash."""
         db_dir = tmp_path / 'database'
         db_dir.mkdir()
 
-        # portfolio_state.json with daily_realized_pnl = 0 (as after reset)
-        (db_dir / 'portfolio_state.json').write_text(json.dumps({
-            'daily_realized_pnl': 0.0,
-            'circuit_breaker_triggered': False,
-        }))
-
-        # drawdown_state.json with monthly loss (same period as today in ET)
         import pytz
         today = datetime.now(pytz.timezone('America/New_York')).date()
         iso_year, iso_week, _ = today.isocalendar()
+
+        # Create trades DB with losses this week/month
+        db_path = str(db_dir / 'trades.db')
+        from database.db_manager import DatabaseManager
+        DatabaseManager(db_path)
+
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        # A closed loss from today (counts in weekly + monthly)
+        conn.execute(
+            """INSERT INTO trades (
+                id, entry_time, exit_time, direction, status,
+                short_strike, long_strike, spread_width, credit_received,
+                entry_price, quantity, expiration, strategy_type, pnl
+            ) VALUES (?, ?, ?, 'bearish', 'closed',
+                5800, 5805, 5.0, 2.0, 2.0, 1, ?, 'daily_income', ?)""",
+            ('t-weekly', f'{today}T10:00:00-05:00',
+             f'{today}T12:00:00-05:00',
+             f'{today}T16:00:00-05:00', -200.0),
+        )
+        # An expired loss from earlier this month (counts in monthly)
+        month_start = today.replace(day=1)
+        earlier = month_start if month_start < today else today
+        conn.execute(
+            """INSERT INTO trades (
+                id, entry_time, exit_time, direction, status,
+                short_strike, long_strike, spread_width, credit_received,
+                entry_price, quantity, expiration, strategy_type, pnl
+            ) VALUES (?, ?, ?, 'bearish', 'expired',
+                5800, 5805, 5.0, 2.0, 2.0, 1, ?, 'daily_income', ?)""",
+            ('t-monthly', f'{earlier}T10:00:00-05:00',
+             f'{earlier}T16:00:00-05:00',
+             f'{earlier}T16:00:00-05:00', -475.0),
+        )
+        conn.commit()
+        conn.close()
+
+        # portfolio_state.json (needed for daily section)
+        (db_dir / 'portfolio_state.json').write_text(json.dumps({
+            'daily_realized_pnl': 0.0,
+            'circuit_breaker_triggered': False,
+            'last_updated': datetime.now(pytz.timezone('America/New_York')).isoformat(),
+        }))
+
+        # drawdown_state.json (breaker flags only; P&L comes from DB)
         (db_dir / 'drawdown_state.json').write_text(json.dumps({
-            'weekly_realized_pnl': -200.0,
-            'monthly_realized_pnl': -675.0,
+            'weekly_realized_pnl': 0.0,
+            'monthly_realized_pnl': 0.0,
             'weekly_breaker_triggered': False,
             'monthly_breaker_triggered': False,
             'current_iso_year': iso_year,
@@ -647,14 +686,17 @@ class TestMonthlyPersistence:
             'current_month_year': today.year,
         }))
 
-        with patch('dashboard.app.BASE_DIR', tmp_path):
+        with patch('dashboard.app.BASE_DIR', tmp_path), \
+             patch('dashboard.app.DATABASE_PATH', db_path):
             app.config['TESTING'] = True
             with app.test_client() as c:
                 resp = c.get('/api/risk-status')
                 data = resp.get_json()
 
-        assert data['monthly']['realized_pnl'] == -675.0
+        # Weekly: only the -200 loss (today)
         assert data['weekly']['realized_pnl'] == -200.0
+        # Monthly: -200 (today) + -475 (earlier) = -675
+        assert data['monthly']['realized_pnl'] == -675.0
         assert data['daily']['realized_pnl'] == 0.0
 
 
