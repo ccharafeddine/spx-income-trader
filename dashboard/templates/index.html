@@ -1570,6 +1570,15 @@ header::after {
   margin-top: 8px;
 }
 .cal-date-header:first-child { margin-top: 0; }
+.cal-date-header.today {
+  color: var(--green);
+  border-left: 3px solid var(--green);
+  padding-left: 8px;
+}
+.cal-date-header.past-day {
+  color: var(--text-dim);
+  opacity: 0.6;
+}
 .cal-event-row {
   display: flex;
   align-items: center;
@@ -7554,14 +7563,23 @@ function _groupByDate(events) {
   var html = '';
   var lastDate = '';
   var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var todayStr = new Date().toISOString().slice(0, 10);
   events.forEach(function(ev) {
     if (ev.date !== lastDate) {
       lastDate = ev.date;
       var d = new Date(ev.date + 'T12:00:00');
       var label = days[d.getDay()] + ' ' + ev.date;
-      html += '<div class="cal-date-header">' + label + '</div>';
+      var hdrCls = 'cal-date-header';
+      if (ev.date === todayStr) hdrCls += ' today';
+      else if (ev.date < todayStr) hdrCls += ' past-day';
+      html += '<div class="' + hdrCls + '">' + label + '</div>';
     }
-    html += _calEventRow(ev);
+    // Dim past-day events that don't already have a status
+    var renderEv = ev;
+    if (!ev.status && ev.date < todayStr) {
+      renderEv = Object.assign({}, ev, {status: 'past'});
+    }
+    html += _calEventRow(renderEv);
   });
   return html;
 }

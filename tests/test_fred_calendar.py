@@ -26,6 +26,7 @@ from src.data.fred_calendar import (
     _event_short_code,
     _standardize_fred_release,
     _match_release,
+    _merge_fomc_from_static,
     get_calendar_events,
     invalidate_cache,
 )
@@ -158,9 +159,11 @@ class TestMatchRelease:
         assert _match_release('Personal Income and Outlays') is not None
         assert _match_release('Personal Income and Outlays')[0] == 'PCE'
 
-    def test_matches_fomc(self):
-        assert _match_release('Federal Open Market Committee') is not None
-        assert _match_release('Federal Open Market Committee')[0] == 'FOMC'
+    def test_fomc_not_matched_from_fred(self):
+        """FOMC is a policy meeting, not a FRED release -- must return None."""
+        assert _match_release('Federal Open Market Committee') is None
+        assert _match_release('FOMC Minutes') is None
+        assert _match_release('Federal Funds Rate') is None
 
     def test_no_match(self):
         assert _match_release('Retail Sales') is None
@@ -315,6 +318,52 @@ class TestFilterByDateRange:
         get_calendar_events(from_date='2026-03-16', to_date='2026-03-31')
 
         assert mock_fetch.call_count == 2
+
+
+# ============================================================================
+# FOMC Static Merge
+# ============================================================================
+
+class TestFomcStaticMerge:
+    """Tests that FOMC dates are merged from the static calendar, not from FRED."""
+
+    def test_fomc_merged_from_static(self):
+        """FOMC events should be spliced in from static calendar within date range."""
+        events = [
+            {'date': '2026-03-11', 'event': 'CPI', 'time': '08:30'},
+        ]
+        result = _merge_fomc_from_static(events, '2026-03-01', '2026-03-31')
+        fomc = [e for e in result if e['event'] == 'FOMC']
+        assert len(fomc) >= 1
+        # The static calendar has FOMC on 2026-03-18
+        assert any(e['date'] == '2026-03-18' for e in fomc)
+
+    def test_fomc_not_duplicated(self):
+        """If FOMC already exists in events, it should not be duplicated."""
+        events = [
+            {'date': '2026-03-18', 'event': 'FOMC', 'time': '14:00'},
+        ]
+        result = _merge_fomc_from_static(events, '2026-03-01', '2026-03-31')
+        fomc_on_18 = [e for e in result if e['event'] == 'FOMC' and e['date'] == '2026-03-18']
+        assert len(fomc_on_18) == 1
+
+    def test_fomc_outside_range_excluded(self):
+        """FOMC dates outside the requested range should not appear."""
+        events = []
+        result = _merge_fomc_from_static(events, '2026-03-01', '2026-03-10')
+        fomc = [e for e in result if e['event'] == 'FOMC']
+        # No FOMC meetings between March 1-10 in static calendar
+        assert len(fomc) == 0
+
+    def test_events_sorted_after_merge(self):
+        """Events should be sorted by (date, time) after merging FOMC."""
+        events = [
+            {'date': '2026-03-26', 'event': 'GDP', 'time': '08:30'},
+            {'date': '2026-03-11', 'event': 'CPI', 'time': '08:30'},
+        ]
+        result = _merge_fomc_from_static(events, '2026-03-01', '2026-03-31')
+        dates = [e['date'] for e in result]
+        assert dates == sorted(dates)
 
 
 # ============================================================================

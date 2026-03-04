@@ -30,9 +30,10 @@ _RELEASE_MAP = {
     'gross domestic product': ('GDP', 'high', '08:30', 'GDP (Gross Domestic Product)'),
     'personal income and outlays': ('PCE', 'high', '08:30', 'PCE Price Index'),
     'personal consumption expenditures': ('PCE', 'high', '08:30', 'PCE Price Index'),
-    'federal open market committee': ('FOMC', 'high', '14:00', 'FOMC Rate Decision'),
-    'fomc': ('FOMC', 'high', '14:00', 'FOMC Rate Decision'),
-    'federal funds rate': ('FOMC', 'high', '14:00', 'FOMC Rate Decision'),
+    # FOMC is NOT matched here.  It's a policy meeting, not a statistical
+    # release, so FRED's releases/dates endpoint returns misleading daily
+    # entries for related Fed publications.  FOMC dates come from the static
+    # calendar instead (merged in _merge_fomc_from_static).
 }
 
 # Mapping of verbose names to short badge codes (used by _event_short_code)
@@ -157,6 +158,45 @@ def _fetch_fred(api_key: str, from_date: str, to_date: str) -> List[dict]:
                 events.append(ev)
 
     events.sort(key=lambda e: (e.get('date', ''), e.get('time', '')))
+
+    # FOMC dates don't live in FRED releases/dates - merge from static calendar
+    events = _merge_fomc_from_static(events, from_date, to_date)
+
+    return events
+
+
+def _merge_fomc_from_static(
+    events: List[dict], from_date: str, to_date: str,
+) -> List[dict]:
+    """Merge FOMC meeting dates from the static calendar.
+
+    FOMC is a policy meeting, not a FRED statistical release.  The static
+    economic_calendar.json has the correct FOMC schedule, so we pull those
+    dates and splice them into the FRED results.
+    """
+    try:
+        from src.data.economic_calendar import load_calendar
+        static_events = load_calendar()
+        existing_fomc_dates = {e['date'] for e in events if e.get('event') == 'FOMC'}
+        for se in static_events:
+            if (se.get('event') == 'FOMC'
+                    and from_date <= se.get('date', '') <= to_date
+                    and se.get('date') not in existing_fomc_dates):
+                events.append({
+                    'date': se.get('date', ''),
+                    'time': se.get('time', '14:00'),
+                    'event': 'FOMC',
+                    'event_full': se.get('description', 'FOMC Rate Decision'),
+                    'impact': 'high',
+                    'description': se.get('description', 'FOMC Rate Decision'),
+                    'actual': '',
+                    'forecast': '',
+                    'previous': '',
+                    'unit': '',
+                })
+        events.sort(key=lambda e: (e.get('date', ''), e.get('time', '')))
+    except Exception as e:
+        logger.debug("Could not merge FOMC from static calendar: %s", e)
     return events
 
 
