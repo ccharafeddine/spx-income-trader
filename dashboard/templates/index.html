@@ -198,6 +198,10 @@ header::after {
   padding: 12px 24px 20px;
   max-width: 1900px;
   margin: 0 auto;
+  height: calc(100vh - 60px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* Account tracker bar */
@@ -212,6 +216,7 @@ header::after {
   border-top: 1px solid rgba(255,255,255,0.05);
   border-radius: 6px;
   margin-bottom: 12px;
+  flex-shrink: 0;
 }
 .acct-item { text-align: center; flex: 1 1 auto; min-width: 100px; }
 .acct-item .val {
@@ -238,11 +243,14 @@ header::after {
   background: var(--border);
 }
 
-/* 2-col grid */
+/* 3-col grid */
 .dashboard {
   display: grid;
-  grid-template-columns: minmax(320px, 380px) 1fr;
+  grid-template-columns: minmax(300px, 340px) 1fr minmax(300px, 380px);
+  grid-template-rows: 1fr;
   gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* Panels */
@@ -489,8 +497,8 @@ header::after {
 }
 
 /* Chart panel */
-.chart-panel { position: relative; min-height: 440px; box-shadow: inset 0 0 30px rgba(6, 182, 212, 0.03); overflow: visible; }
-.chart-container { position: relative; width: 100%; height: 400px; overflow: visible; }
+.chart-panel { position: relative; min-height: 300px; box-shadow: inset 0 0 30px rgba(6, 182, 212, 0.03); overflow: hidden; flex: 1 1 auto; display: flex; flex-direction: column; }
+.chart-container { position: relative; width: 100%; flex: 1 1 auto; min-height: 200px; overflow: hidden; }
 
 /* Chart watermark (SPX behind candlesticks) */
 .chart-watermark {
@@ -511,7 +519,7 @@ header::after {
   position: relative;
   z-index: 2;
   width: 100%;
-  height: 400px;
+  height: 100%;
 }
 
 /* Chart footer with price and stats */
@@ -723,9 +731,9 @@ header::after {
   gap: 4px;
 }
 
-/* Full-width positions panel */
+/* Positions panel */
 .positions-panel {
-  margin-top: 12px;
+  flex-shrink: 0;
 }
 .positions-panel #positions-body {
   display: flex;
@@ -873,14 +881,31 @@ header::after {
 .agg-stat .lbl { font-family: var(--font-ui); font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; }
 .equity-chart { width: 100%; height: 200px; }
 
-/* Full-width row below main grid */
-.bottom-row {
-  display: grid;
-  grid-template-columns: 2fr 3fr;
-  gap: 12px;
-  margin-top: 12px;
+/* Signal log panel in middle column */
+.middle-column > .signal-log-panel {
+  flex: 0 1 auto;
+  min-height: 120px;
+  max-height: 280px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-.bottom-row { overflow-x: auto; }
+.middle-column > .signal-log-panel > .cpanel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.middle-column > .signal-log-panel > .cpanel-body > div {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.middle-column > .signal-log-panel .table-scroll {
+  overflow-y: auto;
+  max-height: 100%;
+}
 
 /* Scrollable table wrapper */
 .table-scroll {
@@ -903,7 +928,7 @@ header::after {
   padding: 16px 20px;
   margin-bottom: 12px;
 }
-.summary-panel.visible { display: block; }
+.summary-panel.visible { display: block; flex-shrink: 0; }
 .summary-header {
   display: flex;
   align-items: center;
@@ -980,6 +1005,7 @@ header::after {
   margin-bottom: 12px;
   border-bottom: 1px solid var(--border);
   padding-bottom: 0;
+  flex-shrink: 0;
 }
 .tab-btn {
   padding: 8px 20px;
@@ -1007,6 +1033,7 @@ header::after {
 }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
+#tab-overview.active { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 
 /* Journal stats bar */
 .journal-stats-bar {
@@ -2075,17 +2102,72 @@ header::after {
   animation: building-pulse 1.5s ease-in-out infinite;
 }
 
-/* Left column layout */
+/* Column layouts */
 .left-column {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow-y: auto;
+  min-height: 0;
 }
+.middle-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+.right-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.right-column > .panel {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.right-column > .panel > .cpanel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.right-column > .panel > .cpanel-body > div {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.right-column .agg-stats { flex-shrink: 0; }
+.right-column .equity-chart { flex-shrink: 0; height: 150px; }
+.right-column .table-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+/* Column scrollbars */
+.left-column::-webkit-scrollbar,
+.right-column .table-scroll::-webkit-scrollbar,
+.middle-column .table-scroll::-webkit-scrollbar { width: 6px; }
+.left-column::-webkit-scrollbar-track,
+.right-column .table-scroll::-webkit-scrollbar-track,
+.middle-column .table-scroll::-webkit-scrollbar-track { background: var(--panel); }
+.left-column::-webkit-scrollbar-thumb,
+.right-column .table-scroll::-webkit-scrollbar-thumb,
+.middle-column .table-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 /* Responsive */
-@media (max-width: 900px) {
-  .dashboard { grid-template-columns: 1fr; }
-  .bottom-row { grid-template-columns: 1fr; }
+@media (max-width: 1100px) {
+  .main-content { height: auto; overflow: visible; }
+  .dashboard { grid-template-columns: 1fr; grid-template-rows: auto; height: auto; }
+  .left-column, .middle-column, .right-column { overflow: visible; }
+  .chart-panel { min-height: 400px; }
+  .chart-container { min-height: 350px; }
+  .middle-column > .signal-log-panel { max-height: none; }
+  .right-column .equity-chart { height: 200px; }
   .account-bar { flex-wrap: wrap; gap: 16px; }
   .acct-divider { display: none; }
   .trade-details-grid { grid-template-columns: 1fr 1fr; }
@@ -2189,7 +2271,7 @@ header::after {
   color: var(--amber);
   font-weight: 500;
 }
-.warning-banner.visible { display: flex; align-items: center; gap: 10px; }
+.warning-banner.visible { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .warning-banner .banner-icon { font-size: 18px; flex-shrink: 0; }
 .warning-banner .banner-text { flex: 1; }
 .warning-banner .banner-dismiss {
@@ -3067,7 +3149,7 @@ header::after {
   <!-- TAB: OVERVIEW -->
   <div id="tab-overview" class="tab-content active" role="tabpanel">
 
-  <!-- MAIN 2-COL GRID -->
+  <!-- MAIN 3-COL GRID -->
   <div class="dashboard">
 
     <!-- LEFT COLUMN: Status + Positions -->
@@ -3163,150 +3245,151 @@ header::after {
       </div>
     </div>
 
-    <!-- RIGHT COLUMN: Chart -->
-    <div class="panel chart-panel">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
-        <div class="panel-title" style="margin-bottom:0;">Today's Activity</div>
-        <div id="chart-tf-toggle" style="display:inline-flex; border:1px solid rgba(255,255,255,0.12); border-radius:4px; overflow:hidden; font-size:11px; font-family:'JetBrains Mono',monospace;">
-          <button id="tf-4h" onclick="setChartTimeframe('4h')" style="padding:3px 10px; background:transparent; color:#6b7280; border:none; cursor:pointer; font-size:11px; font-family:inherit;">4h</button>
-          <button id="tf-1h" onclick="setChartTimeframe('1h')" style="padding:3px 10px; background:transparent; color:#6b7280; border:none; border-left:1px solid rgba(255,255,255,0.12); cursor:pointer; font-size:11px; font-family:inherit;">1h</button>
-          <button id="tf-30m" onclick="setChartTimeframe('30m')" style="padding:3px 10px; background:rgba(255,255,255,0.1); color:#e5e7eb; border:none; border-left:1px solid rgba(255,255,255,0.12); cursor:pointer; font-size:11px; font-family:inherit;">30m</button>
-          <button id="tf-5m" onclick="setChartTimeframe('5m')" style="padding:3px 10px; background:transparent; color:#6b7280; border:none; border-left:1px solid rgba(255,255,255,0.12); cursor:pointer; font-size:11px; font-family:inherit;">5m</button>
+    <!-- MIDDLE COLUMN: Chart + Positions + Signal Log -->
+    <div class="middle-column">
+      <div class="panel chart-panel">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; flex-shrink:0;">
+          <div class="panel-title" style="margin-bottom:0;">Today's Activity</div>
+          <div id="chart-tf-toggle" style="display:inline-flex; border:1px solid rgba(255,255,255,0.12); border-radius:4px; overflow:hidden; font-size:11px; font-family:'JetBrains Mono',monospace;">
+            <button id="tf-4h" onclick="setChartTimeframe('4h')" style="padding:3px 10px; background:transparent; color:#6b7280; border:none; cursor:pointer; font-size:11px; font-family:inherit;">4h</button>
+            <button id="tf-1h" onclick="setChartTimeframe('1h')" style="padding:3px 10px; background:transparent; color:#6b7280; border:none; border-left:1px solid rgba(255,255,255,0.12); cursor:pointer; font-size:11px; font-family:inherit;">1h</button>
+            <button id="tf-30m" onclick="setChartTimeframe('30m')" style="padding:3px 10px; background:rgba(255,255,255,0.1); color:#e5e7eb; border:none; border-left:1px solid rgba(255,255,255,0.12); cursor:pointer; font-size:11px; font-family:inherit;">30m</button>
+            <button id="tf-5m" onclick="setChartTimeframe('5m')" style="padding:3px 10px; background:transparent; color:#6b7280; border:none; border-left:1px solid rgba(255,255,255,0.12); cursor:pointer; font-size:11px; font-family:inherit;">5m</button>
+          </div>
+        </div>
+        <div class="chart-container">
+          <div class="chart-watermark">SPX</div>
+          <div id="candle-chart"><div class="empty" style="opacity:0.4">Loading chart data...</div></div>
+        </div>
+        <div class="chart-footer" style="flex-shrink:0;">
+          <!-- Left: SPX Price Display -->
+          <div class="spx-price-section">
+            <div class="spx-main-price">
+              <span class="spx-ticker">SPX</span>
+              <span class="footer-spx-price" id="footer-spx-price">--</span>
+            </div>
+            <div class="footer-spx-change" id="footer-spx-change">
+              <span class="change-arrow">--</span>
+              <span class="change-value">--</span>
+              <span class="change-pct"></span>
+            </div>
+            <div class="footer-vix" id="footer-vix" style="display:none;">
+              <span class="footer-vix-label">VIX</span>
+              <span class="footer-vix-value" id="footer-vix-value">--</span>
+              <span id="footer-vix-badge"></span>
+            </div>
+          </div>
+          <!-- Center: Key Metrics -->
+          <div class="spx-metrics">
+            <div class="metric">
+              <span class="metric-label">Open</span>
+              <span class="metric-value" id="footer-open">--</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">High</span>
+              <span class="metric-value" id="footer-high">--</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Low</span>
+              <span class="metric-value" id="footer-low">--</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Prev Close</span>
+              <span class="metric-value" id="footer-prev-close">--</span>
+            </div>
+          </div>
+          <!-- Right: Trading Stats -->
+          <div class="trading-stats">
+            <div class="stat">
+              <span class="stat-value" id="footer-signals">0</span>
+              <span class="stat-label">Signals</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value" id="footer-trades">0</span>
+              <span class="stat-label">Trades</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value" id="footer-pnl">$0.00</span>
+              <span class="stat-label">P&L</span>
+            </div>
+            <div class="stat building-stat" id="footer-building" style="display:none;">
+              <span class="stat-value">--</span>
+              <span class="stat-label">Building</span>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="chart-container">
-        <div class="chart-watermark">SPX</div>
-        <div id="candle-chart"><div class="empty" style="opacity:0.4">Loading chart data...</div></div>
+
+      <!-- POSITION TRACKER -->
+      <div class="panel positions-panel" id="positions-panel-wrap" data-cpanel-id="ov-positions">
+        <div class="panel-title cpanel-toggle">Open Positions</div>
+        <div class="cpanel-body"><div>
+          <div id="positions-body">
+            <div class="empty">No open positions</div>
+          </div>
+        </div></div>
       </div>
-      <div class="chart-footer">
-        <!-- Left: SPX Price Display -->
-        <div class="spx-price-section">
-          <div class="spx-main-price">
-            <span class="spx-ticker">SPX</span>
-            <span class="footer-spx-price" id="footer-spx-price">--</span>
+
+      <!-- TRADE PLAN (visible only when position is open) -->
+      <div class="panel trade-plan-panel" id="trade-plan-panel" style="display:none;">
+        <div class="panel-title">Trade Plan</div>
+        <div id="trade-plan-content"></div>
+      </div>
+
+      <!-- PORTFOLIO GREEKS (visible only when positions exist) -->
+      <div class="panel greeks-panel" id="greeks-panel" data-cpanel-id="ov-greeks">
+        <div class="panel-title cpanel-toggle">Portfolio Greeks</div>
+        <div class="cpanel-body"><div>
+          <div id="greeks-content">
+            <div class="greeks-grid">
+              <div class="greek-card">
+                <div class="label">Delta</div>
+                <div class="greek-value" id="greek-delta">--</div>
+              </div>
+              <div class="greek-card">
+                <div class="label">Gamma</div>
+                <div class="greek-value" id="greek-gamma">--</div>
+              </div>
+              <div class="greek-card">
+                <div class="label">Theta/Hr</div>
+                <div class="greek-value" id="greek-theta">--</div>
+              </div>
+              <div class="greek-card">
+                <div class="label">Vega</div>
+                <div class="greek-value" id="greek-vega">--</div>
+              </div>
+            </div>
+            <div class="greeks-interpretation" id="greeks-interpretation"></div>
+            <div class="greeks-meta" id="greeks-meta"></div>
           </div>
-          <div class="footer-spx-change" id="footer-spx-change">
-            <span class="change-arrow">--</span>
-            <span class="change-value">--</span>
-            <span class="change-pct"></span>
+        </div></div>
+      </div>
+
+      <!-- SIGNAL LOG -->
+      <div class="panel signal-log-panel" data-cpanel-id="ov-signals">
+        <div class="panel-title cpanel-toggle">Signal Log</div>
+        <div class="cpanel-body"><div>
+          <div class="table-scroll" id="signal-log-body">
+            <div class="empty">No signals yet</div>
           </div>
-          <div class="footer-vix" id="footer-vix" style="display:none;">
-            <span class="footer-vix-label">VIX</span>
-            <span class="footer-vix-value" id="footer-vix-value">--</span>
-            <span id="footer-vix-badge"></span>
-          </div>
-        </div>
-        <!-- Center: Key Metrics -->
-        <div class="spx-metrics">
-          <div class="metric">
-            <span class="metric-label">Open</span>
-            <span class="metric-value" id="footer-open">--</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">High</span>
-            <span class="metric-value" id="footer-high">--</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Low</span>
-            <span class="metric-value" id="footer-low">--</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Prev Close</span>
-            <span class="metric-value" id="footer-prev-close">--</span>
-          </div>
-        </div>
-        <!-- Right: Trading Stats -->
-        <div class="trading-stats">
-          <div class="stat">
-            <span class="stat-value" id="footer-signals">0</span>
-            <span class="stat-label">Signals</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value" id="footer-trades">0</span>
-            <span class="stat-label">Trades</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value" id="footer-pnl">$0.00</span>
-            <span class="stat-label">P&L</span>
-          </div>
-          <div class="stat building-stat" id="footer-building" style="display:none;">
-            <span class="stat-value">--</span>
-            <span class="stat-label">Building</span>
-          </div>
-        </div>
+        </div></div>
       </div>
     </div>
 
-  </div>
-
-  <!-- POSITION TRACKER (full-width below chart) -->
-  <div class="panel positions-panel" id="positions-panel-wrap" data-cpanel-id="ov-positions">
-    <div class="panel-title cpanel-toggle">Open Positions</div>
-    <div class="cpanel-body"><div>
-      <div id="positions-body">
-        <div class="empty">No open positions</div>
+    <!-- RIGHT COLUMN: Trade History + Performance -->
+    <div class="right-column">
+      <div class="panel" data-cpanel-id="ov-history">
+        <div class="panel-title cpanel-toggle">Trade History & Performance <span style="font-size:10px;color:var(--text-dim);font-weight:normal;margin-left:6px">MTD</span></div>
+        <div class="cpanel-body"><div>
+          <div class="agg-stats" id="agg-stats"></div>
+          <div class="equity-chart" id="equity-chart"></div>
+          <div class="table-scroll" id="history-table-body">
+            <div class="empty">No closed trades yet</div>
+          </div>
+        </div></div>
       </div>
-    </div></div>
-  </div>
-
-  <!-- TRADE PLAN (visible only when position is open) -->
-  <div class="panel trade-plan-panel" id="trade-plan-panel" style="display:none;">
-    <div class="panel-title">Trade Plan</div>
-    <div id="trade-plan-content"></div>
-  </div>
-
-  <!-- PORTFOLIO GREEKS (visible only when positions exist) -->
-  <div class="panel greeks-panel" id="greeks-panel" data-cpanel-id="ov-greeks">
-    <div class="panel-title cpanel-toggle">Portfolio Greeks</div>
-    <div class="cpanel-body"><div>
-      <div id="greeks-content">
-        <div class="greeks-grid">
-          <div class="greek-card">
-            <div class="label">Delta</div>
-            <div class="greek-value" id="greek-delta">--</div>
-          </div>
-          <div class="greek-card">
-            <div class="label">Gamma</div>
-            <div class="greek-value" id="greek-gamma">--</div>
-          </div>
-          <div class="greek-card">
-            <div class="label">Theta/Hr</div>
-            <div class="greek-value" id="greek-theta">--</div>
-          </div>
-          <div class="greek-card">
-            <div class="label">Vega</div>
-            <div class="greek-value" id="greek-vega">--</div>
-          </div>
-        </div>
-        <div class="greeks-interpretation" id="greeks-interpretation"></div>
-        <div class="greeks-meta" id="greeks-meta"></div>
-      </div>
-    </div></div>
-  </div>
-
-  <!-- BOTTOM ROW: Signal Log + Trade History -->
-  <div class="bottom-row">
-    <!-- SIGNAL LOG -->
-    <div class="panel" data-cpanel-id="ov-signals">
-      <div class="panel-title cpanel-toggle">Signal Log</div>
-      <div class="cpanel-body"><div>
-        <div class="table-scroll" id="signal-log-body">
-          <div class="empty">No signals yet</div>
-        </div>
-      </div></div>
     </div>
 
-    <!-- TRADE HISTORY + Performance -->
-    <div class="panel" data-cpanel-id="ov-history">
-      <div class="panel-title cpanel-toggle">Trade History & Performance <span style="font-size:10px;color:var(--text-dim);font-weight:normal;margin-left:6px">MTD</span></div>
-      <div class="cpanel-body"><div>
-        <div class="agg-stats" id="agg-stats"></div>
-        <div class="equity-chart" id="equity-chart"></div>
-        <div class="table-scroll" id="history-table-body">
-          <div class="empty">No closed trades yet</div>
-        </div>
-      </div></div>
-    </div>
   </div>
 
   </div><!-- /tab-overview -->
@@ -5776,6 +5859,27 @@ function renderChart(d) {
     document.getElementById('candle-chart').innerHTML = '<div class="empty">No bar data yet (market may be closed)</div>';
   }
 }
+
+// Resize Plotly chart when container size changes
+(function() {
+  let resizeTimer = null;
+  const chartContainer = document.querySelector('.chart-container');
+  if (chartContainer && typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(function() {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function() {
+        const el = document.getElementById('candle-chart');
+        if (el && el.data) {
+          Plotly.Plots.resize(el);
+        }
+        const eq = document.getElementById('equity-chart');
+        if (eq && eq.data) {
+          Plotly.Plots.resize(eq);
+        }
+      }, 150);
+    }).observe(chartContainer);
+  }
+})();
 
 function _dedupBars(bars) {
   // Keep only last occurrence of each timestamp
