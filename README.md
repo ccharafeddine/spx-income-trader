@@ -71,7 +71,8 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - **E\*TRADE**: Full API integration with OAuth flow, token auto-renewal (90-min cycle), order preview/place/confirm pipeline
 - **Charles Schwab**: schwab-py integration with OAuth2 authorization, automatic token refresh, and full options order support
 - **Interactive Brokers**: ib_insync integration via TWS/IB Gateway. Snapshot market data, options chain discovery via reqSecDefOptParams, BAG combo orders for credit spreads, live/paper trading with automatic port selection. Dashboard connect/disconnect controls.
-- **Dry-run mode** (default): Real market data via Yahoo Finance with simulated fills using Black-Scholes pricing. No broker credentials needed. Optional shadow mode compares simulated fills against a read-only Schwab feed.
+- **Dry-run mode** (default): Real market data via Yahoo Finance with simulated fills using Black-Scholes pricing. No broker credentials needed.
+- **Shadow mode** (dry-run only): Read-only Schwab comparison that runs alongside the dry-run broker. Compares simulated fills against live Schwab quotes at entry, exit, and periodically (every 15 min). Logs price divergence, credit divergence, and whether the trade decision would differ. Dashboard panel shows summary stats and recent comparisons. Enable/disable via the Settings sidebar toggle.
 - Reactive 401 handling with automatic token refresh and retry on E\*TRADE and Schwab
 - Proactive token freshness checks before order placement
 - Rate limit (429) protection with exponential backoff
@@ -103,6 +104,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Visual micro-interactions: button press spring, tab fade-in, P&L glow on value change, position card entrance animation, mute bounce, toggle squeeze, risk bar pulse, LED flash on state change, settings gear rotation, click ripple effect
 - DB-backed strategy status LEDs for all four strategies (persists across page refreshes)
 - Signal log showing every detected setup with strikes, credit, risk, and SPX price
+- Shadow mode panel (dry-run only): summary stats, recent comparison rows with timestamps, price/credit divergence, and decision-would-differ LED indicators
 - Five tabs: Overview, Trade Journal, Analytics, Backtest, Logs
 
 ### Trade Journal
@@ -185,12 +187,14 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Available in live mode only (skipped in dry-run and demo modes)
 
 ### Observability
-- Structured JSON logging with credential masking
+- Structured JSON logging with credential masking and UTF-8 encoding on all file handlers
 - Prometheus metrics endpoint (`/metrics`) with trade counters, P&L gauges, and latency histograms
 - Health endpoint (`/api/health`) for uptime monitoring
 - Price feed health monitoring with stale timeout and failure tracking
 - Rotating log files with separate error-level log
 - Crash log written to `~/spx_crash.log` for desktop app failures
+- BaseException handlers at all critical levels (enter_trade, main loop, bot thread) to prevent silent thread death
+- ASCII-only log messages enforced by CI tests (prevents Windows cp1252 encoding crashes in PyInstaller windowed mode)
 
 ### Desktop Application
 - Native window via pywebview (not a browser wrapper)
@@ -318,9 +322,10 @@ Position Manager (P&L tracking, exit management, partial fill tracking, PDT-cond
     +---> Prometheus Metrics (/metrics)
     +---> Event Recorder (session recording, demo JSONL capture)
     +---> Trade Reconciler (DB vs. broker fill comparison)
+    +---> Shadow Comparator (dry-run vs. live Schwab price/credit comparison)
 ```
 
-**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1170+ tests), GitHub Actions CI
+**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1180+ tests), GitHub Actions CI
 
 ---
 
@@ -483,6 +488,8 @@ src/
         data_loader.py       # Yahoo Finance data download and CSV parsing
         sim_broker.py        # Simulated broker for backtesting
         report.py            # Backtest report generation
+    shadow/
+        comparator.py        # Read-only Schwab comparison for dry-run validation
     demo/
         recorder.py          # JSONL event recorder (live sessions + dashboard recording)
         replay.py            # Replay engine with threaded playback
@@ -534,7 +541,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 
 ## Testing
 
-1170+ tests covering:
+1180+ tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays, morning bias filter, TNT weekend hold prevention)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
 - Position management (sizing, P&L calculation, exit triggers, partial fill tracking)
@@ -543,6 +550,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 - PDT compliance tracking, entry gating, and 1PM management integration
 - Bar building and market state management
 - Consecutive loss tracking and streak counters
+- Dashboard win/loss streak counters (end-to-end DB-to-API proof tests)
 - VIX data provider multi-source fallback chains
 - Price feed health monitoring and stale detection
 - Daily journal persistence and API endpoints
@@ -559,6 +567,8 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 - Backtest engine PDT mode and BB agreement tracking
 - Chart data endpoints (unified bar history, paginated lazy loading, historical trade queries)
 - Timestamp normalization across year boundaries (YYYY-MM-DD HH:MM format, correct sort order)
+- Enter-trade resilience (save_trade exception handling, BaseException re-raise for SystemExit/KeyboardInterrupt)
+- Production stability guards: AST-based scan for non-ASCII characters in logger calls, UTF-8 encoding on all RotatingFileHandler instances, BaseException handlers in enter_trade/main loop/bot thread, devnull redirect encoding
 
 ```bash
 python -m pytest tests/ -v
