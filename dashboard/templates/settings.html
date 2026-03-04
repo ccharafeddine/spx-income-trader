@@ -1058,6 +1058,28 @@ header {
     </div>
   </div>
 
+  <!-- Finnhub API Key -->
+  <div class="panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">Finnhub API Key</div>
+        <div class="panel-subtitle">Free API key for live economic calendar data (<a href="https://finnhub.io/register" target="_blank" style="color:var(--cyan);">Get one free</a>)</div>
+      </div>
+    </div>
+
+    <div class="form-grid" style="grid-template-columns: 1fr; max-width: 480px;">
+      <div>
+        <label>API Key</label>
+        <input type="password" id="finnhub_api_key" value="{{ masked_finnhub_key }}" placeholder="Enter Finnhub API key" autocomplete="off">
+      </div>
+    </div>
+
+    <div style="margin-top: 12px;">
+      <button type="button" class="btn btn-primary" onclick="saveFinnhubApiKey()">Save API Key</button>
+      <div id="finnhub-cred-result" style="margin-top: 8px; font-size: 12px; display: none;"></div>
+    </div>
+  </div>
+
   <!-- Notifications -->
   <div class="panel">
     <div class="panel-header">
@@ -1199,6 +1221,49 @@ async function saveSchwabCredentials() {
       resultDiv.style.border = '1px solid var(--red)';
       resultDiv.style.color = 'var(--red)';
       resultDiv.textContent = data.error || 'Failed to save credentials.';
+      resultDiv.style.display = 'block';
+    }
+  } catch (error) {
+    resultDiv.style.background = 'var(--red-dim)';
+    resultDiv.style.border = '1px solid var(--red)';
+    resultDiv.style.color = 'var(--red)';
+    resultDiv.textContent = 'Error: ' + error.message;
+    resultDiv.style.display = 'block';
+  }
+}
+
+async function saveFinnhubApiKey() {
+  const apiKey = document.getElementById('finnhub_api_key').value.trim();
+  const resultDiv = document.getElementById('finnhub-cred-result');
+
+  if (apiKey.startsWith('****') || !apiKey) {
+    resultDiv.style.background = 'var(--green-dim)';
+    resultDiv.style.border = '1px solid var(--green)';
+    resultDiv.style.color = 'var(--green)';
+    resultDiv.textContent = 'No changes detected.';
+    resultDiv.style.display = 'block';
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/finnhub/credentials', {
+      method: 'POST',
+      headers: API_HEADERS,
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+    const data = await response.json();
+
+    if (data.success) {
+      resultDiv.style.background = 'var(--green-dim)';
+      resultDiv.style.border = '1px solid var(--green)';
+      resultDiv.style.color = 'var(--green)';
+      resultDiv.textContent = 'Finnhub API key saved.';
+      resultDiv.style.display = 'block';
+    } else {
+      resultDiv.style.background = 'var(--red-dim)';
+      resultDiv.style.border = '1px solid var(--red)';
+      resultDiv.style.color = 'var(--red)';
+      resultDiv.textContent = data.error || 'Failed to save API key.';
       resultDiv.style.display = 'block';
     }
   } catch (error) {

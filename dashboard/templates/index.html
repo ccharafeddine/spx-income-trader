@@ -1539,6 +1539,67 @@ header::after {
 .econ-event-row .econ-desc { color: var(--text); flex: 1; margin-left: 8px; }
 .econ-no-events { color: var(--text-dim); font-size: 11px; font-style: italic; }
 
+/* Calendar Tab */
+.cal-section { margin-bottom: 20px; }
+.cal-section-title {
+  font-size: 12px;
+  font-weight: bold;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.cal-source-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: bold;
+  padding: 2px 10px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.cal-source-badge.live { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+.cal-source-badge.static { background: rgba(100,100,100,0.15); color: var(--text-dim); border: 1px solid var(--border); }
+.cal-date-header {
+  font-size: 11px;
+  font-weight: bold;
+  color: var(--cyan);
+  padding: 6px 0 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  margin-top: 8px;
+}
+.cal-date-header:first-child { margin-top: 0; }
+.cal-event-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 12px;
+}
+.cal-event-row.past { opacity: 0.45; }
+.cal-event-row.current { border-left: 3px solid var(--cyan); padding-left: 8px; }
+.cal-impact-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: bold;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  min-width: 50px;
+  text-align: center;
+}
+.cal-impact-badge.high { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+.cal-impact-badge.medium { background: rgba(245,158,11,0.15); color: var(--amber); border: 1px solid rgba(245,158,11,0.3); }
+.cal-impact-badge.low { background: rgba(100,100,100,0.15); color: var(--text-dim); border: 1px solid var(--border); }
+.cal-time { color: var(--text-dim); font-size: 11px; min-width: 48px; }
+.cal-desc { color: var(--text); flex: 1; }
+.cal-data { font-size: 11px; color: var(--text-dim); min-width: 140px; text-align: right; }
+.cal-data .actual { color: var(--green); font-weight: bold; }
+.cal-loading { color: var(--text-dim); font-size: 11px; font-style: italic; }
+.cal-no-events { color: var(--text-dim); font-size: 11px; font-style: italic; }
+
 /* Risk Status Panel */
 .risk-status-panel {
   margin-top: 10px;
@@ -2987,6 +3048,7 @@ header::after {
   <!-- TAB NAVIGATION -->
   <div class="tab-bar" role="tablist">
     <button class="tab-btn active" role="tab" aria-selected="true" onclick="switchTab('overview')">Overview</button>
+    <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('calendar')">Calendar</button>
     <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('journal')">Trade Journal</button>
     <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('analytics')">Analytics</button>
     <button class="tab-btn" role="tab" aria-selected="false" onclick="switchTab('backtest')">Backtest</button>
@@ -3239,6 +3301,45 @@ header::after {
   </div>
 
   </div><!-- /tab-overview -->
+
+  <!-- TAB: CALENDAR -->
+  <div id="tab-calendar" class="tab-content" role="tabpanel">
+    <div class="panel">
+      <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div class="panel-title">Economic Calendar</div>
+          <div class="panel-subtitle">High-impact US economic events</div>
+        </div>
+        <span class="cal-source-badge" id="cal-source-badge"></span>
+      </div>
+
+      <!-- Today's Events -->
+      <div class="cal-section">
+        <div class="cal-section-title">Today</div>
+        <div id="cal-today-body">
+          <div class="cal-loading">Loading calendar...</div>
+        </div>
+      </div>
+
+      <!-- This Week -->
+      <div class="cal-section">
+        <div class="cal-section-title">This Week</div>
+        <div id="cal-week-body">
+          <div class="cal-loading">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Upcoming 30 Days -->
+      <div class="cal-section">
+        <div class="cal-section-title" style="cursor:pointer;" onclick="toggleUpcoming()">
+          Upcoming 30 Days <span id="cal-upcoming-toggle" style="font-size:10px;color:var(--text-dim);margin-left:4px;">&#9654; expand</span>
+        </div>
+        <div id="cal-upcoming-body" style="display:none;">
+          <div class="cal-loading">Loading...</div>
+        </div>
+      </div>
+    </div>
+  </div><!-- /tab-calendar -->
 
   <!-- TAB: TRADE JOURNAL -->
   <div id="tab-journal" class="tab-content" role="tabpanel">
@@ -6167,6 +6268,7 @@ function switchTab(tabId) {
   document.querySelectorAll('.tab-btn').forEach(btn => {
     const isActive = btn.textContent.toLowerCase().replace(/\s/g, '') === tabId ||
       (tabId === 'overview' && btn.textContent === 'Overview') ||
+      (tabId === 'calendar' && btn.textContent === 'Calendar') ||
       (tabId === 'journal' && btn.textContent === 'Trade Journal') ||
       (tabId === 'analytics' && btn.textContent === 'Analytics') ||
       (tabId === 'logs' && btn.textContent === 'Logs') ||
@@ -6177,6 +6279,7 @@ function switchTab(tabId) {
   document.querySelectorAll('.tab-content').forEach(el => {
     el.classList.toggle('active', el.id === 'tab-' + tabId);
   });
+  if (tabId === 'calendar') loadCalendarTab();
   if (tabId === 'journal') updateJournal();
   if (tabId === 'analytics') loadAnalytics();
   if (tabId === 'logs') updateLogs();
@@ -7376,6 +7479,104 @@ async function updateEconomicEvents() {
   }
 }
 updateEconomicEvents();
+
+// ---------------------------------------------------------------
+// Calendar Tab (lazy-loaded on first switch)
+// ---------------------------------------------------------------
+let _calendarLoaded = false;
+
+async function loadCalendarTab() {
+  try {
+    const resp = await fetch('/api/calendar');
+    const data = await resp.json();
+    _calendarLoaded = true;
+
+    // Source badge
+    const badge = document.getElementById('cal-source-badge');
+    if (badge) {
+      if (data.source === 'finnhub') {
+        badge.className = 'cal-source-badge live';
+        badge.textContent = 'Live - Finnhub';
+      } else {
+        badge.className = 'cal-source-badge static';
+        badge.textContent = 'Static fallback';
+      }
+    }
+
+    renderCalendarToday(data.today || []);
+    renderCalendarWeek(data.week || []);
+    renderCalendarUpcoming(data.upcoming || []);
+  } catch(e) {
+    document.getElementById('cal-today-body').innerHTML = '<span class="cal-no-events">Calendar unavailable</span>';
+  }
+}
+
+function _calEventRow(ev) {
+  var cls = (ev.status === 'past') ? ' past' : (ev.status === 'current') ? ' current' : '';
+  var impact = (ev.impact || 'medium').toLowerCase();
+  var html = '<div class="cal-event-row' + cls + '">';
+  html += '<span class="cal-impact-badge ' + impact + '">' + (ev.event || '') + '</span>';
+  html += '<span class="cal-time">' + (ev.time || '--:--') + ' ET</span>';
+  html += '<span class="cal-desc">' + (ev.description || ev.event_full || '') + '</span>';
+
+  // Data column: actual / forecast / previous
+  var parts = [];
+  if (ev.actual !== '' && ev.actual != null) parts.push('<span class="actual">' + ev.actual + (ev.unit || '') + '</span>');
+  if (ev.forecast !== '' && ev.forecast != null) parts.push('F: ' + ev.forecast + (ev.unit || ''));
+  if (ev.previous !== '' && ev.previous != null) parts.push('P: ' + ev.previous + (ev.unit || ''));
+  html += '<span class="cal-data">' + parts.join(' | ') + '</span>';
+  html += '</div>';
+  return html;
+}
+
+function renderCalendarToday(events) {
+  var el = document.getElementById('cal-today-body');
+  if (!el) return;
+  if (!events.length) { el.innerHTML = '<span class="cal-no-events">No events today</span>'; return; }
+  el.innerHTML = events.map(_calEventRow).join('');
+}
+
+function renderCalendarWeek(events) {
+  var el = document.getElementById('cal-week-body');
+  if (!el) return;
+  if (!events.length) { el.innerHTML = '<span class="cal-no-events">No events this week</span>'; return; }
+  el.innerHTML = _groupByDate(events);
+}
+
+function renderCalendarUpcoming(events) {
+  var el = document.getElementById('cal-upcoming-body');
+  if (!el) return;
+  if (!events.length) { el.innerHTML = '<span class="cal-no-events">No upcoming events</span>'; return; }
+  el.innerHTML = _groupByDate(events);
+}
+
+function _groupByDate(events) {
+  var html = '';
+  var lastDate = '';
+  var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  events.forEach(function(ev) {
+    if (ev.date !== lastDate) {
+      lastDate = ev.date;
+      var d = new Date(ev.date + 'T12:00:00');
+      var label = days[d.getDay()] + ' ' + ev.date;
+      html += '<div class="cal-date-header">' + label + '</div>';
+    }
+    html += _calEventRow(ev);
+  });
+  return html;
+}
+
+function toggleUpcoming() {
+  var body = document.getElementById('cal-upcoming-body');
+  var toggle = document.getElementById('cal-upcoming-toggle');
+  if (body.style.display === 'none') {
+    body.style.display = '';
+    toggle.innerHTML = '&#9660; collapse';
+  } else {
+    body.style.display = 'none';
+    toggle.innerHTML = '&#9654; expand';
+  }
+}
 
 // Risk status (refreshed with each status poll)
 async function updateRiskStatus() {

@@ -257,6 +257,53 @@ def clear_schwab_credentials() -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# Finnhub API key management (OS keyring)
+# ---------------------------------------------------------------------------
+
+FINNHUB_KEYRING_SERVICE = 'spx-income-trader-finnhub'
+
+
+def save_finnhub_api_key(api_key: str) -> bool:
+    """Save Finnhub API key to the OS keychain."""
+    try:
+        import keyring
+        keyring.set_password(FINNHUB_KEYRING_SERVICE, 'finnhub_api_key', api_key)
+        return True
+    except ImportError:
+        logger.error("keyring module not installed - cannot save Finnhub API key")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to save Finnhub API key to keyring: {e}")
+        return False
+
+
+def get_finnhub_api_key() -> str | None:
+    """Load Finnhub API key from OS keychain."""
+    try:
+        import keyring
+        key = keyring.get_password(FINNHUB_KEYRING_SERVICE, 'finnhub_api_key')
+        return key if key else None
+    except (ImportError, Exception):
+        return None
+
+
+def clear_finnhub_api_key() -> bool:
+    """Remove Finnhub API key from the OS keychain."""
+    try:
+        import keyring
+        try:
+            keyring.delete_password(FINNHUB_KEYRING_SERVICE, 'finnhub_api_key')
+        except keyring.errors.PasswordDeleteError:
+            pass
+        return True
+    except ImportError:
+        return False
+    except Exception as e:
+        logger.error(f"Failed to clear Finnhub API key from keyring: {e}")
+        return False
+
+
 def _get_trading_mode() -> str:
     """
     Load trading mode with priority:

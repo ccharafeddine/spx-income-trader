@@ -816,6 +816,11 @@ def settings():
     masked_key = '****' + key[-4:] if len(key) > 4 else key
     masked_account = '****' + account[-4:] if len(account) > 4 else account
 
+    # Finnhub masked key
+    from config.settings import get_finnhub_api_key
+    finnhub_key = get_finnhub_api_key() or ''
+    masked_finnhub_key = '****' + finnhub_key[-4:] if len(finnhub_key) > 4 else finnhub_key
+
     return render_template('settings.html',
         message=message,
         message_type=message_type,
@@ -826,7 +831,8 @@ def settings():
         masked_schwab_account=masked_schwab_account,
         schwab_callback_url=schwab_cfg.get('callback_url', 'https://127.0.0.1'),
         is_production=not ETRADE_CONFIG.get('sandbox', True),
-        credential_source=ETRADE_CONFIG.get('credential_source', 'none').title()
+        credential_source=ETRADE_CONFIG.get('credential_source', 'none').title(),
+        masked_finnhub_key=masked_finnhub_key,
     )
 
 
@@ -1010,6 +1016,21 @@ def api_schwab_credentials():
     if _save_schwab_credentials(app_key, app_secret, account_number, callback_url):
         return jsonify({'success': True})
     return jsonify({'success': False, 'error': 'Failed to save credentials.'}), 500
+
+
+@app.route('/api/finnhub/credentials', methods=['POST'])
+def api_finnhub_credentials():
+    """Save Finnhub API key to OS keyring."""
+    data = request.get_json()
+    api_key = (data.get('api_key') or '').strip()
+
+    if not api_key:
+        return jsonify({'success': False, 'error': 'API key is required.'}), 400
+
+    from config.settings import save_finnhub_api_key
+    if save_finnhub_api_key(api_key):
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'error': 'Failed to save API key.'}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -5236,6 +5257,65 @@ def api_economic_events():
         return jsonify({'today': [], 'is_high_impact': False, 'upcoming': []})
 
 
+@app.route('/api/calendar')
+def api_calendar():
+    """Full economic calendar with Finnhub live data and static fallback."""
+    if getattr(app, '_demo_mode', False) and app._replay_engine:
+        return jsonify({'today': [], 'week': [], 'upcoming': [], 'source': 'demo', 'last_updated': 0})
+
+    try:
+        from src.data.finnhub_calendar import get_calendar_events
+        import pytz
+        et = pytz.timezone('America/New_York')
+        now_et = datetime.now(et)
+        today_str = now_et.strftime('%Y-%m-%d')
+
+        # Current week (Mon-Sun)
+        weekday = now_et.weekday()  # 0=Mon
+        week_start = (now_et - timedelta(days=weekday)).strftime('%Y-%m-%d')
+        week_end = (now_et + timedelta(days=6 - weekday)).strftime('%Y-%m-%d')
+
+        # Next 30 days
+        upcoming_end = (now_et + timedelta(days=30)).strftime('%Y-%m-%d')
+
+        result = get_calendar_events(from_date=week_start, to_date=upcoming_end)
+        all_events = result.get('events', [])
+
+        # Split into today / week / upcoming
+        today_events = []
+        week_events = []
+        upcoming_events = []
+        current_time = now_et.strftime('%H:%M')
+
+        for ev in all_events:
+            ev_date = ev.get('date', '')
+            if ev_date == today_str:
+                # Tag status: past/current/upcoming
+                ev_time = ev.get('time', '')
+                if ev_time and ev_time < current_time:
+                    ev['status'] = 'past'
+                elif ev_time and ev_time <= current_time:
+                    ev['status'] = 'current'
+                else:
+                    ev['status'] = 'upcoming'
+                today_events.append(ev)
+            if week_start <= ev_date <= week_end:
+                week_events.append(ev)
+            if ev_date > today_str:
+                upcoming_events.append(ev)
+
+        return jsonify({
+            'today': today_events,
+            'week': week_events,
+            'upcoming': upcoming_events,
+            'source': result.get('source', 'static'),
+            'last_updated': result.get('last_updated', 0),
+        })
+    except Exception as e:
+        logger.warning(f"Calendar API error: {e}")
+        return jsonify({'today': [], 'week': [], 'upcoming': [], 'source': 'error', 'last_updated': 0})
+
+
 # ---------------------------------------------------------------------------
 # Trading Mode API
 # ---------------------------------------------------------------------------
@@ -5653,7 +5733,8 @@ def _notify_bot_settings_changed():
 def _redact_secrets(d: dict, parent_key: str = '') -> dict:
     """Deep-copy a dict, replacing sensitive values with '****'."""
     secret_keys = {'app_key', 'app_secret', 'consumer_key', 'consumer_secret',
-                   'password', 'secret', 'token', 'twilio_token', 'twilio_sid'}
+                   'password', 'secret', 'token', 'twilio_token', 'twilio_sid',
+                   'finnhub_api_key'}
     out = {}
     for k, v in d.items():
         if isinstance(v, dict):
