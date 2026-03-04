@@ -59,3 +59,6 @@ database/backtest_data/
 .DS_Store
 Thumbs.db
 nul
+
+# Architecture reference (local only)
+ARCHITECTURE.md
