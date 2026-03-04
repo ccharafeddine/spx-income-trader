@@ -5031,9 +5031,6 @@ async function updateStatus() {
   if (d.tag_n_turn && d.tag_n_turn.enabled) {
     const tnt = d.tag_n_turn;
     let details = '';
-    if (tnt.tag_info) {
-      details = 'Tag: ' + (tnt.tag_info.band || '').toUpperCase() + ' band, watching ' + (tnt.tag_info.reversal_direction || '');
-    }
     if (tnt.awaiting_breakout) {
       const ab = tnt.awaiting_breakout;
       const dir = ab.direction || '';
