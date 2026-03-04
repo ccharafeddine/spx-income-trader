@@ -2111,6 +2111,9 @@ header::after {
   overflow-y: auto;
   min-height: 0;
 }
+.left-column > .panel {
+  flex: 1 1 auto;
+}
 .middle-column {
   display: flex;
   flex-direction: column;
@@ -2309,15 +2312,6 @@ header::after {
 }
 .update-banner .banner-dismiss:hover { background: var(--cyan); color: #000; }
 
-/* App footer */
-.app-footer {
-  padding: 8px 24px;
-  text-align: center;
-  font-size: 11px;
-  color: var(--text-dim);
-  border-top: 1px solid var(--border);
-  font-family: var(--font-mono);
-}
 
 /* Crash banner */
 .crash-banner {
@@ -4871,10 +4865,6 @@ async function updateStatus() {
     txt.style.color = 'var(--red)';
   }
 
-  // Version (in footer)
-  if (d.version) {
-    document.getElementById('app-version').textContent = 'v' + d.version;
-  }
 
   // Bot crash banner (desktop mode)
   if (desktopMode) updateCrashBanner(d.bot);
@@ -9827,9 +9817,6 @@ async function btDeleteSelected() {
 }
 </script>
 
-<footer class="app-footer">
-  The Daily Melt <span id="app-version">v--</span>
-</footer>
 
 <!-- Floating Session Recording Button (desktop mode only) -->
 <div class="rec-float" id="rec-float">
