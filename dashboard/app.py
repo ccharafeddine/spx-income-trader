@@ -595,6 +595,84 @@ def _annotate_trade(trade):
         trade['flag_note'] = None
 
 
+def _build_portfolio_status(state_path=None, db_path=None):
+    """Build portfolio status dict with DB-sourced daily counters.
+
+    Trade counters (0DTE and swing) always come from the DB for today's
+    ET date so they reset at midnight. Other fields (P&L, risk, circuit
+    breaker) come from the state file if it's from today, otherwise
+    fall back to DB values.
+    """
+    try:
+        if state_path is None:
+            state_path = BASE_DIR / 'database' / 'portfolio_state.json'
+        state_path = Path(state_path)
+        if not state_path.exists():
+            return None
+
+        import json
+        with open(state_path, 'r') as f:
+            port_data = json.load(f)
+
+        portfolio_cfg = STRATEGY_PARAMS.get('portfolio', {})
+        account_size = portfolio_cfg.get('account_size', 50000)
+        max_daily_risk = account_size * (portfolio_cfg.get('max_daily_risk_pct', 5.0) / 100)
+        max_daily_loss_pct = portfolio_cfg.get('max_daily_loss_pct', 2.0)
+        max_daily_loss_dollars = account_size * (max_daily_loss_pct / 100)
+
+        # Check if state file is from today (ET) or stale from a prior day
+        today_et = datetime.now(ET).date()
+        today_str = today_et.isoformat()
+        state_date_str = (port_data.get('last_updated') or '')[:10]
+        is_stale = state_date_str != today_str
+
+        # Always compute trade counters from DB for today's ET date
+        # so they reset at midnight regardless of bot restart timing
+        dte0_count = 0
+        tnt_count = 0
+        daily_pnl_from_db = 0.0
+        try:
+            _db_path = db_path or DATABASE_PATH
+            conn_counts = sqlite3.connect(str(_db_path), timeout=10)
+            conn_counts.execute("PRAGMA journal_mode=WAL")
+            conn_counts.row_factory = sqlite3.Row
+            rows = conn_counts.execute(
+                "SELECT strategy_type, COUNT(*) FROM trades "
+                "WHERE DATE(entry_time) = ? GROUP BY strategy_type",
+                (today_str,),
+            ).fetchall()
+            pnl_row = conn_counts.execute(
+                "SELECT COALESCE(SUM(pnl), 0.0) FROM trades "
+                "WHERE DATE(entry_time) = ? AND status IN ('closed', 'expired')",
+                (today_str,),
+            ).fetchone()
+            conn_counts.close()
+            counts = {r[0]: r[1] for r in rows}
+            dte0_count = counts.get('daily_income', 0) + counts.get('orb', 0)
+            tnt_count = counts.get('tag_n_turn', 0)
+            if pnl_row:
+                daily_pnl_from_db = pnl_row[0]
+        except Exception:
+            pass
+
+        return {
+            'active_positions': len(port_data.get('active_positions', {})),
+            'max_total_positions': portfolio_cfg.get('max_total_positions', 2),
+            '0dte_positions': sum(1 for p in port_data.get('active_positions', {}).values() if p.get('is_0dte', True)),
+            'max_0dte_positions': portfolio_cfg.get('max_0dte_positions', 1),
+            'daily_risk_used': 0 if is_stale else port_data.get('daily_risk_used', 0),
+            'max_daily_risk': max_daily_risk,
+            'daily_realized_pnl': daily_pnl_from_db if is_stale else port_data.get('daily_realized_pnl', port_data.get('daily_pnl', 0)),
+            'max_daily_loss_pct': max_daily_loss_pct,
+            'max_daily_loss_dollars': max_daily_loss_dollars,
+            'circuit_breaker': False if is_stale else port_data.get('circuit_breaker_triggered', False),
+            'dte0_trades_today': dte0_count,
+            'tnt_trades_today': tnt_count,
+        }
+    except Exception:
+        return None
+
+
 def compute_account(conn, spx_price, starting_capital=None):
     """Compute account balance, realized/unrealized P&L."""
     if starting_capital is None:
@@ -1615,35 +1693,9 @@ def api_status():
         except Exception:
             pass
 
-    # Portfolio status (read from persistence file)
-    portfolio_status = None
-    try:
-        portfolio_path = BASE_DIR / 'database' / 'portfolio_state.json'
-        if portfolio_path.exists():
-            import json
-            with open(portfolio_path, 'r') as f:
-                port_data = json.load(f)
-            portfolio_cfg = STRATEGY_PARAMS.get('portfolio', {})
-            account_size = portfolio_cfg.get('account_size', 50000)
-            max_daily_risk = account_size * (portfolio_cfg.get('max_daily_risk_pct', 5.0) / 100)
-            max_daily_loss_pct = portfolio_cfg.get('max_daily_loss_pct', 2.0)
-            max_daily_loss_dollars = account_size * (max_daily_loss_pct / 100)
-            portfolio_status = {
-                'active_positions': len(port_data.get('active_positions', {})),
-                'max_total_positions': portfolio_cfg.get('max_total_positions', 2),
-                '0dte_positions': sum(1 for p in port_data.get('active_positions', {}).values() if p.get('is_0dte', True)),
-                'max_0dte_positions': portfolio_cfg.get('max_0dte_positions', 1),
-                'daily_risk_used': port_data.get('daily_risk_used', 0),
-                'max_daily_risk': max_daily_risk,
-                'daily_realized_pnl': port_data.get('daily_realized_pnl', port_data.get('daily_pnl', 0)),
-                'max_daily_loss_pct': max_daily_loss_pct,
-                'max_daily_loss_dollars': max_daily_loss_dollars,
-                'circuit_breaker': port_data.get('circuit_breaker_triggered', False),
-                'dte0_trades_today': port_data.get('dte0_trades_today', 0),
-                'tnt_trades_today': port_data.get('tnt_trades_today', 0),
-            }
-    except Exception:
-        pass
+    # Portfolio status (read from persistence file + DB counters)
+    portfolio_status = _build_portfolio_status()
+
 
     # E*TRADE token status + auto-renewal
     etrade_token = _try_renew_etrade_token()
