@@ -2298,6 +2298,9 @@ def api_shadow():
 
     limit = request.args.get('limit', 50, type=int)
     limit = min(limit, 500)
+    date_filter = request.args.get('date', '')
+    if not date_filter:
+        date_filter = datetime.now(ET).strftime('%Y-%m-%d')
 
     comparisons = []
     try:
@@ -2306,9 +2309,12 @@ def api_shadow():
                 line = line.strip()
                 if line:
                     try:
-                        comparisons.append(json.loads(line))
+                        entry = json.loads(line)
                     except json.JSONDecodeError:
                         continue
+                    ts = entry.get('ts', '')
+                    if ts[:10] == date_filter:
+                        comparisons.append(entry)
     except Exception as e:
         logger.warning(f"Failed to read shadow log: {e}")
         return jsonify({'enabled': False, 'comparisons': [], 'summary': {}})

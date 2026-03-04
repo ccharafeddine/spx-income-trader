@@ -7944,7 +7944,7 @@ async function updateShadowPanel() {
   if (!el || currentTradingMode !== 'DRY RUN') return;
 
   try {
-    const resp = await fetch('/api/shadow?limit=10');
+    const resp = await fetch('/api/shadow');
     const d = await resp.json();
 
     if (!d.enabled || !d.comparisons || d.comparisons.length === 0) {
@@ -7969,7 +7969,8 @@ async function updateShadowPanel() {
     const wouldDiffer = s.decisions_would_differ || 0;
 
     let html = '<div class="risk-row" style="flex-wrap:wrap;">';
-    html += '<span style="font-size:11px;color:var(--text);">' + s.total_comparisons + ' entries</span>';
+    html += '<span style="font-size:11px;color:var(--text);">Today</span>';
+    html += '<span style="font-size:10px;color:var(--text-dim);margin-left:6px;">' + s.total_comparisons + ' entries</span>';
     html += '<span style="font-size:10px;color:var(--text-dim);margin-left:6px;">Avg div: ' + avgDiv + ' pts</span>';
     if (wouldDiffer > 0) {
       html += '<span style="font-size:10px;color:var(--amber);margin-left:6px;">' + wouldDiffer + ' would differ</span>';
