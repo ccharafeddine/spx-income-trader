@@ -5595,16 +5595,24 @@ function renderChart(d) {
 
       const entryTimeStr = _entryTimeForTF(trade.entry_time);
       const exitTimeStr = _entryTimeForTF(trade.exit_time);
-      const entryPrice = trade.spx_at_entry || trade.underlying_price_at_entry;
-      const exitPrice = trade.spx_at_exit;
 
-      if (!entryTimeStr || !entryPrice) return;
+      // Skip open trades (no exit yet) — already rendered by open positions loop
+      if (!entryTimeStr || !exitTimeStr) return;
 
-      // Skip active/open trades — already rendered by the open positions loop
-      if (!exitTimeStr || !exitPrice) return;
-
+      // Find bar indices first (needed for position AND price fallback)
       const entryIdx = _findClosestBarIdx(sortedTimestamps, sortedCloses, entryTimeStr);
       if (entryIdx < 0) return;
+
+      const exitIdx = _findClosestBarIdx(sortedTimestamps, sortedCloses, exitTimeStr);
+
+      // Price with bar-close fallback when DB fields are null
+      const entryPrice = trade.spx_at_entry || trade.underlying_price_at_entry
+                         || sortedCloses[entryIdx];
+      const exitPrice = trade.spx_at_exit
+                        || (exitIdx >= 0 ? sortedCloses[exitIdx] : null);
+
+      if (!entryPrice || !exitPrice) return;
+
       const entryX = sortedTimestamps[entryIdx];
 
       // Entry circle
@@ -5620,36 +5628,33 @@ function renderChart(d) {
       });
 
       // Exit X marker and connecting line
-      if (exitTimeStr && exitPrice) {
-        const exitIdx = _findClosestBarIdx(sortedTimestamps, sortedCloses, exitTimeStr);
-        if (exitIdx >= 0) {
-          const exitX = sortedTimestamps[exitIdx];
-          // Connecting line from entry to exit
-          shapes.push({
-            type: 'line', x0: entryX, x1: exitX,
-            y0: entryPrice, y1: exitPrice,
-            xref: 'x', yref: 'y',
-            line: {color: markerColor, width: 1, dash: 'dot'},
-            opacity: 0.5,
-          });
-          // Exit X marker
-          const pnlStr = pnl >= 0 ? '+$' + pnl.toFixed(0) : '-$' + Math.abs(pnl).toFixed(0);
-          annotations.push({
-            x: exitX, y: exitPrice, xref: 'x', yref: 'y',
-            text: '\u2716 ' + pnlStr,
-            showarrow: true, arrowhead: 0, arrowwidth: 1,
-            ax: 55, ay: -18,
-            font: {color: markerColor, size: 9, family: 'DM Sans'},
-            bgcolor: 'rgba(10,14,23,0.9)', bordercolor: markerColor,
-            borderwidth: 1, borderpad: 2, arrowcolor: markerColor,
-            _direction: isBullishTrade ? 'bullish' : 'bearish',
-          });
+      if (exitIdx >= 0) {
+        const exitX = sortedTimestamps[exitIdx];
+        // Connecting line from entry to exit
+        shapes.push({
+          type: 'line', x0: entryX, x1: exitX,
+          y0: entryPrice, y1: exitPrice,
+          xref: 'x', yref: 'y',
+          line: {color: markerColor, width: 1, dash: 'dot'},
+          opacity: 0.5,
+        });
+        // Exit X marker
+        const pnlStr = pnl >= 0 ? '+$' + pnl.toFixed(0) : '-$' + Math.abs(pnl).toFixed(0);
+        annotations.push({
+          x: exitX, y: exitPrice, xref: 'x', yref: 'y',
+          text: '\u2716 ' + pnlStr,
+          showarrow: true, arrowhead: 0, arrowwidth: 1,
+          ax: 55, ay: -18,
+          font: {color: markerColor, size: 9, family: 'DM Sans'},
+          bgcolor: 'rgba(10,14,23,0.9)', bordercolor: markerColor,
+          borderwidth: 1, borderpad: 2, arrowcolor: markerColor,
+          _direction: isBullishTrade ? 'bullish' : 'bearish',
+        });
 
-          // Include exit price in y-range
-          if (yRangeMin != null) {
-            yRangeMin = Math.min(yRangeMin, exitPrice - 3);
-            yRangeMax = Math.max(yRangeMax, exitPrice + 3);
-          }
+        // Include exit price in y-range
+        if (yRangeMin != null) {
+          yRangeMin = Math.min(yRangeMin, exitPrice - 3);
+          yRangeMax = Math.max(yRangeMax, exitPrice + 3);
         }
       }
 
