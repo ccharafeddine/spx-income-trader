@@ -1,8 +1,8 @@
 """
-Tests for the Finnhub Calendar Service module.
+Tests for the FRED Calendar Service module.
 
 Tests cover:
-- Event standardization (field mapping, impact conversion, missing fields)
+- FRED release standardization (field mapping, release matching)
 - Short code mapping (FOMC/CPI/NFP/GDP/PCE detection, unknown passthrough)
 - Caching behavior (cache hit, force_refresh bypass)
 - Fallback logic (no API key, empty response, API error -> static)
@@ -22,9 +22,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.data.finnhub_calendar import (
+from src.data.fred_calendar import (
     _event_short_code,
-    _standardize_finnhub_event,
+    _standardize_fred_release,
+    _match_release,
     get_calendar_events,
     invalidate_cache,
 )
@@ -43,127 +44,126 @@ def clear_cache():
 
 
 @pytest.fixture
-def finnhub_event():
-    """A sample Finnhub API event dict."""
+def fred_cpi_release():
+    """A sample FRED release_dates entry for CPI."""
     return {
-        'country': 'US',
-        'date': '2026-03-05',
-        'event': 'Non-Farm Payrolls',
-        'impact': 'high',
-        'prev': 256.0,
-        'estimate': 170.0,
-        'actual': 185.0,
-        'unit': 'K',
-        'time': '08:30',
+        'release_id': 10,
+        'release_name': 'Consumer Price Index',
+        'date': '2026-03-12',
     }
 
 
 @pytest.fixture
-def finnhub_response():
-    """A sample Finnhub API full response."""
+def fred_nfp_release():
+    """A sample FRED release_dates entry for NFP."""
     return {
-        'economicCalendar': [
-            {
-                'country': 'US',
-                'date': '2026-03-05',
-                'event': 'Non-Farm Payrolls',
-                'impact': 'high',
-                'prev': 256.0,
-                'estimate': 170.0,
-                'actual': '',
-                'unit': 'K',
-                'time': '08:30',
-            },
-            {
-                'country': 'US',
-                'date': '2026-03-05',
-                'event': 'CPI MoM',
-                'impact': 'high',
-                'prev': 0.4,
-                'estimate': 0.3,
-                'actual': '',
-                'unit': '%',
-                'time': '08:30',
-            },
-            {
-                'country': 'DE',
-                'date': '2026-03-05',
-                'event': 'German CPI',
-                'impact': 'high',
-                'prev': 0.2,
-                'estimate': 0.3,
-                'actual': '',
-                'unit': '%',
-                'time': '07:00',
-            },
-        ]
+        'release_id': 50,
+        'release_name': 'Employment Situation',
+        'date': '2026-03-07',
     }
 
 
 @pytest.fixture
-def sample_calendar(tmp_path):
-    """Create a temporary static calendar JSON file."""
-    data = {
-        "events": [
-            {"date": "2026-03-05", "time": "08:30", "event": "NFP", "impact": "high", "description": "Nonfarm Payrolls"},
-            {"date": "2026-03-12", "time": "14:00", "event": "FOMC", "impact": "high", "description": "FOMC Rate Decision"},
+def fred_releases_response():
+    """A sample FRED releases/dates API response."""
+    return {
+        'release_dates': [
+            {'release_id': 50, 'release_name': 'Employment Situation', 'date': '2026-03-07'},
+            {'release_id': 10, 'release_name': 'Consumer Price Index', 'date': '2026-03-12'},
+            {'release_id': 53, 'release_name': 'Gross Domestic Product', 'date': '2026-03-26'},
+            {'release_id': 54, 'release_name': 'Personal Income and Outlays', 'date': '2026-03-28'},
+            {'release_id': 999, 'release_name': 'Some Unrelated Release', 'date': '2026-03-15'},
+            {'release_id': 200, 'release_name': 'H.15 Selected Interest Rates', 'date': '2026-03-10'},
         ]
     }
-    cal_file = tmp_path / "test_calendar.json"
-    cal_file.write_text(json.dumps(data))
-    return cal_file
 
 
 # ============================================================================
-# Event Standardization
+# Release Standardization
 # ============================================================================
 
-class TestStandardizeEvent:
-    """Tests for _standardize_finnhub_event() function."""
+class TestStandardizeRelease:
+    """Tests for _standardize_fred_release() function."""
 
-    def test_field_mapping(self, finnhub_event):
-        result = _standardize_finnhub_event(finnhub_event)
-        assert result['date'] == '2026-03-05'
+    def test_cpi_release_mapping(self, fred_cpi_release):
+        result = _standardize_fred_release(fred_cpi_release)
+        assert result is not None
+        assert result['date'] == '2026-03-12'
         assert result['time'] == '08:30'
-        assert result['event'] == 'NFP'  # short code
-        assert result['event_full'] == 'Non-Farm Payrolls'
+        assert result['event'] == 'CPI'
+        assert result['event_full'] == 'Consumer Price Index'
         assert result['impact'] == 'high'
-        assert result['description'] == 'Non-Farm Payrolls'
-        assert result['actual'] == 185.0
-        assert result['forecast'] == 170.0
-        assert result['previous'] == 256.0
-        assert result['unit'] == 'K'
+        assert result['description'] == 'CPI (Consumer Price Index)'
 
-    def test_numeric_impact_conversion(self):
-        ev = {'event': 'Test', 'impact': 3}
-        result = _standardize_finnhub_event(ev)
-        assert result['impact'] == 'high'
+    def test_nfp_release_mapping(self, fred_nfp_release):
+        result = _standardize_fred_release(fred_nfp_release)
+        assert result is not None
+        assert result['event'] == 'NFP'
+        assert result['time'] == '08:30'
 
-        ev['impact'] = 2
-        result = _standardize_finnhub_event(ev)
-        assert result['impact'] == 'medium'
+    def test_gdp_release_mapping(self):
+        result = _standardize_fred_release({
+            'release_id': 53,
+            'release_name': 'Gross Domestic Product',
+            'date': '2026-03-26',
+        })
+        assert result is not None
+        assert result['event'] == 'GDP'
 
-        ev['impact'] = 1
-        result = _standardize_finnhub_event(ev)
-        assert result['impact'] == 'low'
+    def test_pce_release_mapping(self):
+        result = _standardize_fred_release({
+            'release_id': 54,
+            'release_name': 'Personal Income and Outlays',
+            'date': '2026-03-28',
+        })
+        assert result is not None
+        assert result['event'] == 'PCE'
 
-    def test_missing_time(self):
-        ev = {'event': 'Test', 'impact': 'high'}
-        result = _standardize_finnhub_event(ev)
-        assert result['time'] == ''
+    def test_unmatched_release_returns_none(self):
+        result = _standardize_fred_release({
+            'release_id': 999,
+            'release_name': 'Some Unrelated Release',
+            'date': '2026-03-15',
+        })
+        assert result is None
 
-    def test_missing_data_fields(self):
-        ev = {'event': 'Test', 'impact': 'low'}
-        result = _standardize_finnhub_event(ev)
+    def test_empty_data_fields(self, fred_cpi_release):
+        result = _standardize_fred_release(fred_cpi_release)
         assert result['actual'] == ''
         assert result['forecast'] == ''
         assert result['previous'] == ''
         assert result['unit'] == ''
 
-    def test_none_impact_defaults_to_medium(self):
-        ev = {'event': 'Test', 'impact': None}
-        result = _standardize_finnhub_event(ev)
-        assert result['impact'] == 'medium'
+
+# ============================================================================
+# Release Matching
+# ============================================================================
+
+class TestMatchRelease:
+    """Tests for _match_release() function."""
+
+    def test_matches_cpi(self):
+        assert _match_release('Consumer Price Index') is not None
+        assert _match_release('Consumer Price Index')[0] == 'CPI'
+
+    def test_matches_nfp(self):
+        assert _match_release('Employment Situation') is not None
+        assert _match_release('Employment Situation')[0] == 'NFP'
+
+    def test_matches_gdp(self):
+        assert _match_release('Gross Domestic Product') is not None
+        assert _match_release('Gross Domestic Product')[0] == 'GDP'
+
+    def test_matches_pce(self):
+        assert _match_release('Personal Income and Outlays') is not None
+        assert _match_release('Personal Income and Outlays')[0] == 'PCE'
+
+    def test_matches_fomc(self):
+        assert _match_release('Federal Open Market Committee') is not None
+        assert _match_release('Federal Open Market Committee')[0] == 'FOMC'
+
+    def test_no_match(self):
+        assert _match_release('Retail Sales') is None
 
 
 # ============================================================================
@@ -186,6 +186,7 @@ class TestEventShortCode:
     def test_nfp_detection(self):
         assert _event_short_code('Non-Farm Payrolls') == 'NFP'
         assert _event_short_code('Nonfarm Payrolls') == 'NFP'
+        assert _event_short_code('Employment Situation') == 'NFP'
 
     def test_gdp_detection(self):
         assert _event_short_code('GDP Growth Rate QoQ') == 'GDP'
@@ -195,6 +196,7 @@ class TestEventShortCode:
         assert _event_short_code('PCE Price Index MoM') == 'PCE'
         assert _event_short_code('Core PCE Price Index') == 'PCE'
         assert _event_short_code('Personal Consumption Expenditures') == 'PCE'
+        assert _event_short_code('Personal Income and Outlays') == 'PCE'
 
     def test_unknown_event_passthrough(self):
         assert _event_short_code('Retail Sales') == 'Retail Sales'
@@ -212,8 +214,8 @@ class TestEventShortCode:
 class TestCaching:
     """Tests for cache behavior in get_calendar_events()."""
 
-    @patch('src.data.finnhub_calendar._fetch_finnhub')
-    @patch('config.settings.get_finnhub_api_key', return_value='test-key')
+    @patch('src.data.fred_calendar._fetch_fred')
+    @patch('config.settings.get_fred_api_key', return_value='test-key')
     def test_cache_prevents_duplicate_calls(self, mock_key, mock_fetch):
         mock_fetch.return_value = [{'date': '2026-03-05', 'event': 'NFP', 'impact': 'high'}]
 
@@ -226,8 +228,8 @@ class TestCaching:
         assert mock_fetch.call_count == 1
         assert result1['source'] == result2['source']
 
-    @patch('src.data.finnhub_calendar._fetch_finnhub')
-    @patch('config.settings.get_finnhub_api_key', return_value='test-key')
+    @patch('src.data.fred_calendar._fetch_fred')
+    @patch('config.settings.get_fred_api_key', return_value='test-key')
     def test_force_refresh_bypasses_cache(self, mock_key, mock_fetch):
         mock_fetch.return_value = [{'date': '2026-03-05', 'event': 'NFP', 'impact': 'high'}]
 
@@ -247,19 +249,19 @@ class TestCaching:
 class TestFallback:
     """Tests for fallback to static calendar."""
 
-    @patch('config.settings.get_finnhub_api_key', return_value=None)
+    @patch('config.settings.get_fred_api_key', return_value=None)
     def test_no_api_key_falls_back_to_static(self, mock_key):
         result = get_calendar_events()
         assert result['source'] == 'static'
 
-    @patch('src.data.finnhub_calendar._fetch_finnhub', return_value=[])
-    @patch('config.settings.get_finnhub_api_key', return_value='test-key')
+    @patch('src.data.fred_calendar._fetch_fred', return_value=[])
+    @patch('config.settings.get_fred_api_key', return_value='test-key')
     def test_empty_response_falls_back_to_static(self, mock_key, mock_fetch):
         result = get_calendar_events()
         assert result['source'] == 'static'
 
-    @patch('src.data.finnhub_calendar._fetch_finnhub', side_effect=Exception('API error'))
-    @patch('config.settings.get_finnhub_api_key', return_value='test-key')
+    @patch('src.data.fred_calendar._fetch_fred', side_effect=Exception('API error'))
+    @patch('config.settings.get_fred_api_key', return_value='test-key')
     def test_api_error_falls_back_to_static(self, mock_key, mock_fetch):
         result = get_calendar_events()
         assert result['source'] == 'static'
@@ -293,10 +295,10 @@ class TestBackwardCompatibility:
 # ============================================================================
 
 class TestFilterByDateRange:
-    """Tests for date boundary filtering in Finnhub fetch."""
+    """Tests for date boundary filtering in FRED fetch."""
 
-    @patch('src.data.finnhub_calendar._fetch_finnhub')
-    @patch('config.settings.get_finnhub_api_key', return_value='test-key')
+    @patch('src.data.fred_calendar._fetch_fred')
+    @patch('config.settings.get_fred_api_key', return_value='test-key')
     def test_passes_date_range_to_fetch(self, mock_key, mock_fetch):
         mock_fetch.return_value = [{'date': '2026-03-10', 'event': 'Test', 'impact': 'low'}]
 
@@ -304,8 +306,8 @@ class TestFilterByDateRange:
 
         mock_fetch.assert_called_once_with('test-key', '2026-03-01', '2026-03-31')
 
-    @patch('src.data.finnhub_calendar._fetch_finnhub')
-    @patch('config.settings.get_finnhub_api_key', return_value='test-key')
+    @patch('src.data.fred_calendar._fetch_fred')
+    @patch('config.settings.get_fred_api_key', return_value='test-key')
     def test_different_range_bypasses_cache(self, mock_key, mock_fetch):
         mock_fetch.return_value = [{'date': '2026-03-10', 'event': 'Test', 'impact': 'low'}]
 
@@ -313,6 +315,26 @@ class TestFilterByDateRange:
         get_calendar_events(from_date='2026-03-16', to_date='2026-03-31')
 
         assert mock_fetch.call_count == 2
+
+
+# ============================================================================
+# Deduplication
+# ============================================================================
+
+class TestDeduplication:
+    """Tests that duplicate releases for the same event+date are deduplicated."""
+
+    @patch('src.data.fred_calendar._fetch_fred')
+    @patch('config.settings.get_fred_api_key', return_value='test-key')
+    def test_same_event_same_date_deduplicated(self, mock_key, mock_fetch):
+        """If FRED returns multiple CPI-related releases on the same date, only one appears."""
+        mock_fetch.return_value = [
+            {'date': '2026-03-12', 'event': 'CPI', 'impact': 'high', 'time': '08:30',
+             'event_full': 'Consumer Price Index', 'description': 'CPI', 'actual': '', 'forecast': '', 'previous': '', 'unit': ''},
+        ]
+        result = get_calendar_events(from_date='2026-03-01', to_date='2026-03-31')
+        cpi_events = [e for e in result['events'] if e['event'] == 'CPI' and e['date'] == '2026-03-12']
+        assert len(cpi_events) == 1
 
 
 # ============================================================================

@@ -106,7 +106,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Signal log showing every detected setup with strikes, credit, risk, and SPX price
 - Shadow mode panel (dry-run only): summary stats, recent comparison rows with timestamps, price/credit divergence, and decision-would-differ LED indicators
 - Six tabs: Overview, Calendar, Trade Journal, Analytics, Backtest, Logs
-- Calendar tab with live Finnhub economic calendar feed (4-hour cache, US event filtering) and automatic static JSON fallback. Today's events with past/current/upcoming status, this week grouped by day, and upcoming 30 days. Impact badges (high/medium/low), actual/forecast/previous data columns, and live vs. static source indicator.
+- Calendar tab with live FRED API economic calendar feed (Federal Reserve Bank of St. Louis, free, 4-hour cache) and automatic static JSON fallback. Today's events with past/current/upcoming status, this week grouped by day, and upcoming 30 days. Impact badges (high/medium/low), actual/forecast/previous data columns, and live vs. static source indicator.
 
 ### Trade Journal
 - Two views: monthly calendar and filterable list, toggled with Calendar/List buttons
@@ -290,7 +290,7 @@ Market Data
     |--- Yahoo Finance (backtest historical data, dry-run real-time)
     |--- E*TRADE Quotes API (live mode, 10s polling)
     |--- Schwab Quotes API (live mode, 10s polling)
-    |--- Finnhub API (economic calendar, 4h cache)
+    |--- FRED API (economic calendar release dates, 4h cache)
     |
     v
 Price Feed (health monitoring, stale timeout, TTL cache)
@@ -402,7 +402,7 @@ python app_desktop.py
 
 **Configuration:**
 - `config/strategy_params.yaml` for strategy parameters (thresholds, spread width, profit target, timing windows, broker selection, IBKR connection settings)
-- Dashboard Settings page for credentials, trading mode (dry-run/live), notifications, and Finnhub API key
+- Dashboard Settings page for credentials, trading mode (dry-run/live), notifications, and FRED API key
 - Credentials stored in OS keychain, never in config files
 
 ---
@@ -469,7 +469,7 @@ src/
         price_feed.py        # Price feed abstraction with health monitoring
         vix_provider.py      # VIX data with multi-source fallback and regime classification
         economic_calendar.py # FOMC, CPI, and other high-impact event tracking (static JSON)
-        finnhub_calendar.py  # Live Finnhub economic calendar with caching and static fallback
+        fred_calendar.py     # Live FRED economic calendar with caching and static fallback
         sma_provider.py      # Simple moving average calculations
     brokers/
         base.py              # Abstract broker interface
@@ -571,7 +571,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 - Chart data endpoints (unified bar history, paginated lazy loading, historical trade queries)
 - Timestamp normalization across year boundaries (YYYY-MM-DD HH:MM format, correct sort order)
 - Enter-trade resilience (save_trade exception handling, BaseException re-raise for SystemExit/KeyboardInterrupt)
-- Finnhub calendar service (event standardization, short code mapping, caching, API/static fallback, endpoint structure)
+- FRED calendar service (release standardization, short code mapping, caching, API/static fallback, endpoint structure)
 - Production stability guards: AST-based scan for non-ASCII characters in logger calls, UTF-8 encoding on all RotatingFileHandler instances, BaseException handlers in enter_trade/main loop/bot thread, devnull redirect encoding
 
 ```bash

@@ -7494,9 +7494,9 @@ async function loadCalendarTab() {
     // Source badge
     const badge = document.getElementById('cal-source-badge');
     if (badge) {
-      if (data.source === 'finnhub') {
+      if (data.source === 'fred') {
         badge.className = 'cal-source-badge live';
-        badge.textContent = 'Live - Finnhub';
+        badge.textContent = 'Live - FRED';
       } else {
         badge.className = 'cal-source-badge static';
         badge.textContent = 'Static fallback';

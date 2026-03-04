@@ -816,10 +816,10 @@ def settings():
     masked_key = '****' + key[-4:] if len(key) > 4 else key
     masked_account = '****' + account[-4:] if len(account) > 4 else account
 
-    # Finnhub masked key
-    from config.settings import get_finnhub_api_key
-    finnhub_key = get_finnhub_api_key() or ''
-    masked_finnhub_key = '****' + finnhub_key[-4:] if len(finnhub_key) > 4 else finnhub_key
+    # FRED masked key
+    from config.settings import get_fred_api_key
+    fred_key = get_fred_api_key() or ''
+    masked_fred_key = '****' + fred_key[-4:] if len(fred_key) > 4 else fred_key
 
     return render_template('settings.html',
         message=message,
@@ -832,7 +832,7 @@ def settings():
         schwab_callback_url=schwab_cfg.get('callback_url', 'https://127.0.0.1'),
         is_production=not ETRADE_CONFIG.get('sandbox', True),
         credential_source=ETRADE_CONFIG.get('credential_source', 'none').title(),
-        masked_finnhub_key=masked_finnhub_key,
+        masked_fred_key=masked_fred_key,
     )
 
 
@@ -1018,17 +1018,17 @@ def api_schwab_credentials():
     return jsonify({'success': False, 'error': 'Failed to save credentials.'}), 500
 
 
-@app.route('/api/finnhub/credentials', methods=['POST'])
-def api_finnhub_credentials():
-    """Save Finnhub API key to OS keyring."""
+@app.route('/api/fred/credentials', methods=['POST'])
+def api_fred_credentials():
+    """Save FRED API key to OS keyring."""
     data = request.get_json()
     api_key = (data.get('api_key') or '').strip()
 
     if not api_key:
         return jsonify({'success': False, 'error': 'API key is required.'}), 400
 
-    from config.settings import save_finnhub_api_key
-    if save_finnhub_api_key(api_key):
+    from config.settings import save_fred_api_key
+    if save_fred_api_key(api_key):
         return jsonify({'success': True})
     return jsonify({'success': False, 'error': 'Failed to save API key.'}), 500
 
@@ -5259,12 +5259,12 @@ def api_economic_events():
 
 @app.route('/api/calendar')
 def api_calendar():
-    """Full economic calendar with Finnhub live data and static fallback."""
+    """Full economic calendar with FRED live data and static fallback."""
     if getattr(app, '_demo_mode', False) and app._replay_engine:
         return jsonify({'today': [], 'week': [], 'upcoming': [], 'source': 'demo', 'last_updated': 0})
 
     try:
-        from src.data.finnhub_calendar import get_calendar_events
+        from src.data.fred_calendar import get_calendar_events
         import pytz
         et = pytz.timezone('America/New_York')
         now_et = datetime.now(et)
@@ -5734,7 +5734,7 @@ def _redact_secrets(d: dict, parent_key: str = '') -> dict:
     """Deep-copy a dict, replacing sensitive values with '****'."""
     secret_keys = {'app_key', 'app_secret', 'consumer_key', 'consumer_secret',
                    'password', 'secret', 'token', 'twilio_token', 'twilio_sid',
-                   'finnhub_api_key'}
+                   'fred_api_key'}
     out = {}
     for k, v in d.items():
         if isinstance(v, dict):
