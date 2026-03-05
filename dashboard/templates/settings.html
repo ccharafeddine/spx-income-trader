@@ -94,9 +94,30 @@ header {
 
 /* Main container */
 .main-content {
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 32px 24px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 12px 8px;
+  height: calc(100vh - 53px);
+  overflow: hidden;
+}
+
+.settings-col {
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-col::-webkit-scrollbar { width: 4px; }
+.settings-col::-webkit-scrollbar-track { background: transparent; }
+.settings-col::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.settings-col::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+@media (max-width: 900px) {
+  .main-content { grid-template-columns: 1fr; height: auto; overflow: visible; }
+  .settings-col { overflow: visible; }
 }
 
 /* Panels */
@@ -107,15 +128,14 @@ header {
   border: 1px solid var(--border);
   border-top: 1px solid rgba(255,255,255,0.05);
   border-radius: 8px;
-  padding: 24px;
-  margin-bottom: 24px;
+  padding: 16px;
 }
 
 .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 
 .panel-title {
@@ -676,10 +696,12 @@ header {
   </div>
 </header>
 
+{% if message %}
+<div class="message {{ message_type or 'success' }}" style="margin: 8px 8px 0;">{{ message }}</div>
+{% endif %}
+
 <div class="main-content">
-  {% if message %}
-  <div class="message {{ message_type or 'success' }}">{{ message }}</div>
-  {% endif %}
+  <div class="settings-col">
 
   <!-- Trading Mode -->
   <div class="panel">
@@ -793,6 +815,70 @@ header {
     <div id="schwab-cred-result" style="margin-top:12px; padding:12px; border-radius:6px; font-size:13px; display:none;"></div>
   </div>
 
+  <!-- E*TRADE API Credentials -->
+  <div class="panel broker-section" id="etrade-creds-section" style="display:none;">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">E*TRADE API Credentials</div>
+        <div class="panel-subtitle">Manage your API keys and connection settings</div>
+      </div>
+      <div class="cred-source">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        Source: {{ credential_source or 'Not configured' }}
+      </div>
+    </div>
+
+    <form method="POST" action="/settings" id="credentials-form">
+      <input type="hidden" name="action" value="update_credentials">
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="consumer_key">Consumer Key</label>
+          <input type="text" class="form-input masked" id="consumer_key" name="consumer_key"
+                 placeholder="Enter key or leave blank to keep current"
+                 value="{{ masked_key or '' }}">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="consumer_secret">Consumer Secret</label>
+          <input type="password" class="form-input" id="consumer_secret" name="consumer_secret"
+                 placeholder="Enter secret or leave blank to keep current">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="account_id">Account ID</label>
+          <input type="text" class="form-input" id="account_id" name="account_id"
+                 placeholder="Account ID"
+                 value="{{ masked_account or '' }}">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="environment">Environment</label>
+          <select class="form-select" id="environment" name="environment">
+            <option value="sandbox" {% if not is_production %}selected{% endif %}>Sandbox (Testing)</option>
+            <option value="production" {% if is_production %}selected{% endif %}>Production (Live Trading)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="btn-group">
+        <button type="submit" class="btn btn-primary">Save Changes</button>
+        <button type="button" class="btn btn-secondary" id="test-connection-btn">Test Connection</button>
+        <button type="button" class="btn btn-danger" id="clear-credentials-btn">Clear Credentials</button>
+      </div>
+
+      <div id="test-result"></div>
+    </form>
+  </div>
+
+  </div><!-- end left settings-col -->
+
+  <div class="settings-col">
+
   <!-- Schwab Token Status -->
   <div class="panel broker-section" id="schwab-token-section" style="display:none;">
     <div class="panel-header">
@@ -855,66 +941,6 @@ header {
 
       <div id="schwab-auth-result" style="margin-top:8px; font-size:13px; display:none;"></div>
     </div>
-  </div>
-
-  <!-- E*TRADE API Credentials -->
-  <div class="panel broker-section" id="etrade-creds-section" style="display:none;">
-    <div class="panel-header">
-      <div>
-        <div class="panel-title">E*TRADE API Credentials</div>
-        <div class="panel-subtitle">Manage your API keys and connection settings</div>
-      </div>
-      <div class="cred-source">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-        </svg>
-        Source: {{ credential_source or 'Not configured' }}
-      </div>
-    </div>
-
-    <form method="POST" action="/settings" id="credentials-form">
-      <input type="hidden" name="action" value="update_credentials">
-
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="consumer_key">Consumer Key</label>
-          <input type="text" class="form-input masked" id="consumer_key" name="consumer_key"
-                 placeholder="Enter key or leave blank to keep current"
-                 value="{{ masked_key or '' }}">
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="consumer_secret">Consumer Secret</label>
-          <input type="password" class="form-input" id="consumer_secret" name="consumer_secret"
-                 placeholder="Enter secret or leave blank to keep current">
-        </div>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="account_id">Account ID</label>
-          <input type="text" class="form-input" id="account_id" name="account_id"
-                 placeholder="Account ID"
-                 value="{{ masked_account or '' }}">
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="environment">Environment</label>
-          <select class="form-select" id="environment" name="environment">
-            <option value="sandbox" {% if not is_production %}selected{% endif %}>Sandbox (Testing)</option>
-            <option value="production" {% if is_production %}selected{% endif %}>Production (Live Trading)</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="btn-group">
-        <button type="submit" class="btn btn-primary">Save Changes</button>
-        <button type="button" class="btn btn-secondary" id="test-connection-btn">Test Connection</button>
-        <button type="button" class="btn btn-danger" id="clear-credentials-btn">Clear Credentials</button>
-      </div>
-
-      <div id="test-result"></div>
-    </form>
   </div>
 
   <!-- E*TRADE Connection -->
@@ -1098,6 +1124,8 @@ header {
       <div id="notif-save-result" style="margin-top: 8px; font-size: 12px; display: none;"></div>
     </div>
   </div>
+
+  </div><!-- end right settings-col -->
 </div>
 
 <script>
