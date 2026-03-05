@@ -2362,245 +2362,6 @@ header::after {
 .log-line.ERROR { color: var(--red); font-weight: 600; }
 .log-line.CRITICAL { color: #ff3333; font-weight: 700; background: rgba(239,68,68,0.08); }
 
-/* Settings panel */
-.settings-panel {
-  position: fixed;
-  top: 49px;
-  right: 0;
-  width: 380px;
-  height: calc(100vh - 49px);
-  background: var(--panel);
-  border-left: 1px solid var(--border);
-  box-shadow: -4px 0 20px rgba(0,0,0,0.3);
-  z-index: 1000;
-  overflow-y: auto;
-  transform: translateX(100%);
-  transition: transform 0.3s ease;
-}
-.settings-panel.open {
-  transform: translateX(0);
-}
-.settings-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  background: var(--panel);
-  z-index: 10;
-}
-.settings-header h3 {
-  margin: 0;
-  font-size: 14px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--text);
-}
-.close-btn {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  font-size: 24px;
-  cursor: pointer;
-  line-height: 1;
-}
-.close-btn:hover { color: var(--text); }
-
-.settings-content {
-  padding: 16px 20px;
-}
-.settings-section {
-  margin-bottom: 24px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--border);
-}
-.settings-section:last-child {
-  border-bottom: none;
-}
-.section-title {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 1.5px;
-  color: var(--cyan);
-  margin-bottom: 12px;
-  font-weight: bold;
-}
-.setting-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 0;
-}
-.setting-row label {
-  font-size: 13px;
-  color: var(--text);
-}
-.setting-row select,
-.setting-row input[type="number"] {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text);
-  padding: 6px 10px;
-  font-size: 12px;
-  font-family: var(--font-mono);
-}
-.setting-row select { width: 180px; }
-.setting-row input[type="number"] { width: 60px; text-align: center; }
-
-.setting-description {
-  font-size: 11px;
-  color: var(--text-dim);
-  padding: 8px 12px;
-  background: rgba(0,0,0,0.2);
-  border-radius: 4px;
-  margin-top: 8px;
-  line-height: 1.5;
-}
-
-/* Experimental strategies section */
-.experimental-section {
-  opacity: 0.7;
-  transition: opacity 0.2s;
-}
-.experimental-section:hover {
-  opacity: 1;
-}
-.experimental-title {
-  color: var(--text-dim) !important;
-}
-.experimental-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.experimental-note {
-  font-size: 11px;
-  color: var(--text-dim);
-  font-style: italic;
-  margin-top: 8px;
-  opacity: 0.8;
-}
-.info-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 1px solid var(--text-dim);
-  font-size: 10px;
-  color: var(--text-dim);
-  cursor: help;
-  flex-shrink: 0;
-  position: relative;
-}
-.info-icon:hover {
-  border-color: var(--cyan);
-  color: var(--cyan);
-}
-.info-icon:hover::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: -8px;
-  width: 240px;
-  padding: 10px 12px;
-  background: #1a2332;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 400;
-  color: var(--text);
-  line-height: 1.5;
-  z-index: 100;
-  pointer-events: none;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-}
-
-/* Toggle switch */
-.switch {
-  position: relative;
-  width: 44px;
-  height: 24px;
-  display: inline-block;
-}
-.switch input { opacity: 0; width: 0; height: 0; }
-.switch .slider-toggle {
-  position: absolute;
-  cursor: pointer;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: var(--border);
-  border-radius: 24px;
-  transition: 0.3s;
-}
-.switch .slider-toggle:before {
-  position: absolute;
-  content: "";
-  height: 18px;
-  width: 18px;
-  left: 3px;
-  bottom: 3px;
-  background: white;
-  border-radius: 50%;
-  transition: 0.3s;
-}
-.switch input:checked + .slider-toggle {
-  background: var(--green);
-}
-.switch input:checked + .slider-toggle:before {
-  transform: translateX(20px);
-}
-
-/* Slider with value */
-.slider-with-value {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.slider-with-value input[type="range"] {
-  width: 120px;
-  accent-color: var(--cyan);
-}
-.slider-with-value span {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--cyan);
-  min-width: 35px;
-}
-
-/* Settings buttons */
-.settings-actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 20px;
-}
-.btn-primary, .btn-secondary {
-  flex: 1;
-  padding: 10px;
-  border: none;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: bold;
-  cursor: pointer;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  font-family: var(--font-ui);
-}
-.btn-primary {
-  background: var(--cyan);
-  color: #000;
-}
-.btn-primary:hover { background: #22d3ee; }
-.btn-secondary {
-  background: var(--border);
-  color: var(--text);
-}
-.btn-secondary:hover { background: #374151; }
-
 /* Header settings button */
 .header-btn {
   background: none;
@@ -2614,6 +2375,7 @@ header::after {
   gap: 6px;
   font-size: 12px;
   transition: all 0.2s;
+  text-decoration: none;
 }
 .header-btn:hover {
   border-color: var(--text-dim);
@@ -2641,31 +2403,8 @@ header::after {
   transition: all 0.3s ease;
   z-index: 1001;
 }
-.toast.show {
-  opacity: 1;
-  transform: translateY(0);
-}
-.toast.error {
-  border-left-color: var(--red);
-}
-
-/* Settings panel overlay */
-.settings-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0,0,0,0.5);
-  z-index: 999;
-  opacity: 0;
-  visibility: hidden;
-  transition: all 0.3s ease;
-}
-.settings-overlay.visible {
-  opacity: 1;
-  visibility: visible;
-}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.error { border-left-color: var(--red); }
 
 /* Demo Mode */
 .demo-banner {
@@ -2789,14 +2528,6 @@ header::after {
   animation: led-flash 0.4s ease-out;
 }
 
-/* Settings gear spin */
-#settings-toggle svg {
-  transition: transform 0.3s ease-out;
-}
-#settings-toggle.settings-open svg {
-  transform: rotate(90deg);
-}
-
 /* Ripple effect */
 .ripple-container {
   position: relative;
@@ -2836,12 +2567,12 @@ header::after {
     </div>
   </div>
   <div class="header-right">
-    <button class="header-btn" id="settings-toggle" onclick="toggleSettings()" title="Trading Settings" aria-label="Open trading settings panel">
+    <a href="/settings" class="header-btn" title="Trading Settings" aria-label="Open trading settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"></circle>
         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
       </svg>
-    </button>
+    </a>
     <button id="mute-btn" onclick="toggleMute()" title="Toggle sounds" aria-label="Toggle sound notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path class="sound-waves" d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg></button>
     <a href="/settings" class="settings-link">Account</a>
     <span>Next refresh: <span id="refresh-countdown">30</span>s</span>
@@ -2886,187 +2617,6 @@ header::after {
 </div>
 {% endif %}
 
-<!-- Settings Overlay -->
-<div class="settings-overlay" id="settings-overlay" onclick="toggleSettings()"></div>
-
-<!-- Settings Panel -->
-<div class="settings-panel" id="settings-panel">
-  <div class="settings-header">
-    <h3>Trading Settings</h3>
-    <button class="close-btn" onclick="toggleSettings()" aria-label="Close settings">&times;</button>
-  </div>
-
-  <div class="settings-content">
-    <!-- Strategy Toggles -->
-    <div class="settings-section">
-      <div class="section-title">Strategies</div>
-      <div class="setting-row">
-        <label>Daily Income</label>
-        <label class="switch">
-          <input type="checkbox" id="set-daily-income" onchange="updateSetting('daily_income.enabled', this.checked)">
-          <span class="slider-toggle"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <label>Tag 'n Turn</label>
-        <label class="switch">
-          <input type="checkbox" id="set-tnt" onchange="updateSetting('tag_n_turn.enabled', this.checked)">
-          <span class="slider-toggle"></span>
-        </label>
-      </div>
-    </div>
-
-    <!-- PDT Status -->
-    <div class="settings-section">
-      <div class="section-title">PDT Status</div>
-      <div id="pdt-mode-indicator" style="padding: 8px; border-radius: 4px; font-size: 12px;">
-        Loading...
-      </div>
-      <div class="setting-description">
-        1PM management auto-activates when account &lt; $25k (PDT mode).
-        Accounts &ge; $25k skip 1pm auto-close entirely.
-      </div>
-    </div>
-
-    <!-- Position Sizing -->
-    <div class="settings-section">
-      <div class="section-title">Position Sizing</div>
-      <div class="setting-row">
-        <label>Max Contracts</label>
-        <input type="number" id="set-max-contracts" min="1" max="50" step="1" value="10" style="width:60px"
-               onchange="updateSetting('portfolio.max_contracts', +this.value); validateContractLimits()">
-      </div>
-      <div class="setting-row">
-        <label>Daily Contracts</label>
-        <input type="number" id="set-daily-contracts" min="1" max="50" step="1" value="7" style="width:60px"
-               onchange="updateSetting('portfolio.daily_contracts', +this.value); validateContractLimits()">
-      </div>
-      <div class="setting-row">
-        <label>Swing Contracts</label>
-        <input type="number" id="set-swing-contracts" min="1" max="50" step="1" value="2" style="width:60px"
-               onchange="updateSetting('portfolio.swing_contracts', +this.value); validateContractLimits()">
-      </div>
-      <div id="contract-limit-error" style="display:none; color:var(--red); font-size:12px; margin-top:4px;"></div>
-      <div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06);">
-        <div style="font-size:12px; color:var(--text-dim); margin-bottom:6px;">
-          Account: <strong id="sidebar-acct-balance">-</strong>
-          <span id="sidebar-acct-mode" style="margin-left:4px; font-size:11px; opacity:0.6;"></span>
-        </div>
-        <div id="sidebar-acct-edit" style="display:none;">
-          <div class="setting-row">
-            <label>Paper Balance</label>
-            <input type="number" id="sidebar-acct-input" min="100" step="100" style="width:100px">
-          </div>
-          <button onclick="saveSidebarBalance()" style="padding:4px 12px; background:var(--blue); color:white; border:none; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer; margin-top:4px;">Update</button>
-          <span id="sidebar-acct-result" style="font-size:11px; margin-left:6px;"></span>
-        </div>
-        <div id="sidebar-acct-readonly" style="display:none; font-size:11px; color:var(--text-dim);">
-          Live balance fetched from broker.
-        </div>
-      </div>
-    </div>
-
-    <!-- Risk Controls -->
-    <div class="settings-section">
-      <div class="section-title">Risk Controls</div>
-      <div class="setting-row">
-        <label>Max Daily Loss</label>
-        <div class="slider-with-value">
-          <input type="range" id="set-max-loss" min="1" max="5" step="0.5" value="2"
-                 oninput="document.getElementById('max-loss-val').textContent = this.value + '%'"
-                 onchange="updateSetting('portfolio.max_daily_loss_pct', parseFloat(this.value))">
-          <span id="max-loss-val">2%</span>
-        </div>
-      </div>
-      <div class="setting-row">
-        <label>Max Weekly Loss</label>
-        <div class="slider-with-value">
-          <input type="range" id="set-max-weekly-loss" min="2" max="10" step="1" value="4"
-                 oninput="document.getElementById('max-weekly-loss-val').textContent = this.value + '%'"
-                 onchange="updateSetting('portfolio.drawdown_limits.weekly.max_loss_pct', parseFloat(this.value))">
-          <span id="max-weekly-loss-val">4%</span>
-        </div>
-      </div>
-      <div class="setting-row">
-        <label>Max Monthly Loss</label>
-        <div class="slider-with-value">
-          <input type="range" id="set-max-monthly-loss" min="4" max="20" step="2" value="8"
-                 oninput="document.getElementById('max-monthly-loss-val').textContent = this.value + '%'"
-                 onchange="updateSetting('portfolio.drawdown_limits.monthly.max_loss_pct', parseFloat(this.value))">
-          <span id="max-monthly-loss-val">8%</span>
-        </div>
-      </div>
-      <div class="setting-row">
-        <label>Max Positions</label>
-        <div class="slider-with-value">
-          <input type="range" id="set-max-pos" min="1" max="3" step="1" value="2"
-                 oninput="document.getElementById('max-pos-val').textContent = this.value"
-                 onchange="updateSetting('portfolio.max_total_positions', parseInt(this.value))">
-          <span id="max-pos-val">2</span>
-        </div>
-      </div>
-      <div class="setting-row">
-        <label>Profit Target</label>
-        <div class="slider-with-value">
-          <input type="range" id="set-profit-target" min="50" max="95" step="5" value="80"
-                 oninput="document.getElementById('profit-target-val').textContent = this.value + '%'"
-                 onchange="updateSetting('strategy.profit_target_pct', parseFloat(this.value))">
-          <span id="profit-target-val">80%</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Experimental Strategies -->
-    <div class="settings-section experimental-section">
-      <div class="section-title experimental-title">Experimental Strategies</div>
-      <div class="setting-row">
-        <label class="experimental-label">B&B <span class="info-icon" data-tooltip="Bed &amp; Breakfast &#8212; Detects end-of-day momentum signals and provides directional bias for next-day Daily Income setups. Does not enter trades independently.">?</span></label>
-        <label class="switch">
-          <input type="checkbox" id="set-bnb" onchange="updateSetting('bnb.enabled', this.checked)">
-          <span class="slider-toggle"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <label class="experimental-label">ORB <span class="info-icon" data-tooltip="Opening Range Breakout &#8212; Trades strong first-bar breakouts with range and confirmation filters. Independent 0DTE strategy, shares position slot with Daily Income.">?</span></label>
-        <label class="switch">
-          <input type="checkbox" id="set-orb" onchange="updateSetting('orb.enabled', this.checked)">
-          <span class="slider-toggle"></span>
-        </label>
-      </div>
-      <div class="experimental-note">These strategies are under development and disabled by default.</div>
-    </div>
-
-    <!-- Shadow Mode Section (dry-run only) -->
-    <div class="settings-section" id="shadow-settings-section" style="display:none">
-      <div class="section-title">Shadow Mode</div>
-      <div class="setting-row">
-        <label class="experimental-label">Enable <span class="info-icon" data-tooltip="Compare dry-run fills against live Schwab quotes to measure price divergence.">?</span></label>
-        <label class="switch">
-          <input type="checkbox" id="set-shadow" onchange="updateSetting('broker.shadow.enabled', this.checked)">
-          <span class="slider-toggle"></span>
-        </label>
-      </div>
-      <div class="experimental-note">Compare dry-run fills against live Schwab quotes.</div>
-    </div>
-
-    <!-- Schwab Re-Auth Section (hidden unless schwab is active broker) -->
-    <div class="settings-section" id="schwab-settings-section" style="display:none">
-      <div class="section-title">Schwab Authentication</div>
-      <div id="schwab-token-info" style="font-size:13px; color:var(--text-dim); line-height:1.6;">
-        Loading token status...
-      </div>
-      <div style="margin-top:10px;">
-        <button onclick="window.location='/settings'" style="padding:6px 16px; background:var(--blue); color:white; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">Manage Schwab Auth in Settings</button>
-      </div>
-    </div>
-
-    <!-- Actions -->
-    <div class="settings-actions">
-      <button class="btn-secondary" onclick="resetToDefaults()">Reset Defaults</button>
-      <button class="btn-primary" onclick="saveSettings()">Save & Apply</button>
-    </div>
-  </div>
-</div>
 
 <div class="main-content overview-active">
 
@@ -4905,16 +4455,13 @@ async function updateStatus() {
     brokerBadge.style.display = 'none';
   }
 
-  // Shadow panel + settings: visible only in dry-run mode
+  // Shadow panel: visible only in dry-run mode
   const shadowPanel = document.getElementById('shadow-panel');
-  const shadowSettings = document.getElementById('shadow-settings-section');
   const isDryRun = currentTradingMode === 'DRY RUN';
   if (isDryRun) {
     if (shadowPanel) shadowPanel.style.display = '';
-    if (shadowSettings) shadowSettings.style.display = '';
   } else {
     if (shadowPanel) shadowPanel.style.display = 'none';
-    if (shadowSettings) shadowSettings.style.display = 'none';
   }
 
   // PDT badge (async, don't block status update)
@@ -8164,268 +7711,6 @@ function updateCrashBanner(botStatus) {
   }
 }
 
-// ---------------------------------------------------------------
-// Settings Panel
-// ---------------------------------------------------------------
-let currentSettings = {};
-let pendingChanges = {};
-
-function toggleSettings() {
-  const panel = document.getElementById('settings-panel');
-  const overlay = document.getElementById('settings-overlay');
-  const toggle = document.getElementById('settings-toggle');
-  const isOpen = panel.classList.contains('open');
-
-  if (isOpen) {
-    panel.classList.remove('open');
-    overlay.classList.remove('visible');
-    if (toggle) toggle.classList.remove('settings-open');
-  } else {
-    panel.classList.add('open');
-    overlay.classList.add('visible');
-    if (toggle) toggle.classList.add('settings-open');
-    loadCurrentSettings();
-  }
-}
-
-async function loadCurrentSettings() {
-  const data = await fetchJSON('/api/settings');
-  if (!data) return;
-
-  currentSettings = data;
-
-  // Strategy toggles
-  const dailyEnabled = data.daily_income?.enabled ?? data.strategy?.enabled ?? true;
-  document.getElementById('set-daily-income').checked = dailyEnabled;
-  document.getElementById('set-tnt').checked = data.tag_n_turn?.enabled ?? false;
-  document.getElementById('set-bnb').checked = data.bnb?.enabled ?? false;
-  document.getElementById('set-orb').checked = data.orb?.enabled ?? false;
-  document.getElementById('set-shadow').checked = data.broker?.shadow?.enabled ?? false;
-
-  // PDT status indicator
-  fetch('/api/pdt/status', {headers: {'X-API-Token': API_TOKEN}})
-    .then(r => r.json())
-    .then(pdt => {
-      const el = document.getElementById('pdt-mode-indicator');
-      const equity = pdt.account_value;
-      const threshold = pdt.threshold || 25000;
-      const isPdt = equity !== null && equity < threshold;
-      if (isPdt) {
-        el.style.background = 'rgba(239, 68, 68, 0.15)';
-        el.style.border = '1px solid rgba(239, 68, 68, 0.3)';
-        el.style.color = '#ef4444';
-        el.innerHTML = 'PDT ACTIVE &mdash; 1pm management enabled';
-      } else {
-        el.style.background = 'rgba(34, 197, 94, 0.15)';
-        el.style.border = '1px solid rgba(34, 197, 94, 0.3)';
-        el.style.color = '#22c55e';
-        el.innerHTML = 'PDT INACTIVE &mdash; 1pm management disabled';
-      }
-    })
-    .catch(() => {
-      const el = document.getElementById('pdt-mode-indicator');
-      el.textContent = 'Unable to load PDT status';
-      el.style.color = 'var(--text-dim)';
-    });
-
-  // Position sizing
-  document.getElementById('set-max-contracts').value = data.portfolio?.max_contracts ?? 10;
-  document.getElementById('set-daily-contracts').value = data.portfolio?.daily_contracts ?? 7;
-  document.getElementById('set-swing-contracts').value = data.portfolio?.swing_contracts ?? 2;
-  validateContractLimits();
-
-  // Account balance in sidebar
-  const portfolio = data.portfolio || {};
-  const dryBal = portfolio.dry_run_account_size || portfolio.account_size || 50000;
-  const liveBal = portfolio.live_account_size || 0;
-  fetchJSON('/api/settings/trading-mode').then(modeData => {
-    const mode = modeData?.mode || 'dry_run';
-    const bal = mode === 'live' ? liveBal : dryBal;
-    document.getElementById('sidebar-acct-balance').textContent = '$' + Number(bal).toLocaleString();
-    document.getElementById('sidebar-acct-mode').textContent = mode === 'live' ? '(Live)' : '(Paper)';
-    if (mode === 'live') {
-      document.getElementById('sidebar-acct-readonly').style.display = '';
-      document.getElementById('sidebar-acct-edit').style.display = 'none';
-    } else {
-      document.getElementById('sidebar-acct-edit').style.display = '';
-      document.getElementById('sidebar-acct-readonly').style.display = 'none';
-      document.getElementById('sidebar-acct-input').value = Math.round(dryBal);
-    }
-  });
-
-  // Risk controls
-  const maxLoss = data.portfolio?.max_daily_loss_pct ?? 2;
-  document.getElementById('set-max-loss').value = maxLoss;
-  document.getElementById('max-loss-val').textContent = maxLoss + '%';
-
-  const maxWeeklyLoss = data.portfolio?.drawdown_limits?.weekly?.max_loss_pct ?? 4;
-  document.getElementById('set-max-weekly-loss').value = maxWeeklyLoss;
-  document.getElementById('max-weekly-loss-val').textContent = maxWeeklyLoss + '%';
-
-  const maxMonthlyLoss = data.portfolio?.drawdown_limits?.monthly?.max_loss_pct ?? 8;
-  document.getElementById('set-max-monthly-loss').value = maxMonthlyLoss;
-  document.getElementById('max-monthly-loss-val').textContent = maxMonthlyLoss + '%';
-
-  const maxPos = data.portfolio?.max_total_positions ?? 2;
-  document.getElementById('set-max-pos').value = maxPos;
-  document.getElementById('max-pos-val').textContent = maxPos;
-
-  const profitTarget = data.strategy?.profit_target_pct ?? 80;
-  document.getElementById('set-profit-target').value = profitTarget;
-  document.getElementById('profit-target-val').textContent = profitTarget + '%';
-
-  // Schwab section: show if schwab is active broker
-  const activeBroker = data.broker?.active || 'dry_run';
-  const schwabSection = document.getElementById('schwab-settings-section');
-  if (activeBroker === 'schwab') {
-    schwabSection.style.display = '';
-    fetchJSON('/api/schwab-auth-status').then(s => {
-      const infoEl = document.getElementById('schwab-token-info');
-      if (!s || !s.configured) {
-        infoEl.textContent = 'Schwab not configured.';
-        return;
-      }
-      const ts = s.token_status || {};
-      if (!ts.valid) {
-        infoEl.innerHTML = '<span style="color:var(--red)">\u25cf Token Expired</span> - Re-authentication required.';
-      } else if (ts.expiring_soon) {
-        infoEl.innerHTML = '<span style="color:var(--amber)">\u25cf Expiring Soon</span> - ' + Math.round(ts.hours_remaining) + ' hours remaining.';
-      } else {
-        infoEl.innerHTML = '<span style="color:var(--green)">\u25cf Token Valid</span> - ' + Math.round(ts.hours_remaining / 24) + ' days remaining (expires ' + (ts.expires_at || '').slice(0, 10) + ').';
-      }
-    });
-  } else {
-    schwabSection.style.display = 'none';
-  }
-
-  pendingChanges = {};
-}
-
-function updateSetting(path, value) {
-  pendingChanges[path] = value;
-  console.log('Pending change:', path, '=', value);
-}
-
-async function saveSidebarBalance() {
-  const val = parseFloat(document.getElementById('sidebar-acct-input').value);
-  const resultEl = document.getElementById('sidebar-acct-result');
-  if (!val || val <= 0) { resultEl.textContent = 'Invalid'; resultEl.style.color = 'var(--red)'; return; }
-  try {
-    const resp = await fetch('/api/account-size/save', {
-      method: 'POST',
-      headers: API_HEADERS,
-      body: JSON.stringify({account_size: val}),
-    });
-    const data = await resp.json();
-    if (data.success) {
-      resultEl.textContent = 'Saved';
-      resultEl.style.color = 'var(--green)';
-      document.getElementById('sidebar-acct-balance').textContent = '$' + Number(val).toLocaleString();
-    } else {
-      resultEl.textContent = data.error || 'Failed';
-      resultEl.style.color = 'var(--red)';
-    }
-  } catch (e) {
-    resultEl.textContent = 'Error';
-    resultEl.style.color = 'var(--red)';
-  }
-  setTimeout(() => { resultEl.textContent = ''; }, 3000);
-}
-
-function validateContractLimits() {
-  const maxC = +document.getElementById('set-max-contracts').value || 10;
-  const dailyC = +document.getElementById('set-daily-contracts').value || 7;
-  const swingC = +document.getElementById('set-swing-contracts').value || 2;
-  const err = document.getElementById('contract-limit-error');
-  if (dailyC > maxC || swingC > maxC) {
-    err.textContent = 'Daily and Swing contracts cannot exceed Max Contracts (' + maxC + ')';
-    err.style.display = 'block';
-  } else {
-    err.style.display = 'none';
-  }
-}
-
-async function saveSettings() {
-  if (document.getElementById('contract-limit-error').style.display !== 'none') {
-    showToast('Fix contract limit errors before saving', 'error');
-    return;
-  }
-  if (Object.keys(pendingChanges).length === 0) {
-    showToast('No changes to save', 'info');
-    return;
-  }
-
-  try {
-    const response = await fetch('/api/settings', {
-      method: 'POST',
-      headers: API_HEADERS,
-      body: JSON.stringify(pendingChanges)
-    });
-
-    const result = await response.json();
-    if (response.ok && result.success) {
-      console.log('[Settings] Saved:', JSON.stringify(pendingChanges));
-      const saved = {...pendingChanges};
-      pendingChanges = {};
-      loadCurrentSettings().then(() => {
-        const readBack = document.getElementById('set-daily-contracts')?.value;
-        console.log('[Settings] Read back daily contracts:', readBack, '| wrote:', JSON.stringify(saved));
-      });
-      updateRiskStatus();
-      updateStatus(); // Refresh Parameters panel immediately
-      showToast('Settings saved successfully');
-    } else {
-      showToast('Error: ' + (result.error || 'Unknown error'), 'error');
-    }
-  } catch (err) {
-    showToast('Failed to save settings: ' + err.message, 'error');
-  }
-}
-
-async function resetToDefaults() {
-  if (!confirm('Reset all settings to defaults? This will clear any runtime overrides.')) return;
-
-  try {
-    const response = await fetch('/api/settings/reset', { method: 'POST', headers: API_HEADERS });
-    const result = await response.json();
-    if (result.success) {
-      showToast('Settings reset to defaults');
-      pendingChanges = {};
-      loadCurrentSettings();
-      updateStatus(); // Refresh Parameters panel immediately
-    } else {
-      showToast('Error resetting: ' + (result.error || 'Unknown'), 'error');
-    }
-  } catch (err) {
-    showToast('Failed to reset: ' + err.message, 'error');
-  }
-}
-
-function showToast(message, type = 'success') {
-  const existing = document.querySelector('.toast');
-  if (existing) existing.remove();
-
-  const toast = document.createElement('div');
-  toast.className = 'toast ' + type;
-  toast.textContent = message;
-  document.body.appendChild(toast);
-
-  setTimeout(() => toast.classList.add('show'), 10);
-  setTimeout(() => {
-    toast.classList.remove('show');
-    setTimeout(() => toast.remove(), 300);
-  }, 3000);
-}
-
-// Close settings panel with Escape key
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') {
-    const panel = document.getElementById('settings-panel');
-    if (panel && panel.classList.contains('open')) {
-      toggleSettings();
-    }
-  }
-});
 
 // ---------------------------------------------------------------
 // Analytics Tab
@@ -9335,6 +8620,21 @@ async function renderAnDuration(sourceVal) {
 
   // Interpretation
   document.getElementById('an-dur-interp').textContent = data.interpretation || '';
+}
+
+function showToast(message, type) {
+  type = type || 'success';
+  const existing = document.querySelector('.toast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.className = 'toast ' + type;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.classList.add('show'), 10);
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
 }
 
 // ---------------------------------------------------------------

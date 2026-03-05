@@ -35,6 +35,7 @@ body {
   font-size: 14px;
   line-height: 1.6;
   padding: 0;
+  overflow: hidden;
 }
 
 /* Header */
@@ -92,32 +93,256 @@ header {
   border-color: var(--text-dim);
 }
 
-/* Main container */
+/* Page wrapper */
+.page-wrapper {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 53px);
+  padding: 10px 8px;
+  gap: 10px;
+}
+
+/* Main container - 3 columns */
 .main-content {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  padding: 12px 8px;
-  height: calc(100vh - 53px);
-  overflow: hidden;
+  grid-template-columns: 1fr 1.7fr 1fr;
+  gap: 10px;
 }
 
 .settings-col {
-  overflow-y: auto;
-  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
-.settings-col::-webkit-scrollbar { width: 4px; }
-.settings-col::-webkit-scrollbar-track { background: transparent; }
-.settings-col::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-.settings-col::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+.settings-col > .panel:last-child {
+  flex: 1;
+}
 
-@media (max-width: 900px) {
-  .main-content { grid-template-columns: 1fr; height: auto; overflow: visible; }
-  .settings-col { overflow: visible; }
+.settings-col > .panel.stretch {
+  flex: 1;
+}
+
+/* Trading Settings bottom panel */
+.settings-bottom {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+}
+.settings-bottom-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-bottom-header h3 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text);
+  font-weight: 700;
+}
+.settings-bottom-actions {
+  display: flex;
+  gap: 8px;
+}
+.settings-bottom-actions .btn-sm {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-family: var(--font-ui);
+}
+.settings-bottom-actions .btn-reset {
+  background: var(--border);
+  color: var(--text);
+}
+.settings-bottom-actions .btn-reset:hover { background: #374151; }
+.settings-bottom-actions .btn-save {
+  background: var(--cyan);
+  color: #000;
+}
+.settings-bottom-actions .btn-save:hover { background: #22d3ee; }
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+.settings-grid-col {
+  padding: 12px 16px;
+  border-right: 1px solid var(--border);
+}
+.settings-grid-col:last-child {
+  border-right: none;
+}
+.ts-section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--cyan);
+  margin-bottom: 10px;
+  font-weight: 700;
+}
+.ts-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+}
+.ts-row label {
+  font-size: 12px;
+  color: var(--text);
+}
+.ts-row input[type="number"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  width: 56px;
+  text-align: center;
+}
+.ts-slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ts-slider input[type="range"] {
+  width: 90px;
+  accent-color: var(--cyan);
+}
+.ts-slider span {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--cyan);
+  min-width: 30px;
+}
+/* Toggle switch */
+.ts-switch {
+  position: relative;
+  width: 38px;
+  height: 20px;
+  display: inline-block;
+}
+.ts-switch input { opacity: 0; width: 0; height: 0; }
+.ts-switch .ts-slider-toggle {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--border);
+  border-radius: 20px;
+  transition: 0.3s;
+}
+.ts-switch .ts-slider-toggle:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: 0.3s;
+}
+.ts-switch input:checked + .ts-slider-toggle {
+  background: var(--green);
+}
+.ts-switch input:checked + .ts-slider-toggle:before {
+  transform: translateX(18px);
+}
+.ts-experimental-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.ts-info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--text-dim);
+  font-size: 9px;
+  color: var(--text-dim);
+  cursor: help;
+  flex-shrink: 0;
+  position: relative;
+}
+.ts-info-icon:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+.ts-info-icon:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: -8px;
+  width: 220px;
+  padding: 8px 10px;
+  background: #1a2332;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 400;
+  color: var(--text);
+  line-height: 1.5;
+  z-index: 100;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.ts-note {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-style: italic;
+  margin-top: 6px;
+  opacity: 0.8;
+}
+.ts-acct-line {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+/* Toast notifications */
+.toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--green);
+  padding: 12px 20px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--text);
+  opacity: 0;
+  transform: translateY(20px);
+  transition: all 0.3s ease;
+  z-index: 1001;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.error { border-left-color: var(--red); }
+.toast.info { border-left-color: var(--blue); }
+
+@media (max-width: 1100px) {
+  .main-content { grid-template-columns: 1fr; }
 }
 
 /* Panels */
@@ -424,9 +649,9 @@ header {
 /* Trading Mode toggle cards */
 .mode-options {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-bottom: 16px;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 .mode-card {
@@ -696,8 +921,10 @@ header {
   </div>
 </header>
 
+<div class="page-wrapper">
+
 {% if message %}
-<div class="message {{ message_type or 'success' }}" style="margin: 8px 8px 0;">{{ message }}</div>
+<div class="message {{ message_type or 'success' }}">{{ message }}</div>
 {% endif %}
 
 <div class="main-content">
@@ -742,6 +969,10 @@ header {
 
     <div id="trading-mode-result"></div>
   </div>
+
+  </div><!-- end col 1 -->
+
+  <div class="settings-col">
 
   <!-- Active Broker -->
   <div class="panel">
@@ -874,10 +1105,6 @@ header {
       <div id="test-result"></div>
     </form>
   </div>
-
-  </div><!-- end left settings-col -->
-
-  <div class="settings-col">
 
   <!-- Schwab Token Status -->
   <div class="panel broker-section" id="schwab-token-section" style="display:none;">
@@ -1043,6 +1270,10 @@ header {
     <div id="ibkr-result" style="margin-top:12px; padding:12px; border-radius:6px; font-size:13px; display:none;"></div>
   </div>
 
+  </div><!-- end col 2 -->
+
+  <div class="settings-col">
+
   <!-- PDT Protection -->
   <div class="panel">
     <div class="panel-header">
@@ -1093,17 +1324,13 @@ header {
       </div>
     </div>
 
-    <div class="form-grid" style="grid-template-columns: 1fr; max-width: 480px;">
-      <div>
-        <label>API Key</label>
-        <input type="password" id="fred_api_key" value="{{ masked_fred_key }}" placeholder="Enter FRED API key" autocomplete="off">
-      </div>
+    <div class="form-group">
+      <label class="form-label" for="fred_api_key">API Key</label>
+      <input type="password" class="form-input" id="fred_api_key" value="{{ masked_fred_key }}" placeholder="Enter FRED API key" autocomplete="off">
     </div>
 
-    <div style="margin-top: 12px;">
-      <button type="button" class="btn btn-primary" onclick="saveFredApiKey()">Save API Key</button>
-      <div id="fred-cred-result" style="margin-top: 8px; font-size: 12px; display: none;"></div>
-    </div>
+    <button type="button" class="btn btn-primary" onclick="saveFredApiKey()">Save API Key</button>
+    <div id="fred-cred-result" style="margin-top: 8px; font-size: 12px; display: none;"></div>
   </div>
 
   <!-- Notifications -->
@@ -1111,7 +1338,7 @@ header {
     <div class="panel-header">
       <div>
         <div class="panel-title">Notifications</div>
-        <div class="panel-subtitle">Webhook alerts for trade events (max 5)</div>
+        <div class="panel-subtitle">Webhook alerts for trade events</div>
       </div>
     </div>
 
@@ -1125,8 +1352,153 @@ header {
     </div>
   </div>
 
-  </div><!-- end right settings-col -->
+  </div><!-- end col 3 -->
 </div>
+
+<div class="settings-bottom">
+  <div class="settings-bottom-header">
+    <h3>Trading Settings</h3>
+    <div class="settings-bottom-actions">
+      <button class="btn-sm btn-reset" onclick="resetToDefaults()">Reset</button>
+      <button class="btn-sm btn-save" onclick="saveSettings()">Save &amp; Apply</button>
+    </div>
+  </div>
+  <div class="settings-grid">
+    <!-- Strategies -->
+    <div class="settings-grid-col">
+      <div class="ts-section-title">Strategies</div>
+      <div class="ts-row">
+        <label>Daily Income</label>
+        <label class="ts-switch">
+          <input type="checkbox" id="set-daily-income" onchange="updateSetting('daily_income.enabled', this.checked)">
+          <span class="ts-slider-toggle"></span>
+        </label>
+      </div>
+      <div class="ts-row">
+        <label>Tag 'n Turn</label>
+        <label class="ts-switch">
+          <input type="checkbox" id="set-tnt" onchange="updateSetting('tag_n_turn.enabled', this.checked)">
+          <span class="ts-slider-toggle"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Position Sizing -->
+    <div class="settings-grid-col">
+      <div class="ts-section-title">Position Sizing</div>
+      <div class="ts-row">
+        <label>Max Contracts</label>
+        <input type="number" id="set-max-contracts" min="1" max="50" step="1" value="10"
+               onchange="updateSetting('portfolio.max_contracts', +this.value); validateContractLimits()">
+      </div>
+      <div class="ts-row">
+        <label>Daily Contracts</label>
+        <input type="number" id="set-daily-contracts" min="1" max="50" step="1" value="7"
+               onchange="updateSetting('portfolio.daily_contracts', +this.value); validateContractLimits()">
+      </div>
+      <div class="ts-row">
+        <label>Swing Contracts</label>
+        <input type="number" id="set-swing-contracts" min="1" max="50" step="1" value="2"
+               onchange="updateSetting('portfolio.swing_contracts', +this.value); validateContractLimits()">
+      </div>
+      <div id="contract-limit-error" style="display:none; color:var(--red); font-size:11px; margin-top:2px;"></div>
+      <div class="ts-acct-line">
+        Account: <strong id="sidebar-acct-balance">-</strong>
+        <span id="sidebar-acct-mode" style="margin-left:3px; font-size:10px; opacity:0.6;"></span>
+      </div>
+      <div id="sidebar-acct-edit" style="display:none;">
+        <div class="ts-row">
+          <label>Paper Balance</label>
+          <input type="number" id="sidebar-acct-input" min="100" step="100" style="width:80px">
+        </div>
+        <button onclick="saveSidebarBalance()" style="padding:3px 10px; background:var(--blue); color:white; border:none; border-radius:4px; font-size:10px; font-weight:600; cursor:pointer; margin-top:3px;">Update</button>
+        <span id="sidebar-acct-result" style="font-size:10px; margin-left:4px;"></span>
+      </div>
+      <div id="sidebar-acct-readonly" style="display:none; font-size:10px; color:var(--text-dim);">
+        Live balance fetched from broker.
+      </div>
+    </div>
+
+    <!-- Risk Controls -->
+    <div class="settings-grid-col">
+      <div class="ts-section-title">Risk Controls</div>
+      <div class="ts-row">
+        <label>Max Daily Loss</label>
+        <div class="ts-slider">
+          <input type="range" id="set-max-loss" min="1" max="5" step="0.5" value="2"
+                 oninput="document.getElementById('max-loss-val').textContent = this.value + '%'"
+                 onchange="updateSetting('portfolio.max_daily_loss_pct', parseFloat(this.value))">
+          <span id="max-loss-val">2%</span>
+        </div>
+      </div>
+      <div class="ts-row">
+        <label>Max Weekly Loss</label>
+        <div class="ts-slider">
+          <input type="range" id="set-max-weekly-loss" min="2" max="10" step="1" value="4"
+                 oninput="document.getElementById('max-weekly-loss-val').textContent = this.value + '%'"
+                 onchange="updateSetting('portfolio.drawdown_limits.weekly.max_loss_pct', parseFloat(this.value))">
+          <span id="max-weekly-loss-val">4%</span>
+        </div>
+      </div>
+      <div class="ts-row">
+        <label>Max Monthly Loss</label>
+        <div class="ts-slider">
+          <input type="range" id="set-max-monthly-loss" min="4" max="20" step="2" value="8"
+                 oninput="document.getElementById('max-monthly-loss-val').textContent = this.value + '%'"
+                 onchange="updateSetting('portfolio.drawdown_limits.monthly.max_loss_pct', parseFloat(this.value))">
+          <span id="max-monthly-loss-val">8%</span>
+        </div>
+      </div>
+      <div class="ts-row">
+        <label>Max Positions</label>
+        <div class="ts-slider">
+          <input type="range" id="set-max-pos" min="1" max="3" step="1" value="2"
+                 oninput="document.getElementById('max-pos-val').textContent = this.value"
+                 onchange="updateSetting('portfolio.max_total_positions', parseInt(this.value))">
+          <span id="max-pos-val">2</span>
+        </div>
+      </div>
+      <div class="ts-row">
+        <label>Profit Target</label>
+        <div class="ts-slider">
+          <input type="range" id="set-profit-target" min="50" max="95" step="5" value="80"
+                 oninput="document.getElementById('profit-target-val').textContent = this.value + '%'"
+                 onchange="updateSetting('strategy.profit_target_pct', parseFloat(this.value))">
+          <span id="profit-target-val">80%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Experimental -->
+    <div class="settings-grid-col">
+      <div class="ts-section-title" style="color:var(--text-dim);">Experimental</div>
+      <div class="ts-row">
+        <label class="ts-experimental-label">B&amp;B <span class="ts-info-icon" data-tooltip="Bed &amp; Breakfast - Detects end-of-day momentum signals and provides directional bias for next-day Daily Income setups. Does not enter trades independently.">?</span></label>
+        <label class="ts-switch">
+          <input type="checkbox" id="set-bnb" onchange="updateSetting('bnb.enabled', this.checked)">
+          <span class="ts-slider-toggle"></span>
+        </label>
+      </div>
+      <div class="ts-row">
+        <label class="ts-experimental-label">ORB <span class="ts-info-icon" data-tooltip="Opening Range Breakout - Trades strong first-bar breakouts with range and confirmation filters. Independent 0DTE strategy, shares position slot with Daily Income.">?</span></label>
+        <label class="ts-switch">
+          <input type="checkbox" id="set-orb" onchange="updateSetting('orb.enabled', this.checked)">
+          <span class="ts-slider-toggle"></span>
+        </label>
+      </div>
+      <div class="ts-row" id="shadow-settings-row" style="display:none">
+        <label class="ts-experimental-label">Shadow <span class="ts-info-icon" data-tooltip="Compare dry-run fills against live Schwab quotes to measure price divergence.">?</span></label>
+        <label class="ts-switch">
+          <input type="checkbox" id="set-shadow" onchange="updateSetting('broker.shadow.enabled', this.checked)">
+          <span class="ts-slider-toggle"></span>
+        </label>
+      </div>
+      <div class="ts-note">These strategies are under development and disabled by default.</div>
+    </div>
+  </div>
+</div>
+
+</div><!-- end page-wrapper -->
 
 <script>
 // CSRF token
@@ -1160,6 +1532,12 @@ function showBrokerSections(broker) {
     loadIbkrStatus();
   }
   // dry_run: nothing shown
+
+  // Mark last visible broker panel as stretch to fill column height
+  document.querySelectorAll('.broker-section.stretch').forEach(el => el.classList.remove('stretch'));
+  const col2 = document.getElementById('schwab-section').parentElement;
+  const visible = [...col2.querySelectorAll('.broker-section')].filter(el => el.style.display !== 'none');
+  if (visible.length) visible[visible.length - 1].classList.add('stretch');
 
   // Update badge
   const badge = document.getElementById('broker-badge');
@@ -1558,7 +1936,7 @@ document.getElementById('cancel-validation-btn').addEventListener('click', () =>
 
 loadTradingMode();
 
-// Position sizing is now in the dashboard sidebar (Trading Settings)
+// Position sizing is in the Trading Settings panel below
 
 // Test connection
 document.getElementById('test-connection-btn').addEventListener('click', async () => {
@@ -2130,8 +2508,8 @@ function onWebhookTypeChange(sel) {
 function addWebhookCard(wh) {
   const container = document.getElementById('notif-webhooks');
   const count = container.querySelectorAll('.webhook-card').length;
-  if (count >= 5) {
-    alert('Maximum 5 webhooks allowed.');
+  if (count >= 1) {
+    alert('Maximum 1 webhook allowed.');
     return;
   }
   container.insertAdjacentHTML('beforeend', buildWebhookCard(wh || {type: 'discord', url: '', min_level: 'info', enabled: true}));
@@ -2147,7 +2525,7 @@ function removeWebhookCard(idx) {
 function updateAddButton() {
   const count = document.querySelectorAll('#notif-webhooks .webhook-card').length;
   const btn = document.getElementById('notif-add-btn');
-  if (btn) btn.style.display = count >= 5 ? 'none' : '';
+  if (btn) btn.style.display = count >= 1 ? 'none' : '';
 }
 
 function collectWebhooks() {
@@ -2244,6 +2622,196 @@ async function testWebhook(idx) {
 
 // Load notification settings on page load
 loadNotificationSettings();
+
+// ---------------------------------------------------------------------------
+// Trading Settings (bottom panel)
+// ---------------------------------------------------------------------------
+let pendingChanges = {};
+
+async function fetchJSON(url) {
+  try {
+    const res = await fetch(url, {headers: {'X-API-Token': API_TOKEN}});
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch (e) {
+    console.error('Fetch error:', url, e);
+    return null;
+  }
+}
+
+async function loadCurrentSettings() {
+  const data = await fetchJSON('/api/settings');
+  if (!data) return;
+
+  // Strategy toggles
+  document.getElementById('set-daily-income').checked = data.daily_income?.enabled ?? data.strategy?.enabled ?? true;
+  document.getElementById('set-tnt').checked = data.tag_n_turn?.enabled ?? false;
+  document.getElementById('set-bnb').checked = data.bnb?.enabled ?? false;
+  document.getElementById('set-orb').checked = data.orb?.enabled ?? false;
+  document.getElementById('set-shadow').checked = data.broker?.shadow?.enabled ?? false;
+
+  // Shadow row visibility (dry-run only)
+  const activeBrokerVal = data.broker?.active || 'dry_run';
+  document.getElementById('shadow-settings-row').style.display = activeBrokerVal === 'dry_run' ? '' : 'none';
+
+  // Position sizing
+  document.getElementById('set-max-contracts').value = data.portfolio?.max_contracts ?? 10;
+  document.getElementById('set-daily-contracts').value = data.portfolio?.daily_contracts ?? 7;
+  document.getElementById('set-swing-contracts').value = data.portfolio?.swing_contracts ?? 2;
+  validateContractLimits();
+
+  // Account balance
+  const portfolio = data.portfolio || {};
+  const dryBal = portfolio.dry_run_account_size || portfolio.account_size || 50000;
+  const liveBal = portfolio.live_account_size || 0;
+  fetchJSON('/api/settings/trading-mode').then(modeData => {
+    const mode = modeData?.mode || 'dry_run';
+    const bal = mode === 'live' ? liveBal : dryBal;
+    document.getElementById('sidebar-acct-balance').textContent = '$' + Number(bal).toLocaleString();
+    document.getElementById('sidebar-acct-mode').textContent = mode === 'live' ? '(Live)' : '(Paper)';
+    if (mode === 'live') {
+      document.getElementById('sidebar-acct-readonly').style.display = '';
+      document.getElementById('sidebar-acct-edit').style.display = 'none';
+    } else {
+      document.getElementById('sidebar-acct-edit').style.display = '';
+      document.getElementById('sidebar-acct-readonly').style.display = 'none';
+      document.getElementById('sidebar-acct-input').value = Math.round(dryBal);
+    }
+  });
+
+  // Risk controls
+  const maxLoss = data.portfolio?.max_daily_loss_pct ?? 2;
+  document.getElementById('set-max-loss').value = maxLoss;
+  document.getElementById('max-loss-val').textContent = maxLoss + '%';
+
+  const maxWeeklyLoss = data.portfolio?.drawdown_limits?.weekly?.max_loss_pct ?? 4;
+  document.getElementById('set-max-weekly-loss').value = maxWeeklyLoss;
+  document.getElementById('max-weekly-loss-val').textContent = maxWeeklyLoss + '%';
+
+  const maxMonthlyLoss = data.portfolio?.drawdown_limits?.monthly?.max_loss_pct ?? 8;
+  document.getElementById('set-max-monthly-loss').value = maxMonthlyLoss;
+  document.getElementById('max-monthly-loss-val').textContent = maxMonthlyLoss + '%';
+
+  const maxPos = data.portfolio?.max_total_positions ?? 2;
+  document.getElementById('set-max-pos').value = maxPos;
+  document.getElementById('max-pos-val').textContent = maxPos;
+
+  const profitTarget = data.strategy?.profit_target_pct ?? 80;
+  document.getElementById('set-profit-target').value = profitTarget;
+  document.getElementById('profit-target-val').textContent = profitTarget + '%';
+
+  pendingChanges = {};
+}
+
+function loadPositionSizing() {
+  loadCurrentSettings();
+}
+
+function updateSetting(path, value) {
+  pendingChanges[path] = value;
+}
+
+function validateContractLimits() {
+  const maxC = +document.getElementById('set-max-contracts').value || 10;
+  const dailyC = +document.getElementById('set-daily-contracts').value || 7;
+  const swingC = +document.getElementById('set-swing-contracts').value || 2;
+  const err = document.getElementById('contract-limit-error');
+  if (dailyC > maxC || swingC > maxC) {
+    err.textContent = 'Daily/Swing cannot exceed Max (' + maxC + ')';
+    err.style.display = 'block';
+  } else {
+    err.style.display = 'none';
+  }
+}
+
+async function saveSidebarBalance() {
+  const val = parseFloat(document.getElementById('sidebar-acct-input').value);
+  const resultEl = document.getElementById('sidebar-acct-result');
+  if (!val || val <= 0) { resultEl.textContent = 'Invalid'; resultEl.style.color = 'var(--red)'; return; }
+  try {
+    const resp = await fetch('/api/account-size/save', {
+      method: 'POST',
+      headers: API_HEADERS,
+      body: JSON.stringify({account_size: val}),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      resultEl.textContent = 'Saved';
+      resultEl.style.color = 'var(--green)';
+      document.getElementById('sidebar-acct-balance').textContent = '$' + Number(val).toLocaleString();
+    } else {
+      resultEl.textContent = data.error || 'Failed';
+      resultEl.style.color = 'var(--red)';
+    }
+  } catch (e) {
+    resultEl.textContent = 'Error';
+    resultEl.style.color = 'var(--red)';
+  }
+  setTimeout(() => { resultEl.textContent = ''; }, 3000);
+}
+
+async function saveSettings() {
+  if (document.getElementById('contract-limit-error').style.display !== 'none') {
+    showToast('Fix contract limit errors before saving', 'error');
+    return;
+  }
+  if (Object.keys(pendingChanges).length === 0) {
+    showToast('No changes to save', 'info');
+    return;
+  }
+  try {
+    const response = await fetch('/api/settings', {
+      method: 'POST',
+      headers: API_HEADERS,
+      body: JSON.stringify(pendingChanges)
+    });
+    const result = await response.json();
+    if (response.ok && result.success) {
+      pendingChanges = {};
+      loadCurrentSettings();
+      showToast('Settings saved successfully');
+    } else {
+      showToast('Error: ' + (result.error || 'Unknown error'), 'error');
+    }
+  } catch (err) {
+    showToast('Failed to save settings: ' + err.message, 'error');
+  }
+}
+
+async function resetToDefaults() {
+  if (!confirm('Reset all trading settings to defaults?')) return;
+  try {
+    const response = await fetch('/api/settings/reset', { method: 'POST', headers: API_HEADERS });
+    const result = await response.json();
+    if (result.success) {
+      showToast('Settings reset to defaults');
+      pendingChanges = {};
+      loadCurrentSettings();
+    } else {
+      showToast('Error resetting: ' + (result.error || 'Unknown'), 'error');
+    }
+  } catch (err) {
+    showToast('Failed to reset: ' + err.message, 'error');
+  }
+}
+
+function showToast(message, type) {
+  type = type || 'success';
+  const existing = document.querySelector('.toast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.className = 'toast ' + type;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.classList.add('show'), 10);
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+
+// Load trading settings on page load
+loadCurrentSettings();
 </script>
 
 </body>
