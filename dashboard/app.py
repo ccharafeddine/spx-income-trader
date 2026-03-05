@@ -48,6 +48,26 @@ import pytz
 
 logger = logging.getLogger(__name__)
 
+# Apply runtime settings overrides so STRATEGY_PARAMS reflects user toggles at startup
+# (the YAML has base defaults; runtime_settings.json has user changes from the Account page)
+if RUNTIME_SETTINGS_FILE.exists():
+    try:
+        _overrides = json.loads(RUNTIME_SETTINGS_FILE.read_text())
+        def _startup_merge(base, overlay):
+            result = base.copy()
+            for k, v in overlay.items():
+                if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+                    result[k] = _startup_merge(result[k], v)
+                else:
+                    result[k] = v
+            return result
+        _merged = _startup_merge(dict(STRATEGY_PARAMS), _overrides)
+        STRATEGY_PARAMS.clear()
+        STRATEGY_PARAMS.update(_merged)
+        del _overrides, _merged, _startup_merge
+    except (json.JSONDecodeError, OSError):
+        pass
+
 app = Flask(__name__)
 app.secret_key = os.urandom(32)
 ET = pytz.timezone('US/Eastern')

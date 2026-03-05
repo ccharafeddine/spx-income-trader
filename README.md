@@ -102,10 +102,11 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Real-time web UI with account summary, candlestick charts, and position monitoring
 - Layered audio synthesis via Web Audio API: detuned oscillators, ADSR envelopes, biquad filters, and inharmonic bell partials for 8 distinct sounds (market open/close bells, trade entry arpeggio, profit fanfare, loss tone, bar tick, pulse chime, alert). All mutable.
 - Visual micro-interactions: button press spring, tab fade-in, P&L glow on value change, position card entrance animation, mute bounce, toggle squeeze, risk bar pulse, LED flash on state change, settings gear rotation, click ripple effect
-- DB-backed strategy status LEDs for all four strategies (persists across page refreshes)
+- DB-backed strategy status LEDs for all four strategies (persists across page refreshes). Disabled strategies show a dark "Off" LED instead of red.
 - Signal log showing every detected setup with strikes, credit, risk, and SPX price
 - Shadow mode panel (dry-run only): summary stats, recent comparison rows with timestamps, price/credit divergence, and decision-would-differ LED indicators
 - Six tabs: Overview, Calendar, Trade Journal, Analytics, Backtest, Logs
+- Account page with 2-column full-viewport layout: trading mode, broker credentials, Schwab OAuth status, PDT rule protection, FRED API key, notifications, and trading settings (strategies, position sizing, risk controls, experimental toggles)
 - Calendar tab with live FRED API economic calendar feed (Federal Reserve Bank of St. Louis, free, 4-hour cache) and automatic static JSON fallback. Today's events with past/current/upcoming status, this week grouped by day, and upcoming 30 days. Impact badges (high/medium/low), actual/forecast/previous data columns, and live vs. static source indicator.
 
 ### Trade Journal
@@ -116,6 +117,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Exit review with post-trade notes and performance rating
 - Daily journal capturing bars built, pulse bars, signals evaluated, rejections with reasons
 - Filterable by strategy, direction, outcome, day type, and date range
+- Optimized loading: broad FRED event cache (1-year window, 4h TTL), conditional SPX quote (skipped when no active trades), and frontend day-click cache for instant re-clicks
 - CSV export for offline analysis
 
 ### Analytics
@@ -233,17 +235,21 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 
 ## Screenshots
 
-**Full Application** -- Complete desktop application showing the sidebar, real-time SPX candlestick chart with trade overlays, open position panel, and trade plan section.
+**Full Application** -- Desktop app with 3-column Overview layout: left sidebar (status, strategy LEDs, risk), center candlestick chart with trade overlays, right column (trade history, performance).
 
-![Full App Window](screenshots/FullAppWindow.png)
+![Full App View](screenshots/FullAppView.png)
 
-**Dashboard — 1h Chart with Bollinger Bands** -- One-hour candlestick view with Bollinger Band overlay, historical trade entry/exit markers, and spread visualization across multiple days.
+**Dashboard -- 1h Chart with Bollinger Bands** -- One-hour candlestick view with Bollinger Band overlay, historical trade entry/exit markers, and spread visualization across multiple days.
 
-![Overview 1h Chart](screenshots/OverviewTab1hChart.png)
+![Overview 1h Chart](screenshots/OverviewTab1hrChart.png)
 
 **Open Position** -- Active credit spread details showing strikes, credit received, SPX distance, estimated P&L, time to expiry, and quantity.
 
 ![Open Position](screenshots/OpenPosition.png)
+
+**Account Settings** -- 2-column Account page with trading mode, broker credentials, Schwab OAuth status, PDT rule protection, FRED API key, notification webhooks, and trading settings (strategy toggles, position sizing, risk controls, experimental strategies).
+
+![Account Settings](screenshots/AccountSettings.png)
 
 **Trade Journal - Calendar View** -- Monthly calendar showing per-day P&L, trade count, strategy tags, no-trade reasons, weekends, and market holidays. Click any day to expand its trades.
 
@@ -327,29 +333,23 @@ Position Manager (P&L tracking, exit management, partial fill tracking, PDT-cond
     +---> Shadow Comparator (dry-run vs. live Schwab price/credit comparison)
 ```
 
-**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1180+ tests), GitHub Actions CI
+**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1240+ tests), GitHub Actions CI
 
 ---
 
 ## Settings
 
-All settings are configured via `config/strategy_params.yaml` and the dashboard Settings page.
+All settings are configured via `config/strategy_params.yaml` and the dashboard Account page. Runtime changes (strategy toggles, risk controls, position sizing) are saved to `runtime_settings.json` and applied on startup without modifying the YAML.
 
 ### What requires a restart
 - Trading mode (dry-run / live)
 - Active broker (schwab / etrade / ibkr / dry_run)
-- Strategy enable/disable flags (DI, TNT, B&B, ORB)
+
+### What is hot-reloadable (no restart needed)
+- Strategy enable/disable flags (DI, TNT, B&B, ORB) via Account page Save & Apply
 - Pulse threshold, spread width, profit target
 - Position sizing parameters (max contracts, risk per trade)
 - Drawdown limits (daily, weekly, monthly)
-- Setup window timing (morning start/end, afternoon window)
-- Bollinger Band filter parameters
-- PDT protection settings (including 1pm management mode)
-- ORB range filter and confirmation delay
-- B&B gap invalidation threshold
-- Morning bias filter toggle
-
-### What is hot-reloadable (no restart needed)
 - Notification settings (Slack, Discord, webhooks, email, SMS)
 
 ### Key parameters
@@ -402,7 +402,7 @@ python app_desktop.py
 
 **Configuration:**
 - `config/strategy_params.yaml` for strategy parameters (thresholds, spread width, profit target, timing windows, broker selection, IBKR connection settings)
-- Dashboard Settings page for credentials, trading mode (dry-run/live), notifications, and FRED API key
+- Dashboard Account page for credentials, trading mode (dry-run/live), trading settings, notifications, and FRED API key
 - Credentials stored in OS keychain, never in config files
 
 ---
@@ -509,7 +509,7 @@ src/
         version.py           # Version management and update check
 
 dashboard/
-    app.py                   # Flask REST API and dashboard server (40+ routes)
+    app.py                   # Flask REST API and dashboard server (70+ routes)
     templates/
         index.html           # Main dashboard (6 tabs)
         settings.html        # Configuration UI
@@ -544,7 +544,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 
 ## Testing
 
-1210+ tests covering:
+1240+ tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays, morning bias filter, TNT weekend hold prevention)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
 - Position management (sizing, P&L calculation, exit triggers, partial fill tracking)
