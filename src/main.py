@@ -2699,6 +2699,17 @@ class TradingBot:
                     direction, current_price, options_chain,
                     spread, quantity, expiration)
 
+            # Final circuit breaker re-check before order submission
+            if not self._check_daily_loss_circuit_breaker():
+                logger.warning(
+                    "Circuit breaker triggered during setup execution, "
+                    "aborting trade entry"
+                )
+                self._record_rejection('daily_income', 'circuit_breaker',
+                    f"Breaker tripped between setup and entry "
+                    f"(P&L ${self.portfolio.daily_realized_pnl:.2f})")
+                return
+
             trade = self.position_manager.enter_trade(
                 spread,
                 setup_bar,
