@@ -2362,30 +2362,6 @@ header::after {
 .log-line.ERROR { color: var(--red); font-weight: 600; }
 .log-line.CRITICAL { color: #ff3333; font-weight: 700; background: rgba(239,68,68,0.08); }
 
-/* Header settings button */
-.header-btn {
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 6px 10px;
-  color: var(--text-dim);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  transition: all 0.2s;
-  text-decoration: none;
-}
-.header-btn:hover {
-  border-color: var(--text-dim);
-  color: var(--text);
-}
-.header-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
 /* Toast notifications */
 .toast {
   position: fixed;
@@ -2445,10 +2421,10 @@ header::after {
    --------------------------------------------------------------- */
 
 /* Button press effect */
-.bot-ctrl-btn, .header-btn, .tab-btn, #mute-btn, .btn-primary, .btn-secondary {
+.bot-ctrl-btn, .tab-btn, #mute-btn, .btn-primary, .btn-secondary {
   transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s, color 0.2s, border-color 0.2s, box-shadow 0.2s;
 }
-.bot-ctrl-btn:active:not(:disabled), .header-btn:active, .tab-btn:active,
+.bot-ctrl-btn:active:not(:disabled), .tab-btn:active,
 #mute-btn:active, .btn-primary:active, .btn-secondary:active {
   transform: scale(0.93);
 }
@@ -2567,12 +2543,6 @@ header::after {
     </div>
   </div>
   <div class="header-right">
-    <a href="/settings" class="header-btn" title="Trading Settings" aria-label="Open trading settings">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="3"></circle>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-      </svg>
-    </a>
     <button id="mute-btn" onclick="toggleMute()" title="Toggle sounds" aria-label="Toggle sound notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path class="sound-waves" d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg></button>
     <a href="/settings" class="settings-link">Account</a>
     <span>Next refresh: <span id="refresh-countdown">30</span>s</span>
@@ -3965,7 +3935,7 @@ function flashPnl(el, newVal, prevVal) {
 // Wire up interactions on DOMContentLoaded
 document.addEventListener('DOMContentLoaded', () => {
   // Ripple on all interactive buttons
-  document.querySelectorAll('.bot-ctrl-btn, .header-btn, .tab-btn, #mute-btn, .btn-primary, .btn-secondary').forEach(btn => {
+  document.querySelectorAll('.bot-ctrl-btn, .tab-btn, #mute-btn, .btn-primary, .btn-secondary').forEach(btn => {
     btn.addEventListener('click', addRipple);
   });
 
@@ -5978,6 +5948,7 @@ let calYear = new Date().getFullYear();
 let calMonth = new Date().getMonth() + 1;
 let calData = null;
 let calSelectedDate = null;
+let _calDayCache = {};
 
 const MARKET_HOLIDAYS = {
   '2025-01-01': "New Year's Day", '2025-01-20': 'MLK Day',
@@ -6181,6 +6152,7 @@ function calNavMonth(delta) {
   if (calMonth > 12) { calMonth = 1; calYear++; }
   if (calMonth < 1) { calMonth = 12; calYear--; }
   calSelectedDate = null;
+  _calDayCache = {};
   document.getElementById('cal-day-detail').style.display = 'none';
   loadCalendar();
 }
@@ -6221,9 +6193,13 @@ async function selectCalDay(dateStr) {
   const hasTrades = dayData && (dayData.trades > 0 || (dayData.open_count || 0) > 0);
 
   if (hasTrades) {
-    // Fetch journal trade entries for this specific day only
-    const d = await fetchJSON('/api/journal?date=' + dateStr);
-    if (!d) return;
+    // Fetch journal trade entries (cached per day)
+    let d = _calDayCache['t:' + dateStr];
+    if (!d) {
+      d = await fetchJSON('/api/journal?date=' + dateStr);
+      if (!d) return;
+      _calDayCache['t:' + dateStr] = d;
+    }
     let entries = d.journal || [];
     if (entries.length) {
       html += renderJournalCards(entries, 'cal');
@@ -6231,8 +6207,12 @@ async function selectCalDay(dateStr) {
       html += '<div class="empty">No trade details available for this day</div>';
     }
   } else {
-    // No-trade day - fetch daily journal for rejection timeline
-    const dj = await fetchJSON('/api/journal/daily/' + dateStr);
+    // No-trade day - fetch daily journal (cached per day)
+    let dj = _calDayCache['d:' + dateStr];
+    if (!dj) {
+      dj = await fetchJSON('/api/journal/daily/' + dateStr);
+      _calDayCache['d:' + dateStr] = dj;
+    }
     html += renderDailyJournalCard(dj, dateStr, dayData);
   }
 

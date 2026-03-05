@@ -2493,6 +2493,44 @@ def api_greeks():
         })
 
 
+# --- FRED economic events cache (broad 1-year window, refreshed every 4h) ---
+_fred_cache = {'events': {}, 'expires': 0}
+_fred_cache_lock = threading.Lock()
+
+def _get_econ_events_cached():
+    """Return {date_str: [event_name, ...]} for high-impact FRED events.
+
+    Fetches a 1-year rolling window once per 4 hours so every journal
+    request hits the in-memory dict instead of making a network call.
+    """
+    now = time.monotonic()
+    if now < _fred_cache['expires']:
+        return _fred_cache['events']
+
+    with _fred_cache_lock:
+        # Double-check after acquiring lock
+        if now < _fred_cache['expires']:
+            return _fred_cache['events']
+
+        try:
+            from src.data.fred_calendar import get_calendar_events as _get_cal
+            today = datetime.now().date()
+            from_date = (today - timedelta(days=365)).isoformat()
+            to_date = today.isoformat()
+            result = _get_cal(from_date=from_date, to_date=to_date)
+            cache = {}
+            for ev in result.get('events', []):
+                if ev.get('impact') == 'high':
+                    cache.setdefault(ev['date'], []).append(ev['event'])
+            _fred_cache['events'] = cache
+            _fred_cache['expires'] = time.monotonic() + 4 * 3600
+        except Exception:
+            # On failure, keep stale data and retry in 60s
+            _fred_cache['expires'] = time.monotonic() + 60
+
+        return _fred_cache['events']
+
+
 @app.route('/api/journal')
 def api_journal():
     """Trade journal with entry reasons, exit analysis, and market context."""
@@ -2513,17 +2551,26 @@ def api_journal():
     else:
         cutoff = (datetime.now(ET).date() - timedelta(days=days)).isoformat()
 
-    # Get SPX price and all trades
-    # Single-date mode for closed trades: skip the expensive SPX quote network call
-    if date_filter:
-        spx_price = None
-    else:
-        spx = yahoo.get_spx_quote() or {}
-        spx_price = spx.get('price')
-
+    # Get DB connection early so we can check for active trades
     try:
         conn = get_db_connection()
         _ensure_journal_notes_table(conn)
+    except Exception:
+        conn = None
+
+    # Determine SPX price - only needed when classify_trades must resolve active positions
+    spx_price = None
+    if not date_filter and conn:
+        active_count = conn.execute(
+            "SELECT COUNT(*) FROM trades WHERE status NOT IN ('closed', 'expired')"
+        ).fetchone()[0]
+        if active_count > 0:
+            spx = yahoo.get_spx_quote() or {}
+            spx_price = spx.get('price')
+
+    try:
+        if conn is None:
+            raise RuntimeError('no db')
         if date_filter:
             # Fast path: query only trades for this specific date directly from DB
             rows = conn.execute(
@@ -2537,7 +2584,6 @@ def api_journal():
             open_pos, all_closed = classify_trades(conn, spx_price)
             all_trades = all_closed + open_pos
     except Exception:
-        conn = None
         all_trades = []
 
     # Filter by cutoff date (skip if all-time or single-date)
@@ -2571,22 +2617,8 @@ def api_journal():
     pct_max_count = 0
     exit_reasons = {}
 
-    # Build calendar cache: look up FRED events for each unique trade date
-    # so journal entries show economic events even if the DB column is NULL
-    _econ_cache = {}
-    try:
-        from src.data.fred_calendar import get_calendar_events as _get_cal
-        _trade_dates = {(t.get('entry_time') or '')[:10] for t in all_trades}
-        _trade_dates.discard('')
-        if _trade_dates:
-            _min_d = min(_trade_dates)
-            _max_d = max(_trade_dates)
-            _cal_result = _get_cal(from_date=_min_d, to_date=_max_d)
-            for ev in _cal_result.get('events', []):
-                if ev.get('impact') == 'high':
-                    _econ_cache.setdefault(ev['date'], []).append(ev['event'])
-    except Exception:
-        pass
+    # Look up FRED events from the broad in-memory cache
+    _econ_cache = _get_econ_events_cached()
 
     for trade in all_trades:
         # Correlate with signal
