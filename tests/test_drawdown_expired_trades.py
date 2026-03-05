@@ -168,7 +168,7 @@ class TestDailyDrawdownExcludesYesterday:
         conn = sqlite3.connect(db_path, timeout=10)
         row = conn.execute(
             "SELECT COALESCE(SUM(pnl), 0.0) FROM trades "
-            "WHERE DATE(entry_time) = ? AND status IN ('closed', 'expired')",
+            "WHERE SUBSTR(entry_time, 1, 10) = ? AND status IN ('closed', 'expired')",
             (today_str,),
         ).fetchone()
         conn.close()
@@ -188,7 +188,7 @@ class TestDailyDrawdownExcludesYesterday:
         conn = sqlite3.connect(db_path, timeout=10)
         row = conn.execute(
             "SELECT COALESCE(SUM(pnl), 0.0) FROM trades "
-            "WHERE DATE(entry_time) = ? AND status IN ('closed', 'expired')",
+            "WHERE SUBSTR(entry_time, 1, 10) = ? AND status IN ('closed', 'expired')",
             (today_str,),
         ).fetchone()
         conn.close()

@@ -638,12 +638,12 @@ def _build_portfolio_status(state_path=None, db_path=None):
             conn_counts.row_factory = sqlite3.Row
             rows = conn_counts.execute(
                 "SELECT strategy_type, COUNT(*) FROM trades "
-                "WHERE DATE(entry_time) = ? GROUP BY strategy_type",
+                "WHERE SUBSTR(entry_time, 1, 10) = ? GROUP BY strategy_type",
                 (today_str,),
             ).fetchall()
             pnl_row = conn_counts.execute(
                 "SELECT COALESCE(SUM(pnl), 0.0) FROM trades "
-                "WHERE DATE(entry_time) = ? AND status IN ('closed', 'expired')",
+                "WHERE SUBSTR(entry_time, 1, 10) = ? AND status IN ('closed', 'expired')",
                 (today_str,),
             ).fetchone()
             conn_counts.close()
@@ -2852,7 +2852,7 @@ def api_debug_calendar_day():
         """SELECT id, entry_time, exit_time, status, strategy_type,
                   pnl, credit_received
            FROM trades
-           WHERE DATE(entry_time) = ? OR DATE(exit_time) = ?""",
+           WHERE SUBSTR(entry_time, 1, 10) = ? OR SUBSTR(exit_time, 1, 10) = ?""",
         (date, date)
     ).fetchall()
     raw = [dict(r) for r in raw_rows]
@@ -2861,9 +2861,9 @@ def api_debug_calendar_day():
     grouped_rows = conn.execute(
         """SELECT entry_time, exit_time, pnl, strategy_type, status,
                   direction, credit_received, quantity,
-                  DATE(entry_time) as trade_date
+                  SUBSTR(entry_time, 1, 10) as trade_date
            FROM trades
-           WHERE DATE(entry_time) = ?""",
+           WHERE SUBSTR(entry_time, 1, 10) = ?""",
         (date,)
     ).fetchall()
 
@@ -2945,9 +2945,9 @@ def api_journal_calendar():
         rows = conn.execute(
             """SELECT entry_time, exit_time, pnl, strategy_type, status,
                       direction, credit_received, quantity,
-                      DATE(entry_time) as trade_date
+                      SUBSTR(entry_time, 1, 10) as trade_date
                FROM trades
-               WHERE DATE(entry_time) >= ? AND DATE(entry_time) < ?""",
+               WHERE SUBSTR(entry_time, 1, 10) >= ? AND SUBSTR(entry_time, 1, 10) < ?""",
             (first_day, last_day)
         ).fetchall()
 
@@ -3716,7 +3716,7 @@ def api_stale_positions():
             "SELECT id, entry_time, direction, short_strike, long_strike, "
             "credit_received, quantity, strategy_type "
             "FROM trades WHERE status = 'active' "
-            "AND DATE(entry_time) < ? ORDER BY entry_time",
+            "AND SUBSTR(entry_time, 1, 10) < ? ORDER BY entry_time",
             (today_str,)
         ).fetchall()
         conn.close()

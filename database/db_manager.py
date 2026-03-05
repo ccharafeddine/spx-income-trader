@@ -296,7 +296,7 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT * FROM trades 
-                WHERE DATE(entry_time) = ?
+                WHERE SUBSTR(entry_time, 1, 10) = ?
                 ORDER BY entry_time
             """, (trade_date,))
             
@@ -315,7 +315,7 @@ class DatabaseManager:
             cursor.execute("""
                 SELECT strategy_type, COUNT(*) as cnt
                 FROM trades
-                WHERE DATE(entry_time) = ?
+                WHERE SUBSTR(entry_time, 1, 10) = ?
                 GROUP BY strategy_type
             """, (trade_date,))
             return {row[0]: row[1] for row in cursor.fetchall()}
@@ -334,7 +334,7 @@ class DatabaseManager:
                     COALESCE(SUM(CASE WHEN status = 'closed' AND pnl > 0 THEN 1 ELSE 0 END), 0) as wins,
                     COALESCE(SUM(CASE WHEN status = 'closed' AND pnl < 0 THEN 1 ELSE 0 END), 0) as losses
                 FROM trades
-                WHERE DATE(entry_time) = ?
+                WHERE SUBSTR(entry_time, 1, 10) = ?
             """, (trade_date,))
             row = cursor.fetchone()
             return {'trades_count': row[0], 'realized_pnl': row[1], 'wins': row[2], 'losses': row[3]}
@@ -354,7 +354,7 @@ class DatabaseManager:
                     MAX(pnl) as largest_win,
                     MIN(pnl) as largest_loss
                 FROM trades
-                WHERE DATE(entry_time) = ? AND status = 'closed'
+                WHERE SUBSTR(entry_time, 1, 10) = ? AND status = 'closed'
             """, (trade_date,))
             
             stats = cursor.fetchone()
