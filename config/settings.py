@@ -416,7 +416,7 @@ def load_strategy_params():
             }
         }
 
-    with open(params_file, 'r') as f:
+    with open(params_file, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f)
 
 STRATEGY_PARAMS = load_strategy_params()

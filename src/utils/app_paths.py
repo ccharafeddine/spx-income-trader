@@ -87,15 +87,15 @@ def _merge_config_updates(user_path: Path, default_path: Path) -> None:
     Only adds missing keys; never overwrites existing user values.
     Logs every newly added field.
     """
-    with open(default_path, 'r') as f:
+    with open(default_path, 'r', encoding='utf-8') as f:
         defaults = yaml.safe_load(f) or {}
-    with open(user_path, 'r') as f:
+    with open(user_path, 'r', encoding='utf-8') as f:
         user_config = yaml.safe_load(f) or {}
 
     added = _deep_merge_missing(user_config, defaults)
 
     if added:
-        with open(user_path, 'w') as f:
+        with open(user_path, 'w', encoding='utf-8') as f:
             yaml.dump(user_config, f, default_flow_style=False, sort_keys=False)
         for field in added:
             msg = f"Config updated - added new field: {field} (default value applied)"
