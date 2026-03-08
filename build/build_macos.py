@@ -51,6 +51,7 @@ DATA_FILES = [
     ]),
     ("config", [
         str(PROJECT_ROOT / "config" / "strategy_params.yaml"),
+        str(PROJECT_ROOT / "config" / "economic_calendar.json"),
     ]),
     ("assets", [
         str(ICON_PNG),
@@ -105,11 +106,13 @@ PY2APP_OPTIONS = {
         "database",
         # Third-party
         "flask",
+        "werkzeug",
         "jinja2",
         "sqlalchemy",
         "keyring",
         "yaml",
         "engineio",
+        "socketio",
         "requests",
         "requests_oauthlib",
         "platformdirs",
@@ -120,6 +123,8 @@ PY2APP_OPTIONS = {
         "PIL",
         "plotly",
         "reportlab",
+        "pandas",
+        "numpy",
         # Schwab broker
         "schwab",
         "authlib",
@@ -128,10 +133,13 @@ PY2APP_OPTIONS = {
     "includes": [
         "keyring.backends",
         "keyring.backends.macOS",
+        "keyring.backends.null",
         "webview",
         "engineio.async_drivers.threading",
         "jinja2.ext",
         "sqlalchemy.dialects.sqlite",
+        "werkzeug.serving",
+        "werkzeug.middleware",
     ],
     "excludes": [
         "pytest", "pytest_cov", "_pytest",
@@ -545,6 +553,7 @@ def verify():
         "dashboard/templates/settings.html",
         "dashboard/templates/setup.html",
         "config/strategy_params.yaml",
+        "config/economic_calendar.json",
     ]
     for rel in expected:
         full = resources / rel

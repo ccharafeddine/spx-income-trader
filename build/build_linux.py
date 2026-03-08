@@ -125,6 +125,8 @@ DATA_FILES = [
     (PROJECT_ROOT / "dashboard" / "templates" / "setup.html",    "dashboard/templates"),
     # Strategy config (bundled default)
     (PROJECT_ROOT / "config" / "strategy_params.yaml",           "config"),
+    # Economic calendar (static event data used by src/data/economic_calendar.py)
+    (PROJECT_ROOT / "config" / "economic_calendar.json",         "config"),
 ]
 
 # Include icon in bundle
@@ -190,6 +192,14 @@ HIDDEN_IMPORTS = [
     # GTK / GI (pywebview backend)
     "gi",
     "gi.repository",
+    # PDF tear sheet generation
+    "reportlab",
+    "reportlab.lib",
+    "reportlab.platypus",
+    "reportlab.graphics",
+    # Backtest engine
+    "pandas",
+    "numpy",
 ]
 
 # Packages whose submodules PyInstaller should collect (dynamic imports)
@@ -202,6 +212,7 @@ COLLECT_SUBMODULES = [
     "pystray",
     "webview",
     "schwab",
+    "reportlab",
 ]
 
 # Packages to exclude (dev-only, not needed at runtime)
@@ -212,6 +223,7 @@ EXCLUDES = [
     "pytest_cov",
     "tkinter",
     "matplotlib",
+    "scipy",
 ]
 
 # ---------------------------------------------------------------------------
@@ -323,6 +335,7 @@ def verify():
         "_internal/dashboard/templates/settings.html",
         "_internal/dashboard/templates/setup.html",
         "_internal/config/strategy_params.yaml",
+        "_internal/config/economic_calendar.json",
     ]
     for rel in expected_data:
         full = app_dir / rel
