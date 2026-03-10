@@ -32,6 +32,16 @@ if sys.stderr is None:
 
 _CRASH_LOG = os.path.join(os.path.expanduser('~'), 'spx_crash.log')
 
+# Set Windows AppUserModelID so the taskbar shows our icon, not python.exe's
+if sys.platform == 'win32':
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            'SPXIncomeTrader.TheDailyMelt.1'
+        )
+    except Exception:
+        pass
+
 try:
     import signal
     import socket

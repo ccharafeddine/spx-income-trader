@@ -219,7 +219,7 @@ class NotificationManager:
                 'title': subject,
                 'description': message,
                 'color': color,
-                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'timestamp': datetime.now(pytz.timezone('America/New_York')).isoformat(),
                 'footer': {'text': self._footer_text()},
             }]
         }
@@ -254,7 +254,7 @@ class NotificationManager:
             'title': subject,
             'description': description,
             'color': color,
-            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'timestamp': datetime.now(pytz.timezone('America/New_York')).isoformat(),
             'footer': {'text': self._footer_text()},
         }
         if fields:
@@ -277,7 +277,7 @@ class NotificationManager:
             'subject': subject,
             'message': message,
             'level': level,
-            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'timestamp': datetime.now(pytz.timezone('America/New_York')).isoformat(),
             'source': 'The Daily Melt',
         }
         try:

@@ -35,7 +35,23 @@ body {
   font-size: 14px;
   line-height: 1.6;
   padding: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Scrollbar styling */
+body::-webkit-scrollbar {
+  width: 8px;
+}
+body::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+body::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+body::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
 }
 
 /* Header */
@@ -97,7 +113,7 @@ header {
 .page-wrapper {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 53px);
+  min-height: calc(100vh - 53px);
   padding: 10px 8px;
   gap: 10px;
 }

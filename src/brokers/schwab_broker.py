@@ -807,6 +807,6 @@ class SchwabBroker(BrokerInterface):
 
         return {
             'net_account_value': float(balances.get('liquidationValue', 0) or 0),
-            'cash_available': float(balances.get('availableFunds', 0) or 0),
+            'cash_available': float(balances.get('cashBalance', 0) or 0),
             'buying_power': float(balances.get('buyingPower', 0) or 0),
         }

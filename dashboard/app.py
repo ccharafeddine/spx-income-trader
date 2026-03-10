@@ -1368,10 +1368,8 @@ def auth_schwab_complete():
         def token_write_func(token_data, *args, **kwargs):
             with open(token_path, 'w') as f:
                 json.dump(token_data, f, indent=2)
-            try:
-                os.chmod(token_path, 0o600)
-            except OSError:
-                pass
+            from src.brokers.schwab_auth import _restrict_file_permissions
+            _restrict_file_permissions(token_path)
 
         schwab_auth.client_from_received_url(
             api_key=schwab_creds.get('app_key', ''),
@@ -1524,6 +1522,17 @@ def api_status():
             'total_return_pct': 0, 'daily_pnl': 0, 'positions': [],
             'closed_trades': [],
         }
+
+    # In live mode, fetch actual cash balance from broker
+    if mode == 'LIVE':
+        try:
+            settings = _load_settings()
+            from src.brokers.broker_factory import get_broker
+            broker = get_broker(settings)
+            balance_data = broker.get_account_balance()
+            account['current_balance'] = round(float(balance_data.get('cash_available', 0)), 2)
+        except Exception as e:
+            logger.debug(f"Could not fetch live cash balance: {e}")
 
     # Today's summary (after market close)
     today_summary = None
@@ -5522,7 +5531,8 @@ def api_set_trading_mode():
         try:
             from src.brokers.broker_factory import get_broker
             broker = get_broker(settings)
-            broker.connect()
+            if hasattr(broker, 'connect'):
+                broker.connect()
             balance_data = broker.get_account_balance()
             live_balance = float(balance_data.get('net_account_value', 0))
             if live_balance <= 0:

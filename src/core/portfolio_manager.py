@@ -98,6 +98,8 @@ class PortfolioManager:
         drawdown_limits: Optional[Dict] = None,
         # Database path for drawdown backfill
         db_path: Optional[str] = None,
+        # Broker reference for live cash sufficiency checks
+        broker=None,
     ):
         self.account_size = account_size
         self.max_total_positions = max_total_positions
@@ -111,6 +113,9 @@ class PortfolioManager:
         self.spread_width = spread_width
         self.min_contracts = min_contracts
         self.max_contracts = max_contracts
+
+        # Broker reference for live cash sufficiency checks (None in dry-run/backtest)
+        self.broker = broker
 
         # Calculate actual dollar limit from percentage
         self.max_daily_loss = self.account_size * (self.max_daily_loss_pct / 100)
@@ -261,6 +266,26 @@ class PortfolioManager:
         max_daily_risk = self.account_size * (self.max_daily_risk_pct / 100)
         if self.daily_risk_used + total_risk > max_daily_risk:
             return False, f"Would exceed daily risk limit (${max_daily_risk:.0f})"
+
+        # Cash sufficiency check (live mode only)
+        # For non-margin accounts, the broker requires enough cash to cover
+        # the max risk (collateral) of the spread. Without sufficient cash,
+        # the broker will reject the order.
+        if self.broker is not None:
+            try:
+                from src.brokers.dry_run_broker import DryRunBroker
+                if not isinstance(self.broker, DryRunBroker):
+                    balance = self.broker.get_account_balance()
+                    cash = float(balance.get('cash_available', 0))
+                    if cash < total_risk:
+                        return False, (
+                            f"Insufficient cash: ${cash:,.2f} available, "
+                            f"${total_risk:,.2f} required "
+                            f"({contracts} contracts x ${max_risk_per_contract:,.2f} max risk)"
+                        )
+            except Exception as e:
+                logger.warning(f"Cash sufficiency check failed: {e}")
+                return False, f"Cannot verify cash availability: {e}"
 
         return True, "Approved"
 

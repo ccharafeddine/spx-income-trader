@@ -748,6 +748,7 @@ class TestSchwabAccountBalance:
             'securitiesAccount': {
                 'currentBalances': {
                     'liquidationValue': 75000.50,
+                    'cashBalance': 50000.00,
                     'availableFunds': 50000.00,
                     'buyingPower': 100000.00,
                 }

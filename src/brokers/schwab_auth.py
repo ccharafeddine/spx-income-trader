@@ -248,12 +248,28 @@ class SchwabAuth:
 
         # Restrict token files to owner-only read/write
         for path in [self._meta_path, self.token_path]:
-            try:
-                os.chmod(path, 0o600)
-            except OSError:
-                pass  # Windows may not support Unix permissions
+            _restrict_file_permissions(path)
 
         logger.info("Token metadata written")
+
+
+def _restrict_file_permissions(path: str) -> None:
+    """Restrict a file to owner-only access (cross-platform)."""
+    try:
+        if sys.platform == 'win32':
+            import subprocess
+            # Remove inherited ACLs and grant only current user full control
+            username = os.environ.get('USERNAME', '')
+            if username:
+                subprocess.run(
+                    ['icacls', str(path), '/inheritance:r',
+                     '/grant:r', f'{username}:(R,W)'],
+                    capture_output=True, timeout=10,
+                )
+        else:
+            os.chmod(path, 0o600)
+    except Exception as e:
+        logger.debug(f"Could not restrict permissions on {path}: {e}")
 
 
 def _get_keyring_credential(key: str) -> Optional[str]:

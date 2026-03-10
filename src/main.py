@@ -335,6 +335,8 @@ class TradingBot:
             drawdown_limits=portfolio_cfg.get('drawdown_limits'),
             # Database path for drawdown backfill
             db_path=DATABASE_PATH,
+            # Broker for live cash sufficiency checks
+            broker=self.broker,
         )
 
         logger.info("TradingBot initialized")
@@ -1329,8 +1331,89 @@ class TradingBot:
                 self.portfolio.max_daily_loss_pct = new_pct
                 self.portfolio.max_daily_loss = self.portfolio.account_size * (new_pct / 100)
                 logger.info(f"Daily loss limit updated: {new_pct}% (${self.portfolio.max_daily_loss:.0f})")
+
+            # Hot-reload position sizing parameters
+            for attr, key, default in [
+                ('daily_contracts', 'daily_contracts', 7),
+                ('swing_contracts', 'swing_contracts', 2),
+                ('max_contracts', 'max_contracts', 10),
+                ('min_contracts', 'min_contracts', 1),
+            ]:
+                new_val = portfolio_cfg.get(key, default)
+                if new_val != getattr(self.portfolio, attr):
+                    old_val = getattr(self.portfolio, attr)
+                    setattr(self.portfolio, attr, new_val)
+                    logger.info(f"Position sizing updated: {attr} {old_val} → {new_val}")
+
+            # Hot-reload strategy parameters
+            strat_cfg = params.get('strategy', {})
+            new_sw = strat_cfg.get('spread_width', 5.0)
+            if new_sw != self.strategy.spread_width:
+                self.strategy.spread_width = new_sw
+                self.portfolio.spread_width = new_sw
+                logger.info(f"Spread width updated: ${new_sw}")
+
+            new_pt = strat_cfg.get('profit_target_pct', 80.0)
+            if new_pt / 100.0 != self.strategy.profit_target:
+                self.strategy.profit_target = new_pt / 100.0
+                logger.info(f"Profit target updated: {new_pt}%")
+
+            execution_cfg = params.get('execution', {})
+            new_mc = execution_cfg.get('min_credit', 1.0)
+            if new_mc != self.strategy.min_credit:
+                self.strategy.min_credit = new_mc
+                logger.info(f"Min credit updated: ${new_mc:.2f}")
+
+            # Hot-reload broker if active broker changed
+            self._check_broker_switch(params)
         except Exception as e:
             logger.warning(f"Failed to reload strategy flags: {e}")
+
+    def _check_broker_switch(self, params: dict):
+        """Switch broker at runtime if the active broker config changed."""
+        new_active = params.get('broker', {}).get('active', 'dry_run')
+        current_class = type(self.broker).__name__.lower()
+
+        # Map config names to class name substrings
+        broker_class_map = {
+            'dry_run': 'dryrun',
+            'schwab': 'schwab',
+            'etrade': 'etrade',
+            'ibkr': 'ibkr',
+        }
+        expected = broker_class_map.get(new_active, new_active)
+
+        if expected in current_class:
+            return  # No change
+
+        # Don't switch if there are open positions
+        if self.portfolio.active_positions:
+            logger.warning(
+                f"Broker switch to '{new_active}' deferred — "
+                f"{len(self.portfolio.active_positions)} open position(s)")
+            return
+
+        try:
+            # Disconnect old broker if supported
+            if hasattr(self.broker, 'disconnect'):
+                self.broker.disconnect()
+
+            # Create new broker
+            new_broker = get_broker(params)
+            if hasattr(new_broker, 'connect'):
+                new_broker.connect()
+
+            # Swap broker, price feed, and market data
+            self.broker = new_broker
+            self.portfolio.broker = new_broker
+            self.market_data = MarketDataFeed(new_broker)
+            self.price_feed = create_price_feed(
+                trading_mode='dry-run' if self.dry_run else 'live',
+                broker=new_broker,
+            )
+            logger.info(f"Broker switched to '{new_active}' at runtime")
+        except Exception as e:
+            logger.error(f"Broker switch to '{new_active}' failed: {e}")
 
     def _is_setup_window(self, dt: datetime) -> bool:
         """Check if we're in any active setup window (morning or afternoon)."""
