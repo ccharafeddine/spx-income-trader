@@ -1840,7 +1840,7 @@ function hideValidationPanel() {
 const VALIDATION_CHECKS = [
   {id: 'credentials', label: 'API Credentials Set'},
   {id: 'environment', label: 'Environment is Production'},
-  {id: 'connection', label: 'E*TRADE API Connection'},
+  {id: 'connection', label: 'Broker API Connection'},
   {id: 'options', label: 'SPX Options Permissions'},
   {id: 'contracts', label: 'Max Contracts Setting'},
   {id: 'account_size', label: 'Account Size Auto-Sync'},
@@ -1862,6 +1862,12 @@ function updateCheckRow(check) {
   if (!row) return;
   const icon = row.querySelector('.validation-icon');
   const detail = row.querySelector('.validation-detail');
+
+  // Update label if backend provides a dynamic one
+  if (check.label) {
+    const labelEl = row.querySelector('.validation-label');
+    if (labelEl) labelEl.textContent = check.label;
+  }
 
   icon.className = 'validation-icon';
   if (check.passed) {
