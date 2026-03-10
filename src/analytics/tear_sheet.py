@@ -51,6 +51,7 @@ _EXIT_REASON_LABELS = {
     'tnt_target_hit': 'TNT Target Hit',
     'tnt_stop_hit': 'TNT Stop Loss',
     'tnt_max_hold': 'TNT Max Hold (7 days)',
+    'tnt_weekend_hold_prevention': 'TNT Weekend Hold Prevention',
     'expired_at_startup': 'Expired (Startup Recovery)',
     'direction_filter_up_day': 'Direction Filter (Up Day)',
     'unknown': 'Unknown',

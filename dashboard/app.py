@@ -4449,6 +4449,8 @@ def _normalize_exit_reason(raw):
         return 'tnt_stop_hit'
     if r in ('TNT: max_hold_exceeded', 'TNT:max_hold_exceeded', 'tnt_max_hold'):
         return 'tnt_max_hold'
+    if r in ('TNT: weekend_hold_prevention', 'TNT:weekend_hold_prevention', 'tnt_weekend_hold_prevention', 'weekend_hold_prevention'):
+        return 'tnt_weekend_hold_prevention'
     if r.startswith('Expired (resolved at startup'):
         return 'expired_at_startup'
     return r
@@ -4464,6 +4466,7 @@ _EXIT_REASON_LABELS = {
     'tnt_target_hit': 'TNT Target Hit',
     'tnt_stop_hit': 'TNT Stop Loss',
     'tnt_max_hold': 'TNT Max Hold (7 days)',
+    'tnt_weekend_hold_prevention': 'TNT Weekend Hold Prevention',
     'expired_at_startup': 'Expired (Startup Recovery)',
     'unknown': 'Unknown',
 }
