@@ -24,7 +24,6 @@ logs/
 .idea/
 
 # Tokens and credentials
-config/strategy_params.yaml
 tokens/
 *.token
 *.pem
