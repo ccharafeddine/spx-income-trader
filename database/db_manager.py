@@ -122,6 +122,52 @@ class DatabaseManager:
                     except Exception as e:
                         logger.debug(f"Column {col_name} may already exist: {e}")
 
+            # Create supporting tables if not exist
+            cursor.executescript("""
+                CREATE TABLE IF NOT EXISTS system_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    event_type TEXT NOT NULL,
+                    message TEXT,
+                    details TEXT
+                );
+                CREATE TABLE IF NOT EXISTS daily_journal (
+                    date DATE PRIMARY KEY,
+                    bars_built INTEGER DEFAULT 0,
+                    pulse_bars_found INTEGER DEFAULT 0,
+                    signals_evaluated INTEGER DEFAULT 0,
+                    trades_entered INTEGER DEFAULT 0,
+                    spx_open REAL,
+                    spx_close REAL,
+                    spx_change_pct REAL,
+                    vix_level REAL,
+                    vix_regime TEXT,
+                    rejection_reasons TEXT,
+                    market_context TEXT,
+                    no_trade_summary TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS daily_stats (
+                    date TEXT PRIMARY KEY,
+                    bars_built INTEGER DEFAULT 0,
+                    pulse_bars INTEGER DEFAULT 0,
+                    signals INTEGER DEFAULT 0,
+                    trades_count INTEGER DEFAULT 0,
+                    wins INTEGER DEFAULT 0,
+                    losses INTEGER DEFAULT 0,
+                    pnl REAL DEFAULT 0.0
+                );
+                CREATE TABLE IF NOT EXISTS journal_notes (
+                    trade_id TEXT PRIMARY KEY,
+                    rating INTEGER DEFAULT NULL,
+                    notes TEXT DEFAULT '',
+                    tags TEXT DEFAULT '[]',
+                    flagged INTEGER DEFAULT 0,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
             # Create indexes if not exist
             try:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_strategy_type ON trades(strategy_type)")
