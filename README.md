@@ -230,7 +230,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 ### Discord Notifications
 - Bot startup: mode, equity, open positions, ET time
 - Market open (9:30 AM ET): SPX price, VIX level and regime, carry-over positions
-- Hourly market update (top of each hour during market hours): SPX price and session change, VIX, session high/low range, bars built, pulse bars detected, open position details (strikes, unrealized P&L, time held), next bar time
+- Market update every 30 minutes (aligned with bar boundaries at :00 and :30 during market hours): SPX price and session change, VIX, session high/low range, bars built, pulse bars detected, open position details (strikes, unrealized P&L, time held), next bar time
 - Trade entry: strategy, direction, strikes, credit per contract, total credit, quantity, breakeven, max risk, expiry
 - Trade exit: strategy, direction, strikes, P&L, exit reason, hold duration
 - End of day summary: trades (W/L), daily/weekly/monthly P&L, SPX close and session range, equity, win rate, streak, open swing positions, no-trade reason with pulse bar count and VIX context
@@ -577,7 +577,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 - VIX data provider multi-source fallback chains
 - Price feed health monitoring and stale detection
 - Daily journal persistence and API endpoints
-- Notification delivery (Slack, Discord, email, webhook, hourly updates, EOD summary, SPX/VIX enrichment)
+- Notification delivery (Slack, Discord, email, webhook, 30-min market updates, EOD summary, SPX/VIX enrichment)
 - Demo mode (recording, replay, Flask integration)
 - Session recording (fixed filename mode, start/stop lifecycle, dashboard list/load routes, path traversal protection)
 - Trade reconciliation (DB vs. broker comparison, mismatch detection)

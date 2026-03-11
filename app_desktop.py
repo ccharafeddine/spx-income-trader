@@ -508,6 +508,7 @@ class DesktopApp:
             strategy = SPXIncomeStrategy()
             db_manager = DatabaseManager(DATABASE_PATH)
             notifier = NotificationManager()
+            notifier.mode = 'dry-run' if dry_run else 'live'
 
             bot = TradingBot(
                 broker, strategy, db_manager, notifier,

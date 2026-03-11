@@ -1,4 +1,5 @@
 import sqlite3
+import time as _time
 from datetime import datetime, date
 from typing import List, Optional, Dict
 import json
@@ -29,9 +30,10 @@ class DatabaseManager:
         cls(db_path)
     
     def _get_connection(self):
-        """Get database connection with WAL mode and timeout for concurrent access."""
+        """Get database connection with WAL mode and busy timeout for concurrent access."""
         conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=10)
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
         return conn
     
     def _init_db(self):
@@ -288,6 +290,36 @@ class DatabaseManager:
 
             conn.commit()
             logger.debug(f"Trade {trade.id} saved to database")
+
+    def save_trade_with_retry(self, trade, context: Optional[Dict] = None,
+                              max_attempts: int = 3,
+                              delays: tuple = (0.1, 0.5, 1.0)):
+        """Save trade with exponential backoff retries for lock contention.
+
+        This wraps save_trade() with retries so that transient 'database is
+        locked' errors from concurrent dashboard reads don't orphan live
+        trades.  Raises the last exception if all attempts fail.
+        """
+        last_err = None
+        for attempt in range(max_attempts):
+            try:
+                self.save_trade(trade, context=context)
+                if attempt > 0:
+                    logger.info(
+                        f"save_trade succeeded on attempt {attempt + 1} "
+                        f"for trade {trade.id}"
+                    )
+                return  # success
+            except Exception as e:
+                last_err = e
+                if attempt < max_attempts - 1:
+                    delay = delays[attempt] if attempt < len(delays) else delays[-1]
+                    logger.warning(
+                        f"save_trade attempt {attempt + 1}/{max_attempts} failed "
+                        f"for trade {trade.id}: {e}. Retrying in {delay}s..."
+                    )
+                    _time.sleep(delay)
+        raise last_err
 
     def update_trade_close(self, trade):
         """Update trade row on close/exit using UPDATE (not INSERT OR REPLACE).

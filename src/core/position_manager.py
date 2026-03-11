@@ -59,6 +59,27 @@ class PositionManager:
         self._prev_close = prev_close
         logger.info(f"Daily cache set: day_open=${day_open:,.2f}, prev_close=${prev_close:,.2f}")
 
+    def _send_db_failure_alert(self, trade, error):
+        """Send a critical Discord notification when a DB write fails for a live trade."""
+        try:
+            from src.utils.notifications import NotificationManager, DISCORD_RED
+            notifier = NotificationManager()
+            notifier._send_rich(
+                subject="DATABASE WRITE FAILED — LIVE TRADE UNRECORDED",
+                message=(
+                    f"Trade {trade.id} is LIVE on broker but the database write "
+                    f"failed after all retries.\n"
+                    f"Direction: {trade.spread.direction.value}\n"
+                    f"Strikes: {trade.spread.short_leg.strike}/{trade.spread.long_leg.strike}\n"
+                    f"Error: {error}\n\n"
+                    f"**Action required:** Check DB locks and restart bot."
+                ),
+                level='critical',
+                color=DISCORD_RED,
+            )
+        except Exception as alert_err:
+            logger.error(f"Failed to send DB failure alert: {alert_err}")
+
     def _get_vix_price(self) -> Optional[float]:
         """Best-effort VIX price fetch. Returns None on failure."""
         try:
@@ -170,18 +191,56 @@ class PositionManager:
                     f"simulated chain may not reflect live pricing"
                 )
 
+            # ── Write PENDING record BEFORE placing broker order ──
+            # This ensures the DB knows about the trade even if the post-fill
+            # update fails, preventing orphaned live positions.
+            pending_trade_id = str(uuid.uuid4())
+            pending_trade = Trade(
+                id=pending_trade_id,
+                spread=spread,
+                status=TradeStatus.PENDING,
+                setup_bar=setup_bar,
+                entry_price=spread.credit_received,  # Estimated; updated on fill
+                entry_time=datetime.now(self.tz),
+                quantity=quantity,
+            )
+            pending_trade._strategy_type = strategy_type
+            try:
+                self.db.save_trade_with_retry(
+                    pending_trade,
+                    context={'strategy_type': strategy_type},
+                )
+                logger.info(f"Pending trade {pending_trade_id} written to DB")
+            except Exception as db_err:
+                logger.critical(
+                    f"Cannot write pending trade to DB: {db_err}. "
+                    f"Aborting entry to prevent unrecorded live trade."
+                )
+                self._db_write_failed = True
+                return None
+
             # Place order
             order_id = self.broker.place_spread_order(spread, quantity, metadata=bar_metadata)
-            
+
             # Wait briefly for fill
             import time
             time.sleep(2)
-            
+
             # Check order status
             order_status = self.broker.get_order_status(order_id)
-            
+
             if order_status['status'] != 'filled':
                 logger.error(f"Order not filled: {order_status['status']}")
+                # Clean up the pending record
+                try:
+                    pending_trade.status = TradeStatus.CANCELLED
+                    pending_trade.exit_price = 0.0
+                    pending_trade.exit_reason = f"Order not filled: {order_status['status']}"
+                    pending_trade.pnl = 0.0
+                    pending_trade.pnl_percent = 0.0
+                    self.db.update_trade_close(pending_trade)
+                except Exception:
+                    pass
                 return None
 
             # Track actual filled quantity
@@ -199,9 +258,9 @@ class PositionManager:
                     f"Proceeding with {actual_quantity} contracts."
                 )
 
-            # Create trade record
+            # Create trade record (reusing the pending ID so DB row is updated)
             trade = Trade(
-                id=str(uuid.uuid4()),
+                id=pending_trade_id,
                 spread=spread,
                 status=TradeStatus.ACTIVE,
                 setup_bar=setup_bar,
@@ -299,17 +358,20 @@ class PositionManager:
             except Exception as e:
                 logger.warning(f"Failed to build entry context: {e}")
 
-            # Save to database -- MUST succeed or we halt trading.
-            # The trade is already live on the broker (order filled above).
+            # Update the pending DB record with fill data (retry with backoff).
+            # The trade is already live on the broker (order filled above)
+            # AND has a pending record in the DB from before order placement.
             try:
-                self.db.save_trade(trade, context=entry_context)
+                self.db.save_trade_with_retry(trade, context=entry_context)
             except Exception as db_err:
                 logger.critical(
                     f"DATABASE WRITE FAILED for live trade {trade.id}: {db_err}. "
-                    f"Trade is LIVE on broker but NOT recorded. "
+                    f"Trade is LIVE on broker (pending record exists). "
                     f"Halting all further trading until resolved."
                 )
                 self._db_write_failed = True
+                # Send Discord alert so the operator knows immediately
+                self._send_db_failure_alert(trade, db_err)
                 # Trade stays in open_trades so it can still be monitored/closed
                 return trade
 

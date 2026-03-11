@@ -72,10 +72,17 @@ class TestSaveTradeExceptionHandling:
     """Verify enter_trade() survives save_trade() failures."""
 
     def test_save_trade_exception_returns_trade_and_halts(self):
-        """When save_trade() raises, trade is returned (it's live on broker)
-        and _db_write_failed is set to block future entries."""
+        """When save_trade() raises on the post-fill update, trade is returned
+        (it's live on broker) and _db_write_failed is set to block future entries."""
         pm, spread, bar, db = _make_pm_and_spread()
-        db.save_trade.side_effect = Exception("database is locked")
+        # First call (pending) succeeds, second call (fill update) fails
+        call_count = [0]
+        def fail_on_second(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] > 1:
+                raise Exception("database is locked")
+        db.save_trade.side_effect = fail_on_second
+        db.save_trade_with_retry.side_effect = lambda trade, **kw: db.save_trade(trade, context=kw.get('context'))
 
         with patch('time.sleep'):
             result = pm.enter_trade(spread, bar, quantity=1)
@@ -86,23 +93,45 @@ class TestSaveTradeExceptionHandling:
         assert pm._db_write_failed is True
 
     def test_save_trade_exception_keeps_trade_in_open_trades(self):
-        """Even when save_trade() fails, the trade is still in open_trades
-        so it can be monitored (it was already appended at line 208)."""
+        """Even when save_trade() fails on the fill update, the trade is still
+        in open_trades so it can be monitored."""
         pm, spread, bar, db = _make_pm_and_spread()
-        db.save_trade.side_effect = Exception("database is locked")
+        call_count = [0]
+        def fail_on_second(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] > 1:
+                raise Exception("database is locked")
+        db.save_trade.side_effect = fail_on_second
+        db.save_trade_with_retry.side_effect = lambda trade, **kw: db.save_trade(trade, context=kw.get('context'))
 
         with patch('time.sleep'):
             pm.enter_trade(spread, bar, quantity=1)
 
-        # Trade was appended to open_trades before save_trade was called
         assert len(pm.open_trades) == 1
 
+    def test_save_trade_pending_failure_aborts_entry(self):
+        """When save_trade() fails on the PENDING write (before broker order),
+        entry is aborted entirely — no broker order placed, no orphaned trade."""
+        pm, spread, bar, db = _make_pm_and_spread()
+        db.save_trade.side_effect = Exception("database is locked")
+        db.save_trade_with_retry.side_effect = lambda trade, **kw: db.save_trade(trade, context=kw.get('context'))
+
+        with patch('time.sleep'):
+            result = pm.enter_trade(spread, bar, quantity=1)
+
+        # No trade returned — entry aborted before broker order
+        assert result is None
+        assert pm._db_write_failed is True
+        # Broker was never called
+        pm.broker.place_spread_order.assert_not_called()
+
     def test_save_trade_system_exit_is_reraised(self):
-        """When save_trade() raises SystemExit (BaseException), the new
+        """When save_trade() raises SystemExit (BaseException), the outer
         BaseException handler logs it and re-raises so the caller can handle
-        cleanup. Previously this killed the bot thread silently."""
+        cleanup."""
         pm, spread, bar, db = _make_pm_and_spread()
         db.save_trade.side_effect = SystemExit(1)
+        db.save_trade_with_retry.side_effect = lambda trade, **kw: db.save_trade(trade, context=kw.get('context'))
 
         with patch('time.sleep'), pytest.raises(SystemExit):
             pm.enter_trade(spread, bar, quantity=1)
@@ -111,6 +140,7 @@ class TestSaveTradeExceptionHandling:
         """KeyboardInterrupt from save_trade() must propagate for clean shutdown."""
         pm, spread, bar, db = _make_pm_and_spread()
         db.save_trade.side_effect = KeyboardInterrupt()
+        db.save_trade_with_retry.side_effect = lambda trade, **kw: db.save_trade(trade, context=kw.get('context'))
 
         with patch('time.sleep'), pytest.raises(KeyboardInterrupt):
             pm.enter_trade(spread, bar, quantity=1)
