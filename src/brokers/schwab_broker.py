@@ -83,6 +83,8 @@ _SCHWAB_STATUS_MAP = {
     'PENDING_ACTIVATION': 'open',
     'QUEUED': 'open',
     'WORKING': 'open',
+    # Partial fill
+    'PARTIALLY_FILLED': 'partial',
     # Terminal states
     'FILLED': 'filled',
     'EXPIRED': 'expired',
@@ -97,6 +99,7 @@ _SCHWAB_STATUS_MAP = {
 # Reverse map: normalized lowercase -> OrderStatus enum
 _NORMALIZED_TO_ENUM = {
     'filled': OrderStatus.EXECUTED,
+    'partial': OrderStatus.PARTIAL,
     'open': OrderStatus.OPEN,
     'pending': OrderStatus.PENDING,
     'cancelled': OrderStatus.CANCELLED,
@@ -759,6 +762,22 @@ class SchwabBroker(BrokerInterface):
                     fill_price=fill_price,
                     filled_quantity=filled_qty,
                     message=f"Filled at ${fill_price:.2f}",
+                )
+
+            if order_status == OrderStatus.PARTIAL:
+                filled_qty = status.get('filled_quantity', 0)
+                fill_price = status.get('fill_price', 0)
+                logger.warning(
+                    f"Order {order_id} PARTIALLY filled: {filled_qty} contracts "
+                    f"@ ${fill_price:.2f}. Treating as filled."
+                )
+                return OrderResult(
+                    success=True,
+                    order_id=order_id,
+                    status=OrderStatus.EXECUTED,
+                    fill_price=fill_price,
+                    filled_quantity=filled_qty,
+                    message=f"Partially filled {filled_qty} @ ${fill_price:.2f}",
                 )
 
             if order_status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.EXPIRED):
