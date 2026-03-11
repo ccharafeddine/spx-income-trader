@@ -251,11 +251,11 @@ class BacktestBroker(BrokerInterface):
         return order_id
 
     def get_position_value(self, spread: CreditSpread) -> float:
-        """Get conservative cost to close using synthetic chain with ask-side pricing.
+        """Get cost to close using Black-Scholes mid-prices.
 
-        Uses the same Black-Scholes chain that models time value and bid-ask
-        spreads, so the valuation includes extrinsic value and reflects what
-        you'd actually pay to close the position.
+        Uses mid-prices (not ask-side) because the BidAskModel already
+        applies slippage separately at entry and exit execution.  Using
+        ask-side here would double-count the bid-ask spread.
 
         Returns per-share price (not multiplied by 100).
         """
@@ -268,13 +268,13 @@ class BacktestBroker(BrokerInterface):
 
             if chain and short_strike in chain and long_strike in chain:
                 if spread.direction == TradeDirection.BULLISH:
-                    short_ask = chain[short_strike]['put_ask']
-                    long_bid = chain[long_strike]['put_bid']
+                    short_mid = chain[short_strike]['put_last']
+                    long_mid = chain[long_strike]['put_last']
                 else:
-                    short_ask = chain[short_strike]['call_ask']
-                    long_bid = chain[long_strike]['call_bid']
+                    short_mid = chain[short_strike]['call_last']
+                    long_mid = chain[long_strike]['call_last']
 
-                return max(0.0, short_ask - long_bid)
+                return max(0.0, short_mid - long_mid)
         except Exception:
             pass
 
