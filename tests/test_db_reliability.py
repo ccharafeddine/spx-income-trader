@@ -164,16 +164,51 @@ class TestPendingTradeVisibility:
         assert open_trades[0]['id'] == trade.id
         assert open_trades[0]['status'] == 'pending'
 
-    def test_pending_trade_counted_in_daily_counts(self, tmp_path):
-        """get_daily_counts_by_strategy includes pending trades so
-        max_daily_trades limits are respected."""
+    def test_pending_trade_excluded_from_daily_counts(self, tmp_path):
+        """get_daily_counts_by_strategy excludes pending trades so a crash
+        between pending write and broker fill doesn't block the next entry."""
         db, _ = _make_db(tmp_path)
         trade = _make_trade(status='pending')
 
         db.save_trade(trade, context={'strategy_type': 'daily_income'})
 
         counts = db.get_daily_counts_by_strategy(datetime(2026, 3, 11).date())
-        assert counts.get('daily_income', 0) >= 1
+        assert counts.get('daily_income', 0) == 0, (
+            "Pending trades must NOT count toward daily limits"
+        )
+
+    def test_active_trade_counted_in_daily_counts(self, tmp_path):
+        """get_daily_counts_by_strategy includes active trades."""
+        db, _ = _make_db(tmp_path)
+        trade = _make_trade(status='active')
+
+        db.save_trade(trade, context={'strategy_type': 'daily_income'})
+
+        counts = db.get_daily_counts_by_strategy(datetime(2026, 3, 11).date())
+        assert counts.get('daily_income', 0) == 1
+
+    def test_cancelled_trade_excluded_from_daily_counts(self, tmp_path):
+        """Cancelled trades (unfilled orders) must not count toward daily limits."""
+        from src.models.trade import TradeStatus
+        db, _ = _make_db(tmp_path)
+        trade = _make_trade(status='active')
+        trade.status = TradeStatus.CANCELLED
+
+        db.save_trade(trade, context={'strategy_type': 'daily_income'})
+
+        counts = db.get_daily_counts_by_strategy(datetime(2026, 3, 11).date())
+        assert counts.get('daily_income', 0) == 0
+
+    def test_pending_excluded_from_daily_summary_count(self, tmp_path):
+        """get_daily_summary trades_count excludes pending records."""
+        db, _ = _make_db(tmp_path)
+        trade = _make_trade(status='pending')
+        db.save_trade(trade, context={'strategy_type': 'daily_income'})
+
+        summary = db.get_daily_summary(datetime(2026, 3, 11).date())
+        assert summary['trades_count'] == 0, (
+            "Pending trades must NOT inflate trades_count"
+        )
 
     def test_pending_upgraded_to_active_on_fill(self, tmp_path):
         """After fill, the pending record should be updated to active via
@@ -321,10 +356,10 @@ class TestDBFailureAlert:
 # ---------------------------------------------------------------------------
 
 class TestBusyTimeout:
-    """Verify that PRAGMA busy_timeout is set on DB connections."""
+    """Verify that PRAGMA busy_timeout is set on ALL DB connections."""
 
-    def test_db_manager_sets_busy_timeout(self, tmp_path):
-        """DatabaseManager connections should have busy_timeout = 5000."""
+    def test_db_manager_get_connection_sets_busy_timeout(self, tmp_path):
+        """DatabaseManager._get_connection should have busy_timeout = 5000."""
         db, _ = _make_db(tmp_path)
         conn = db._get_connection()
         try:
@@ -332,3 +367,158 @@ class TestBusyTimeout:
             assert result[0] == 5000
         finally:
             conn.close()
+
+    def test_db_manager_get_active_trades_raw_sets_busy_timeout(self, tmp_path):
+        """get_active_trades_raw uses a plain connection that must also set busy_timeout."""
+        db, db_path = _make_db(tmp_path)
+        # Verify by reading the source — the connection is created and closed internally,
+        # so we check the source code directly
+        src = Path(__file__).parent.parent / 'database' / 'db_manager.py'
+        source = src.read_text(encoding='utf-8')
+        lines = source.split('\n')
+        in_method = False
+        found_busy_timeout = False
+        for line in lines:
+            if 'def get_active_trades_raw' in line:
+                in_method = True
+            if in_method:
+                if 'busy_timeout' in line:
+                    found_busy_timeout = True
+                    break
+                if line.strip().startswith('def ') and 'get_active_trades_raw' not in line:
+                    break
+        assert found_busy_timeout, "get_active_trades_raw must set PRAGMA busy_timeout"
+
+    def test_pdt_tracker_sets_busy_timeout(self):
+        """PDT tracker connections should set busy_timeout."""
+        src = Path(__file__).parent.parent / 'src' / 'core' / 'pdt_tracker.py'
+        source = src.read_text(encoding='utf-8')
+        lines = source.split('\n')
+        in_method = False
+        found_busy_timeout = False
+        for line in lines:
+            if 'def _get_connection' in line:
+                in_method = True
+            if in_method:
+                if 'busy_timeout' in line:
+                    found_busy_timeout = True
+                    break
+                if line.strip().startswith('def ') and '_get_connection' not in line:
+                    break
+        assert found_busy_timeout, "pdt_tracker._get_connection must set PRAGMA busy_timeout"
+
+    def test_drawdown_manager_sets_busy_timeout(self):
+        """Drawdown manager backfill connection should set busy_timeout."""
+        src = Path(__file__).parent.parent / 'src' / 'core' / 'drawdown_manager.py'
+        source = src.read_text(encoding='utf-8')
+        assert 'busy_timeout' in source, (
+            "drawdown_manager.py must set PRAGMA busy_timeout on its connection"
+        )
+
+    def test_dashboard_no_inline_sqlite_connect(self):
+        """All dashboard connections must go through _open_db(), not raw sqlite3.connect().
+        The only sqlite3.connect() allowed is inside _open_db() itself."""
+        src = Path(__file__).parent.parent / 'dashboard' / 'app.py'
+        source = src.read_text(encoding='utf-8')
+        lines = source.split('\n')
+        violations = []
+        in_open_db = False
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if 'def _open_db(' in stripped:
+                in_open_db = True
+            if in_open_db and stripped.startswith('def ') and '_open_db' not in stripped:
+                in_open_db = False
+            if 'sqlite3.connect(' in stripped and not in_open_db:
+                violations.append(f"Line {i}: {stripped}")
+        assert violations == [], (
+            "All dashboard DB connections must use _open_db() or get_db_connection(). "
+            f"Found raw sqlite3.connect() at:\n" + "\n".join(violations)
+        )
+
+
+# ---------------------------------------------------------------------------
+# 6. Token health check at startup
+# ---------------------------------------------------------------------------
+
+class TestTokenHealthAtStartup:
+    """Verify app_desktop.py checks token health immediately at startup."""
+
+    def test_check_token_health_called_at_startup(self):
+        """app_desktop.py must call check_token_health() after is_authenticated()
+        succeeds, before creating the TradingBot."""
+        app_path = Path(__file__).parent.parent / 'app_desktop.py'
+        source = app_path.read_text(encoding='utf-8')
+
+        # Verify check_token_health appears in the schwab startup path
+        assert 'check_token_health' in source, (
+            "app_desktop.py must call check_token_health() at startup"
+        )
+
+        # Verify ordering: is_authenticated → check_token_health → TradingBot
+        lines = source.split('\n')
+        in_run_bot = False
+        auth_line = None
+        health_line = None
+        bot_line = None
+
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if 'def _run_bot(' in stripped:
+                in_run_bot = True
+            if not in_run_bot:
+                continue
+            if stripped.startswith('def ') and '_run_bot' not in stripped:
+                break
+            if 'is_authenticated()' in stripped and auth_line is None:
+                auth_line = i
+            if 'check_token_health()' in stripped and health_line is None:
+                health_line = i
+            if 'bot = TradingBot(' in stripped:
+                bot_line = i
+
+        assert auth_line is not None, "is_authenticated() must be called"
+        assert health_line is not None, "check_token_health() must be called"
+        assert bot_line is not None, "TradingBot must be created"
+        assert auth_line < health_line < bot_line, (
+            f"Order must be: is_authenticated (L{auth_line}) → "
+            f"check_token_health (L{health_line}) → "
+            f"TradingBot (L{bot_line})"
+        )
+
+    def test_expired_token_aborts_startup(self):
+        """When check_token_health returns 'expired', the startup path
+        must contain a return statement to abort bot creation."""
+        app_path = Path(__file__).parent.parent / 'app_desktop.py'
+        source = app_path.read_text(encoding='utf-8')
+
+        # The expired branch must have a return to abort
+        lines = source.split('\n')
+        in_expired_block = False
+        found_return = False
+        for line in lines:
+            stripped = line.strip()
+            if "'expired'" in stripped and 'action' in stripped:
+                in_expired_block = True
+            if in_expired_block:
+                if stripped == 'return':
+                    found_return = True
+                    break
+                # If we hit another elif/else/def, we've left the block
+                if stripped.startswith(('elif ', 'else:', 'def ')):
+                    break
+
+        assert found_return, (
+            "When token health action is 'expired', app_desktop.py must return "
+            "to abort bot startup"
+        )
+
+    def test_expired_token_sends_discord_alert(self):
+        """The expired token path must send a Discord notification."""
+        app_path = Path(__file__).parent.parent / 'app_desktop.py'
+        source = app_path.read_text(encoding='utf-8')
+
+        # Find the expired block and verify it sends a notification
+        assert 'SCHWAB TOKEN EXPIRED' in source, (
+            "Expired token path must send a Discord alert with clear message"
+        )

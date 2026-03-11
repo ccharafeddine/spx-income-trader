@@ -498,6 +498,45 @@ class DesktopApp:
                             logger.error("Schwab authentication failed. Run auth script first.")
                             return
                         logger.info("Schwab authentication verified")
+                        # Check refresh token health immediately (don't wait for 60-min loop)
+                        try:
+                            token_health = broker.auth.check_token_health()
+                            if token_health.get('action') == 'expired':
+                                logger.error(
+                                    "Schwab refresh token has EXPIRED. "
+                                    "Re-authenticate before trading: python -m src.brokers.schwab_auth"
+                                )
+                                # Send Discord alert before aborting
+                                try:
+                                    from src.utils.notifications import NotificationManager, DISCORD_RED
+                                    _notifier = NotificationManager()
+                                    _notifier._send_rich(
+                                        subject="SCHWAB TOKEN EXPIRED — BOT CANNOT TRADE",
+                                        message=(
+                                            "The Schwab refresh token has expired. "
+                                            "Re-authenticate immediately:\n"
+                                            "`python -m src.brokers.schwab_auth`"
+                                        ),
+                                        level='critical',
+                                        color=DISCORD_RED,
+                                    )
+                                except Exception:
+                                    pass
+                                return
+                            elif token_health.get('action') == 'critical':
+                                hrs = token_health.get('hours_remaining', 0)
+                                logger.error(
+                                    f"Schwab token expires in {hrs:.1f} hours! "
+                                    f"Re-authenticate soon."
+                                )
+                            elif token_health.get('action') == 'warn':
+                                hrs = token_health.get('hours_remaining', 0)
+                                logger.warning(
+                                    f"Schwab token expires in {hrs:.1f} hours. "
+                                    f"Plan to re-authenticate."
+                                )
+                        except Exception as e:
+                            logger.warning(f"Could not check token health: {e}")
                     elif active == 'etrade':
                         if not broker.auth.authenticate():
                             logger.error("E*TRADE authentication failed")

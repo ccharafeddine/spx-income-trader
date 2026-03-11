@@ -435,6 +435,21 @@ def detect_trading_mode():
     return 'UNKNOWN'
 
 
+def _open_db(path, row_factory=True):
+    """Open a SQLite connection with WAL mode and busy_timeout.
+
+    All dashboard database access should use this helper (or
+    get_db_connection for per-request caching) to ensure consistent
+    PRAGMA settings and avoid lock contention with the bot thread.
+    """
+    conn = sqlite3.connect(str(path), timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
+    if row_factory:
+        conn.row_factory = sqlite3.Row
+    return conn
+
+
 def get_db_connection():
     """Get a per-request SQLite connection (cached on Flask g).
 
@@ -444,11 +459,7 @@ def get_db_connection():
     thread.
     """
     if 'db_conn' not in g:
-        conn = sqlite3.connect(DATABASE_PATH, timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout = 5000")
-        conn.row_factory = sqlite3.Row
-        g.db_conn = conn
+        g.db_conn = _open_db(DATABASE_PATH)
     return g.db_conn
 
 
@@ -670,9 +681,7 @@ def _build_portfolio_status(state_path=None, db_path=None):
         daily_pnl_from_db = 0.0
         try:
             _db_path = db_path or DATABASE_PATH
-            conn_counts = sqlite3.connect(str(_db_path), timeout=10)
-            conn_counts.execute("PRAGMA journal_mode=WAL")
-            conn_counts.row_factory = sqlite3.Row
+            conn_counts = _open_db(_db_path)
             rows = conn_counts.execute(
                 "SELECT strategy_type, COUNT(*) FROM trades "
                 "WHERE SUBSTR(entry_time, 1, 10) = ? GROUP BY strategy_type",
@@ -3935,7 +3944,7 @@ def api_risk_status():
         db_path = Path(DATABASE_PATH)
         if db_path.exists():
             import sqlite3
-            conn = sqlite3.connect(str(db_path), timeout=10)
+            conn = _open_db(db_path, row_factory=False)
 
             # Diagnostic logging for streak debugging
             _total = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
@@ -4856,7 +4865,7 @@ def api_analytics():
             return jsonify({'success': False, 'error': 'run_id required'}), 400
         try:
             db_path = str(DB_PATH)
-            conn = sqlite3.connect(db_path, timeout=10)
+            conn = _open_db(db_path, row_factory=False)
             row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
             conn.close()
             if not row:
@@ -4894,9 +4903,7 @@ def api_analytics():
     # Live trades
     try:
         db_path = DATABASE_PATH
-        conn = sqlite3.connect(db_path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = _open_db(db_path)
         spx_quote = yahoo.get_spx_quote() or {}
         spx_price = spx_quote.get('price')
         _, closed_trades = classify_trades(conn, spx_price)
@@ -4923,7 +4930,7 @@ def api_analytics_execution():
             return jsonify({'success': False, 'error': 'run_id required'}), 400
         try:
             db_path = str(DB_PATH)
-            conn = sqlite3.connect(db_path, timeout=10)
+            conn = _open_db(db_path, row_factory=False)
             row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
             conn.close()
             if not row:
@@ -4939,9 +4946,7 @@ def api_analytics_execution():
     # Live trades
     try:
         db_path = DATABASE_PATH
-        conn = sqlite3.connect(db_path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = _open_db(db_path)
         spx_quote = yahoo.get_spx_quote() or {}
         spx_price = spx_quote.get('price')
         _, closed_trades = classify_trades(conn, spx_price)
@@ -4964,7 +4969,7 @@ def api_analytics_risk():
             return jsonify({'success': False, 'error': 'run_id required'}), 400
         try:
             db_path = str(DB_PATH)
-            conn = sqlite3.connect(db_path, timeout=10)
+            conn = _open_db(db_path, row_factory=False)
             row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
             conn.close()
             if not row:
@@ -4981,9 +4986,7 @@ def api_analytics_risk():
     # Live trades
     try:
         db_path = DATABASE_PATH
-        conn = sqlite3.connect(db_path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = _open_db(db_path)
         spx_quote = yahoo.get_spx_quote() or {}
         spx_price = spx_quote.get('price')
         _, closed_trades = classify_trades(conn, spx_price)
@@ -5015,7 +5018,7 @@ def api_analytics_attribution():
             return jsonify({'success': False, 'error': 'run_id required'}), 400
         try:
             db_path = str(DB_PATH)
-            conn = sqlite3.connect(db_path, timeout=10)
+            conn = _open_db(db_path, row_factory=False)
             row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
             conn.close()
             if not row:
@@ -5031,9 +5034,7 @@ def api_analytics_attribution():
     # Live trades
     try:
         db_path = DATABASE_PATH
-        conn = sqlite3.connect(db_path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = _open_db(db_path)
         spx_quote = yahoo.get_spx_quote() or {}
         spx_price = spx_quote.get('price')
         _, closed_trades = classify_trades(conn, spx_price)
@@ -5059,7 +5060,7 @@ def api_analytics_regime():
             return jsonify({'success': False, 'error': 'run_id required'}), 400
         try:
             db_path = str(DB_PATH)
-            conn = sqlite3.connect(db_path, timeout=10)
+            conn = _open_db(db_path, row_factory=False)
             row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
             conn.close()
             if not row:
@@ -5076,9 +5077,7 @@ def api_analytics_regime():
     # Live trades
     try:
         db_path = DATABASE_PATH
-        conn = sqlite3.connect(db_path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = _open_db(db_path)
         spx_quote = yahoo.get_spx_quote() or {}
         spx_price = spx_quote.get('price')
         _, closed_trades = classify_trades(conn, spx_price)
@@ -5129,7 +5128,7 @@ def api_analytics_bb():
             return jsonify({'success': False, 'error': 'run_id required'}), 400
         try:
             db_path = str(DB_PATH)
-            conn = sqlite3.connect(db_path, timeout=10)
+            conn = _open_db(db_path, row_factory=False)
             row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
             conn.close()
             if not row:
@@ -5146,9 +5145,7 @@ def api_analytics_bb():
     # Live trades
     try:
         db_path = DATABASE_PATH
-        conn = sqlite3.connect(db_path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = _open_db(db_path)
         spx_quote = yahoo.get_spx_quote() or {}
         spx_price = spx_quote.get('price')
         _, closed_trades = classify_trades(conn, spx_price)
@@ -5280,7 +5277,7 @@ def api_analytics_duration():
             return jsonify({'success': False, 'error': 'run_id required'}), 400
         try:
             db_path = str(DB_PATH)
-            conn = sqlite3.connect(db_path, timeout=10)
+            conn = _open_db(db_path, row_factory=False)
             row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
             conn.close()
             if not row:
@@ -5296,9 +5293,7 @@ def api_analytics_duration():
     # Live trades
     try:
         db_path = DATABASE_PATH
-        conn = sqlite3.connect(db_path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = _open_db(db_path)
         spx_quote = yahoo.get_spx_quote() or {}
         spx_price = spx_quote.get('price')
         _, closed_trades = classify_trades(conn, spx_price)
@@ -5327,7 +5322,7 @@ def api_export_tearsheet():
             if not run_id:
                 return jsonify({'success': False, 'error': 'run_id required'}), 400
             db_path = str(DB_PATH)
-            conn = sqlite3.connect(db_path, timeout=10)
+            conn = _open_db(db_path, row_factory=False)
             row = conn.execute("SELECT full_results FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
             conn.close()
             if not row:
@@ -5337,9 +5332,7 @@ def api_export_tearsheet():
         else:
             report = None
             db_path = DATABASE_PATH
-            conn = sqlite3.connect(db_path, timeout=10)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
+            conn = _open_db(db_path)
             spx_quote = yahoo.get_spx_quote() or {}
             spx_price = spx_quote.get('price')
             _, trades = classify_trades(conn, spx_price)
@@ -6104,8 +6097,7 @@ def _init_backtest_table():
     """Create backtest_runs table if it doesn't exist."""
     db_path = str(DB_PATH)
     try:
-        conn = sqlite3.connect(db_path, timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = _open_db(db_path, row_factory=False)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS backtest_runs (
                 id TEXT PRIMARY KEY,
@@ -6255,8 +6247,7 @@ def api_backtest_run():
             # Save to DB
             try:
                 db_path = str(DB_PATH)
-                conn = sqlite3.connect(db_path, timeout=10)
-                conn.execute("PRAGMA journal_mode=WAL")
+                conn = _open_db(db_path, row_factory=False)
                 core = report.get('core', {})
                 tm = report.get('trade_metrics', {})
                 conn.execute("""
@@ -6330,8 +6321,7 @@ def api_backtest_results():
     if run_id:
         try:
             db_path = str(DB_PATH)
-            conn = sqlite3.connect(db_path, timeout=10)
-            conn.execute("PRAGMA journal_mode=WAL")
+            conn = _open_db(db_path, row_factory=False)
             row = conn.execute(
                 "SELECT full_results, params FROM backtest_runs WHERE id = ?",
                 (run_id,)
@@ -6365,8 +6355,7 @@ def api_backtest_history():
     """List previous backtest runs."""
     try:
         db_path = str(DB_PATH)
-        conn = sqlite3.connect(db_path, timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = _open_db(db_path, row_factory=False)
         rows = conn.execute("""
             SELECT id, started_at, completed_at, params,
                    total_trades, total_return_pct, sharpe_ratio,
@@ -6405,8 +6394,7 @@ def api_backtest_delete():
 
     try:
         db_path = str(DB_PATH)
-        conn = sqlite3.connect(db_path, timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = _open_db(db_path, row_factory=False)
         placeholders = ','.join('?' for _ in ids)
         conn.execute(
             f"DELETE FROM backtest_runs WHERE id IN ({placeholders})", ids

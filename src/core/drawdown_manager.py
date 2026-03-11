@@ -546,6 +546,8 @@ class DrawdownManager:
                 return
 
             conn = sqlite3.connect(str(db_file), timeout=10)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout = 5000")
             _et = pytz.timezone('America/New_York')
             today = datetime.now(_et).date()
 
