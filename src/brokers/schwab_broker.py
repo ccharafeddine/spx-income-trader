@@ -483,6 +483,9 @@ class SchwabBroker(BrokerInterface):
             logger.error(f"Invalid limit price: {limit_price}")
             return ''
 
+        # SPX/SPXW spread orders must be in $0.05 increments (Schwab requirement)
+        limit_price = round(round(limit_price / 0.05) * 0.05, 2)
+
         account_hash = self._get_account_hash()
 
         # SAFETY: Log full order details
@@ -534,13 +537,30 @@ class SchwabBroker(BrokerInterface):
             # Poll for fill
             result = self._poll_order_fill(str(order_id), self.ORDER_TIMEOUT)
             if not result.success:
-                logger.warning(f"Order {order_id} did not fill: {result.message}")
+                status_detail = result.message or 'unknown'
+                logger.warning(
+                    f"Order {order_id} not filled (status: {status_detail}). "
+                    f"Spread: {spread.direction.value} "
+                    f"{spread.short_leg.strike}/{spread.long_leg.strike} "
+                    f"x{quantity} @${limit_price:.2f}"
+                )
+                if 'rejected' in status_detail.lower():
+                    logger.error(
+                        f"ORDER REJECTED by Schwab: {status_detail}. "
+                        f"Check order pricing ($0.05 increments), margin, "
+                        f"and strike validity."
+                    )
                 return ''
 
             return str(order_id)
 
         except SchwabAPIError as e:
-            logger.error(f"Order placement failed: {e.message}")
+            logger.error(
+                f"Order placement failed: {e.message}. "
+                f"Spread: {spread.direction.value} "
+                f"{spread.short_leg.strike}/{spread.long_leg.strike} "
+                f"x{quantity} @${limit_price:.2f}"
+            )
             return ''
         except Exception as e:
             logger.error(f"Order placement error: {e}")
@@ -564,6 +584,9 @@ class SchwabBroker(BrokerInterface):
         if limit_price < 0:
             logger.error(f"Invalid close limit price: {limit_price}")
             return ''
+
+        # SPX/SPXW spread orders must be in $0.05 increments (Schwab requirement)
+        limit_price = round(round(limit_price / 0.05) * 0.05, 2)
 
         account_hash = self._get_account_hash()
 
@@ -643,26 +666,39 @@ class SchwabBroker(BrokerInterface):
         return {'status': 'not_found', 'fill_price': 0, 'filled_quantity': 0}
 
     def _parse_order_response(self, order_data: dict) -> Dict:
-        """Parse a Schwab order response into our standard format."""
+        """Parse a Schwab order response into our standard format.
+
+        For spread orders (multi-leg), the fill price is the NET credit/debit
+        from the order-level 'price' field -- NOT the average of individual
+        leg prices.  Averaging legs produced wildly wrong entry prices that
+        inflated unrealized P&L and triggered false profit-target exits.
+        """
         raw_status = order_data.get('status', 'UNKNOWN')
         normalized = _SCHWAB_STATUS_MAP.get(raw_status, 'not_found')
 
         fill_price = 0.0
         filled_quantity = int(order_data.get('filledQuantity', 0) or 0)
 
-        # Extract fill price from orderActivityCollection -> executionLegs
-        activities = order_data.get('orderActivityCollection', [])
-        if activities:
+        # Determine if this is a multi-leg (spread) order
+        order_legs = order_data.get('orderLegCollection', [])
+        is_spread = len(order_legs) >= 2
+
+        if is_spread:
+            # Spread orders: use the order-level price which is the NET
+            # credit/debit, not individual leg fills.
+            fill_price = float(order_data.get('price', 0) or 0)
+        else:
+            # Single-leg orders: use execution leg price
+            activities = order_data.get('orderActivityCollection', [])
             for activity in activities:
                 legs = activity.get('executionLegs', [])
                 if legs:
-                    # Average the execution prices
                     prices = [leg.get('price', 0) for leg in legs if leg.get('price')]
                     if prices:
                         fill_price = sum(prices) / len(prices)
                         break
 
-        # Fallback: use the order price if no execution data
+        # Fallback: use the order price if no fill data found
         if fill_price == 0 and filled_quantity > 0:
             fill_price = float(order_data.get('price', 0) or 0)
 
@@ -766,7 +802,12 @@ class SchwabBroker(BrokerInterface):
             return False
 
     def get_position_value(self, spread: CreditSpread) -> float:
-        """Get current market value of spread (cost to close).
+        """Get conservative cost to close a short credit spread.
+
+        Uses ask-side pricing: buy back short at ASK, sell long at BID.
+        This reflects what you'd actually pay to close, not the optimistic
+        mid-price.  Mid-price overstates profit on 0DTE spreads with wide
+        bid-ask spreads, causing false profit-target triggers.
 
         Returns per-share price (not multiplied by 100) to match entry_price units.
         """
@@ -781,14 +822,16 @@ class SchwabBroker(BrokerInterface):
             return 0
 
         if spread.direction == TradeDirection.BULLISH:
-            short_mid = (chain[short_strike]['put_bid'] + chain[short_strike]['put_ask']) / 2
-            long_mid = (chain[long_strike]['put_bid'] + chain[long_strike]['put_ask']) / 2
+            # Put spread: buy back short put at ASK, sell long put at BID
+            short_ask = chain[short_strike]['put_ask']
+            long_bid = chain[long_strike]['put_bid']
         else:
-            short_mid = (chain[short_strike]['call_bid'] + chain[short_strike]['call_ask']) / 2
-            long_mid = (chain[long_strike]['call_bid'] + chain[long_strike]['call_ask']) / 2
+            # Call spread: buy back short call at ASK, sell long call at BID
+            short_ask = chain[short_strike]['call_ask']
+            long_bid = chain[long_strike]['call_bid']
 
-        # Spread value = cost to close (buy back short, sell long)
-        spread_value = short_mid - long_mid
+        # Cost to close = what we'd pay to buy back the spread
+        spread_value = max(0.0, short_ask - long_bid)
         return spread_value
 
     def get_account_balance(self) -> Dict:

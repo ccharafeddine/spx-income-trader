@@ -225,12 +225,38 @@ class BacktestBroker(BrokerInterface):
         return order_id
 
     def get_position_value(self, spread: CreditSpread) -> float:
-        """Get current intrinsic value of spread based on bar price."""
+        """Get conservative cost to close using synthetic chain with ask-side pricing.
+
+        Uses the same Black-Scholes chain that models time value and bid-ask
+        spreads, so the valuation includes extrinsic value and reflects what
+        you'd actually pay to close the position.
+
+        Returns per-share price (not multiplied by 100).
+        """
+        try:
+            expiration = spread.expiration.strftime('%Y-%m-%d')
+            chain = self.get_options_chain('SPX', expiration)
+
+            short_strike = spread.short_leg.strike
+            long_strike = spread.long_leg.strike
+
+            if chain and short_strike in chain and long_strike in chain:
+                if spread.direction == TradeDirection.BULLISH:
+                    short_ask = chain[short_strike]['put_ask']
+                    long_bid = chain[long_strike]['put_bid']
+                else:
+                    short_ask = chain[short_strike]['call_ask']
+                    long_bid = chain[long_strike]['call_bid']
+
+                return max(0.0, short_ask - long_bid)
+        except Exception:
+            pass
+
+        # Fallback: intrinsic value
         current_price = self._current_price
         if current_price <= 0:
             return 0
 
-        # Same logic as DryRunBroker - returns per-share (not *100)
         if spread.direction == TradeDirection.BULLISH:
             if current_price >= spread.short_leg.strike:
                 return 0

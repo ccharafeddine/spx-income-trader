@@ -152,12 +152,16 @@ class TradingBot:
         pdt_enabled = pdt_cfg.get('pdt_protection', True)
 
         # Account equity callback for PDT threshold checking
+        account_size_fallback = STRATEGY_PARAMS.get('portfolio', {}).get('account_size', 50000)
+
         def get_account_equity():
             try:
                 balance = broker.get_account_balance()
                 return balance.get('net_account_value', 0)
-            except Exception:
-                return 0
+            except Exception as exc:
+                logger.warning(f"Failed to fetch account equity: {exc}; "
+                               f"using config account_size=${account_size_fallback:,.2f}")
+                return account_size_fallback
 
         self.pdt_tracker = PDTTracker(
             db_path=DATABASE_PATH,
@@ -207,6 +211,14 @@ class TradingBot:
             trading_mode='dry-run' if dry_run else 'live',
             broker=broker,
         )
+        # Reset persisted price feed state so dashboard doesn't show stale data
+        try:
+            pf_state_path = Path(BASE_DIR) / 'database' / 'price_feed_state.json'
+            pf_state_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(pf_state_path, 'w') as _pf:
+                json.dump(self.price_feed.get_health_status(), _pf)
+        except Exception:
+            pass
 
         # State
         self.running = False
@@ -3383,7 +3395,7 @@ def main():
         )
         db_manager = DatabaseManager(DATABASE_PATH)
         notifier = NotificationManager()
-        notifier.mode = args.mode or TRADING_MODE
+        notifier.mode = 'dry-run' if (args.dry_run or args.mode == 'dry-run') else 'live'
 
         # Create recorder if --record flag is set
         recorder = None

@@ -669,5 +669,49 @@ class TestActiveCloseReasons:
         assert any('1pm' in r.lower() for r in ACTIVE_CLOSE_REASONS)
 
 
+class TestEquityThresholdRestriction:
+    """Verify PDT restricted flag matches account equity vs threshold."""
+
+    def test_not_restricted_when_equity_above_25k(self, tmp_path):
+        db = tmp_path / 'pdt.db'
+        tracker = PDTTracker(
+            db_path=str(db),
+            enabled=True,
+            threshold=25000,
+            get_account_equity=lambda: 46521.95,
+        )
+        assert tracker.is_pdt_restricted() is False
+
+    def test_restricted_when_equity_below_25k(self, tmp_path):
+        db = tmp_path / 'pdt.db'
+        tracker = PDTTracker(
+            db_path=str(db),
+            enabled=True,
+            threshold=25000,
+            get_account_equity=lambda: 20000,
+        )
+        assert tracker.is_pdt_restricted() is True
+
+    def test_not_restricted_when_equity_exactly_25k(self, tmp_path):
+        db = tmp_path / 'pdt.db'
+        tracker = PDTTracker(
+            db_path=str(db),
+            enabled=True,
+            threshold=25000,
+            get_account_equity=lambda: 25000,
+        )
+        assert tracker.is_pdt_restricted() is False
+
+    def test_not_restricted_when_disabled(self, tmp_path):
+        db = tmp_path / 'pdt.db'
+        tracker = PDTTracker(
+            db_path=str(db),
+            enabled=False,
+            threshold=25000,
+            get_account_equity=lambda: 10000,
+        )
+        assert tracker.is_pdt_restricted() is False
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

@@ -622,28 +622,52 @@ class DryRunBroker(BrokerInterface):
         return order_id
 
     def get_position_value(self, spread: CreditSpread) -> float:
-        """Get current value of spread based on real market price."""
-        current_price = self.get_current_price('SPX')
+        """Get conservative cost to close a short credit spread.
 
+        Uses the options chain (real Yahoo Finance data or synthetic model)
+        with ask-side pricing, matching how live brokers evaluate positions.
+        Falls back to intrinsic value only if the chain is unavailable.
+
+        Returns per-share price (not multiplied by 100) to match entry_price units.
+        """
+        # Try options chain first (has bid/ask from real data or synthetic model)
+        try:
+            expiration = spread.expiration.strftime('%Y-%m-%d')
+            chain = self.get_options_chain('SPX', expiration)
+
+            short_strike = spread.short_leg.strike
+            long_strike = spread.long_leg.strike
+
+            if chain and short_strike in chain and long_strike in chain:
+                if spread.direction == TradeDirection.BULLISH:
+                    short_ask = chain[short_strike]['put_ask']
+                    long_bid = chain[long_strike]['put_bid']
+                else:
+                    short_ask = chain[short_strike]['call_ask']
+                    long_bid = chain[long_strike]['call_bid']
+
+                spread_value = max(0.0, short_ask - long_bid)
+                return spread_value
+        except Exception as e:
+            logger.debug(f"Options chain unavailable for position value: {e}")
+
+        # Fallback: intrinsic value (conservative — always >= actual cost to close)
+        current_price = self.get_current_price('SPX')
         if current_price == 0:
             return 0
 
-        # Simple spread valuation based on intrinsic value
-        # Returns per-share price (not multiplied by 100) to match entry_price units
         if spread.direction == TradeDirection.BULLISH:
-            # Put credit spread
             if current_price >= spread.short_leg.strike:
-                return 0  # Both OTM, spread worth ~0
+                return 0
             elif current_price <= spread.long_leg.strike:
-                return spread.spread_width  # Max loss per share
+                return spread.spread_width
             else:
                 return spread.short_leg.strike - current_price
         else:
-            # Call credit spread
             if current_price <= spread.short_leg.strike:
-                return 0  # Both OTM
+                return 0
             elif current_price >= spread.long_leg.strike:
-                return spread.spread_width  # Max loss per share
+                return spread.spread_width
             else:
                 return current_price - spread.short_leg.strike
 

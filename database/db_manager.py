@@ -79,20 +79,32 @@ class DatabaseManager:
             cursor.execute("PRAGMA table_info(trades)")
             existing_columns = {row[1] for row in cursor.fetchall()}
 
-            # New columns to add
+            # New columns to add — must match schema.sql exactly so the
+            # migration-only path (packaged app without schema.sql) produces
+            # an identical table to a fresh schema.sql creation.
             new_columns = [
                 ('strategy_type', "TEXT DEFAULT 'daily_income'"),
+                # Spread details
+                ('spread_width', 'REAL'),
+                # Entry details
+                ('entry_order_id', 'TEXT'),
+                ('underlying_price_at_entry', 'REAL'),
+                ('setup_bar_time', 'TIMESTAMP'),
+                # Entry context
                 ('spx_at_entry', 'REAL'),
                 ('vix_at_entry', 'REAL'),
                 ('vix_regime', 'TEXT'),
                 ('day_open', 'REAL'),
                 ('gap_pct', 'REAL'),
                 ('intraday_move_at_entry', 'REAL'),
+                # Slippage tracking
                 ('theoretical_credit', 'REAL'),
                 ('actual_credit', 'REAL'),
                 ('slippage', 'REAL'),
                 ('slippage_pct', 'REAL'),
+                # Economic calendar context
                 ('economic_events', 'TEXT'),
+                # Enhanced trade metadata
                 ('day_of_week', 'INTEGER'),
                 ('day_of_week_name', 'TEXT'),
                 ('entry_time_bucket', 'TEXT'),
@@ -105,11 +117,22 @@ class DatabaseManager:
                 ('prior_day_high', 'REAL'),
                 ('prior_day_low', 'REAL'),
                 ('spx_vs_prior_range', 'TEXT'),
+                # Exit details
+                ('exit_order_id', 'TEXT'),
+                ('exit_reason', 'TEXT'),
                 ('spx_at_exit', 'REAL'),
                 ('profit_captured_pct', 'REAL'),
                 ('time_in_trade_minutes', 'INTEGER'),
+                # Market conditions
                 ('day_type', 'TEXT'),
                 ('daily_move_pct', 'REAL'),
+                # P&L
+                ('pnl_percent', 'REAL'),
+                ('max_profit', 'REAL'),
+                ('max_risk', 'REAL'),
+                # Position details
+                ('expiration', 'TIMESTAMP'),
+                # Analytics
                 ('vix_at_exit', 'REAL'),
                 ('bb_agreement', 'INTEGER'),
             ]

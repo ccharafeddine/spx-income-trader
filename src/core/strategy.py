@@ -531,7 +531,9 @@ class SPXIncomeStrategy:
         """
         # 1. Profit target
         max_profit = trade.spread.max_profit * trade.quantity
-        current_profit = (trade.entry_price - current_spread_price) * 100 * trade.quantity
+        raw_profit = (trade.entry_price - current_spread_price) * 100 * trade.quantity
+        # Cap at max profit: can never exceed credit received
+        current_profit = min(raw_profit, max_profit)
         profit_target = max_profit * self.profit_target
 
         if current_profit >= profit_target:

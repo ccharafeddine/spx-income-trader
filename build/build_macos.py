@@ -53,6 +53,9 @@ DATA_FILES = [
         str(PROJECT_ROOT / "config" / "strategy_params.yaml"),
         str(PROJECT_ROOT / "config" / "economic_calendar.json"),
     ]),
+    ("database", [
+        str(PROJECT_ROOT / "database" / "schema.sql"),
+    ]),
     ("assets", [
         str(ICON_PNG),
     ]),

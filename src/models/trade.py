@@ -69,8 +69,15 @@ class Trade:
         return self.pnl
     
     def update_pnl(self, current_price: float):
-        """Update P&L based on current spread price"""
-        self.pnl = (self.entry_price - current_price) * 100 * self.quantity
+        """Update P&L based on current spread price.
+
+        Caps profit at the theoretical maximum (credit_received * 100 * qty)
+        to prevent unrealistic P&L values from triggering false exits.
+        """
+        raw_pnl = (self.entry_price - current_price) * 100 * self.quantity
+        # Cap at max profit: you can never make more than the credit received
+        max_profit = self.spread.credit_received * 100 * self.quantity
+        self.pnl = min(raw_pnl, max_profit)
         if self.entry_price > 0:
             self.pnl_percent = (self.pnl / (self.entry_price * 100 * self.quantity)) * 100
     

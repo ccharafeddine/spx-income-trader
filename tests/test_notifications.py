@@ -962,3 +962,34 @@ class TestHourlyUpdate:
         embed = _get_discord_embed(mock_post)
         field_names = {f['name'] for f in embed['fields']}
         assert 'Open Positions' not in field_names
+
+
+class TestFooterMode:
+    """Verify notification footer reflects actual runtime trading mode."""
+
+    def test_footer_shows_live_when_mode_set_to_live(self):
+        nm = _make_notifier()
+        nm.mode = 'live'
+        assert nm._footer_text() == 'The Daily Melt \u2022 live'
+
+    def test_footer_shows_dry_run_when_mode_set_to_dry_run(self):
+        nm = _make_notifier()
+        nm.mode = 'dry-run'
+        assert nm._footer_text() == 'The Daily Melt \u2022 dry-run'
+
+    def test_footer_default_is_dry_run(self):
+        nm = _make_notifier()
+        assert nm._footer_text() == 'The Daily Melt \u2022 dry-run'
+
+    @patch('requests.post')
+    def test_discord_embed_footer_uses_live_mode(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True)
+        nm = _make_notifier(discord={
+            'enabled': True,
+            'webhook_url': 'https://discord.com/api/webhooks/test',
+            'min_level': 'info',
+        })
+        nm.mode = 'live'
+        nm.send("Test", "msg", level='info')
+        embed = _get_discord_embed(mock_post)
+        assert embed['footer']['text'] == 'The Daily Melt \u2022 live'

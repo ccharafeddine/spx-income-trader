@@ -848,11 +848,10 @@ class TestSchwabPositionValue:
         spread = _make_spread()  # BEARISH call spread 6050/6055
         value = broker.get_position_value(spread)
 
-        # For call spread: short_mid - long_mid
-        # short_mid = (3.00 + 3.40) / 2 = 3.20
-        # long_mid = (1.60 + 2.00) / 2 = 1.80
-        # value = 3.20 - 1.80 = 1.40
-        assert abs(value - 1.40) < 0.01
+        # Ask-side pricing: short_ask - long_bid
+        # short_ask = 3.40, long_bid = 1.60
+        # value = 3.40 - 1.60 = 1.80
+        assert abs(value - 1.80) < 0.01
 
 
 # ===========================================================================

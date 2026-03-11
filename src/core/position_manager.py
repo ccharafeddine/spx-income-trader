@@ -116,6 +116,14 @@ class PositionManager:
             Trade object if successful, None otherwise
         """
         try:
+            # Block new entries if a previous DB write failed
+            if getattr(self, '_db_write_failed', False):
+                logger.critical(
+                    "BLOCKED: Cannot enter new trade -- previous DB write failed. "
+                    "Fix the database issue and restart the bot."
+                )
+                return None
+
             logger.info("=" * 60)
             logger.info("ENTERING TRADE")
             logger.info("=" * 60)
@@ -291,16 +299,27 @@ class PositionManager:
             except Exception as e:
                 logger.warning(f"Failed to build entry context: {e}")
 
-            # Save to database
-            self.db.save_trade(trade, context=entry_context)
+            # Save to database -- MUST succeed or we halt trading.
+            # The trade is already live on the broker (order filled above).
+            try:
+                self.db.save_trade(trade, context=entry_context)
+            except Exception as db_err:
+                logger.critical(
+                    f"DATABASE WRITE FAILED for live trade {trade.id}: {db_err}. "
+                    f"Trade is LIVE on broker but NOT recorded. "
+                    f"Halting all further trading until resolved."
+                )
+                self._db_write_failed = True
+                # Trade stays in open_trades so it can still be monitored/closed
+                return trade
 
             logger.info(f"Trade entered successfully: {trade.id}")
             logger.info(f"  Entry price: ${trade.entry_price:.2f}")
             logger.info(f"  Max profit: ${spread.max_profit * quantity:.2f}")
             logger.info(f"  Max risk: ${spread.max_risk * quantity:.2f}")
-            
+
             return trade
-            
+
         except Exception as e:
             logger.error(f"Failed to enter trade: {e}", exc_info=True)
             return None

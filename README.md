@@ -18,6 +18,21 @@ The entire pipeline runs autonomously. The bot handles strike selection, order s
 
 ---
 
+## Live Trading Status
+
+First live trading session completed on **March 10, 2025** using Charles Schwab with 1 contract. The session exposed several critical issues in position valuation and order response parsing that have since been fixed:
+
+- **Spread fill price parsing**: Schwab multi-leg order responses now use the order-level net credit/debit (`price` field) instead of averaging individual leg execution prices, which inflated the apparent entry price
+- **Ask-side position valuation**: All brokers now value open spreads conservatively (buy back short at ASK, sell long at BID) instead of using mid-price, which understated the cost to close
+- **Max-profit cap**: Unrealized P&L is capped at the theoretical maximum to prevent inflated calculations from triggering premature profit target exits
+- **Chain-based dry-run pricing**: Dry-run and backtest brokers now use the options chain with bid/ask spreads instead of intrinsic-only valuation
+- **SPX 5-cent rounding**: All spread order prices rounded to nearest $0.05 per exchange rules
+- **DB write failure safety**: If the database save fails after a broker order fills, all further entries are blocked for the session
+
+These fixes are covered by 60+ dedicated tests. The system is currently configured for conservative 1-contract trading as it continues live validation.
+
+---
+
 ## Strategies
 
 ### Core Strategies
@@ -65,13 +80,17 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Morning bias filter: blocks counter-trend entries based on intraday market direction
 - VIX regime awareness (low / normal / elevated / high / extreme)
 - Win/loss streak tracking with frozen previous-streak display
+- Max-profit cap: unrealized P&L is capped at the theoretical maximum (credit received x 100 x quantity), preventing inflated profit calculations from triggering premature exits
+- DB write failure halts trading: if the database save fails after a trade is placed on the broker, all further entries are blocked for the session to prevent untracked positions
+- SPX 5-cent rounding: all spread order prices are rounded to the nearest $0.05 increment per exchange rules
 
 ### Broker Integration
 - Multi-broker architecture with pluggable broker interface
 - **E\*TRADE**: Full API integration with OAuth flow, token auto-renewal (90-min cycle), order preview/place/confirm pipeline
-- **Charles Schwab**: schwab-py integration with OAuth2 authorization, automatic token refresh, and full options order support
+- **Charles Schwab**: schwab-py integration with OAuth2 authorization, automatic token refresh, and full options order support. Spread order fill prices parsed from the order-level net credit/debit (not averaged individual leg prices).
 - **Interactive Brokers**: ib_insync integration via TWS/IB Gateway. Snapshot market data, options chain discovery via reqSecDefOptParams, BAG combo orders for credit spreads, live/paper trading with automatic port selection. Dashboard connect/disconnect controls.
 - **Dry-run mode** (default): Real market data via Yahoo Finance with simulated fills using Black-Scholes pricing. No broker credentials needed.
+- **Ask-side position valuation**: All brokers (Schwab, E\*TRADE, IBKR, dry-run, backtest sim) value open positions conservatively -- buy back the short leg at ASK, sell the long leg at BID. This reflects the actual cost to close rather than an optimistic mid-price estimate.
 - **Shadow mode** (dry-run only): Read-only Schwab comparison that runs alongside the dry-run broker. Compares simulated fills against live Schwab quotes at entry, exit, and periodically (every 15 min). Logs price divergence, credit divergence, and whether the trade decision would differ. Dashboard panel shows summary stats and recent comparisons. Enable/disable via the Settings sidebar toggle.
 - Reactive 401 handling with automatic token refresh and retry on E\*TRADE and Schwab
 - Proactive token freshness checks before order placement
@@ -81,7 +100,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Dry-run and live trading use separate databases (`trades_dryrun.db` / `trades_live.db`)
 - Switching modes shows only trades from that mode
 - Backtest results stored in a shared database (mode-independent)
-- Schema auto-created on first access for new mode
+- Schema auto-created on first access for new mode (schema.sql bundled in PyInstaller builds)
 
 ### Chart & Visualization
 - Real-time SPX candlestick chart with four timeframe toggles: 4h, 1h, 30m, 5m
@@ -220,12 +239,13 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Bot stopped: shutdown reason, uptime, trade count
 - Watchdog auto-restart: crash reason, restart count
 - All channels configurable (Slack, Discord, generic webhook) with per-channel min severity level
+- Mode-aware footer on all Discord embeds (DRY RUN / LIVE / DEMO)
 
 ### Data & Storage
 - SQLite database with WAL mode for concurrent read/write access
 - Separate databases for dry-run and live trading modes
 - OS keychain credential storage (Windows Credential Manager / macOS Keychain / Linux Secret Service)
-- Automatic database migrations on startup
+- Automatic database migrations on startup (column additions, index creation)
 - Signal log rotation at 5,000 entries with atomic writes (tempfile + rename)
 - CSRF protection via per-session API token on all state-changing requests
 - Settings API allowlist prevents arbitrary key injection
@@ -322,7 +342,7 @@ Broker Interface
     |--- Dry-Run Broker (real data, simulated fills via Black-Scholes)
     |
     v
-Position Manager (P&L tracking, exit management, partial fill tracking, PDT-conditional 1pm)
+Position Manager (P&L tracking, exit management, partial fill tracking, PDT-conditional 1pm, DB-failure halt)
     |
     +---> SQLite Database (mode-specific: dry-run / live)
     +---> Flask Dashboard (Overview, Calendar, Journal, Analytics, Backtest, Logs)
@@ -333,13 +353,13 @@ Position Manager (P&L tracking, exit management, partial fill tracking, PDT-cond
     +---> Shadow Comparator (dry-run vs. live Schwab price/credit comparison)
 ```
 
-**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1240+ tests), GitHub Actions CI
+**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1,300+ tests), GitHub Actions CI
 
 ---
 
 ## Settings
 
-All settings are configured via `config/strategy_params.yaml` and the dashboard Account page. Runtime changes (strategy toggles, risk controls, position sizing) are saved to `runtime_settings.json` and applied on startup without modifying the YAML.
+All settings are configured via `config/strategy_params.yaml` and the dashboard Account page. Runtime changes (strategy toggles, risk controls, position sizing) are saved to `database/runtime_settings.json` and deep-merged over the YAML defaults on startup. The merge is recursive: nested keys in `runtime_settings.json` override the corresponding YAML keys without clobbering sibling values.
 
 ### What requires a restart
 - Trading mode (dry-run / live)
@@ -360,9 +380,9 @@ All settings are configured via `config/strategy_params.yaml` and the dashboard 
 | `strategy.spread_width` | $5 | Width of credit spreads |
 | `strategy.profit_target_pct` | 80% | Exit when this percentage of max profit is reached |
 | `portfolio.max_daily_loss_pct` | 2% | Circuit breaker: halt all entries for the day |
-| `portfolio.daily_contracts` | 7 | Max contracts for Daily Income (budget-driven cap) |
-| `portfolio.swing_contracts` | 2 | Fixed contracts for swing strategies (TNT) |
-| `portfolio.max_contracts` | 10 | Global hard cap regardless of account size |
+| `portfolio.daily_contracts` | 1 | Max contracts for Daily Income (budget-driven cap) |
+| `portfolio.swing_contracts` | 1 | Fixed contracts for swing strategies (TNT) |
+| `portfolio.max_contracts` | 1 | Global hard cap regardless of account size |
 | `timing.morning_start` | 09:30 | Setup window open |
 | `timing.morning_end` | 11:30 | Setup window close |
 | `di_morning_bias_filter` | true | Block counter-trend entries based on intraday direction |
@@ -518,7 +538,7 @@ dashboard/
 
 config/
     strategy_params.yaml     # All strategy and risk parameters
-    settings.py              # Environment, paths, DB config, keyring integration
+    settings.py              # Environment, paths, DB config, keyring integration, runtime_settings deep merge
 
 database/
     db_manager.py            # SQLite operations (WAL mode, migrations)
@@ -544,7 +564,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 
 ## Testing
 
-1240+ tests covering:
+1,300+ tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays, morning bias filter, TNT weekend hold prevention)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
 - Position management (sizing, P&L calculation, exit triggers, partial fill tracking)
@@ -562,7 +582,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 - Session recording (fixed filename mode, start/stop lifecycle, dashboard list/load routes, path traversal protection)
 - Trade reconciliation (DB vs. broker comparison, mismatch detection)
 - Monitoring and observability (Prometheus metrics, health endpoint)
-- Schwab, E*TRADE, and IBKR broker integration (connect/disconnect, market data, order execution, position value)
+- Schwab, E*TRADE, and IBKR broker integration (connect/disconnect, market data, order execution, position value, ask-side valuation)
 - VIX + time-of-day bid-ask spread model (BidAskModel) and fill quality factor
 - Slippage tracking and database migrations
 - Database separation (dry-run vs live mode)
@@ -570,9 +590,10 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 - Backtest engine PDT mode and BB agreement tracking
 - Chart data endpoints (unified bar history, paginated lazy loading, historical trade queries)
 - Timestamp normalization across year boundaries (YYYY-MM-DD HH:MM format, correct sort order)
-- Enter-trade resilience (save_trade exception handling, BaseException re-raise for SystemExit/KeyboardInterrupt)
+- Enter-trade resilience (save_trade exception handling, DB write failure halts trading, BaseException re-raise for SystemExit/KeyboardInterrupt)
 - FRED calendar service (release standardization, short code mapping, caching, API/static fallback, endpoint structure)
 - Production stability guards: AST-based scan for non-ASCII characters in logger calls, UTF-8 encoding on all RotatingFileHandler instances, BaseException handlers in enter_trade/main loop/bot thread, devnull redirect encoding
+- Profit target valuation: max-profit cap enforcement, ask-side pricing across all brokers, Schwab spread fill price parsing, chain-based dry-run/backtest pricing, no false immediate profit target triggers
 
 ```bash
 python -m pytest tests/ -v

@@ -48,6 +48,8 @@ DATA_FILES = [
     (PROJECT_ROOT / "config" / "strategy_params.yaml",           "config"),
     # Economic calendar (static event data used by src/data/economic_calendar.py)
     (PROJECT_ROOT / "config" / "economic_calendar.json",         "config"),
+    # Database schema (required for fresh DB creation in packaged app)
+    (PROJECT_ROOT / "database" / "schema.sql",                   "database"),
 ]
 
 # Include icons in bundle if they exist
@@ -275,6 +277,7 @@ def verify():
         "_internal/dashboard/templates/setup.html",
         "_internal/config/strategy_params.yaml",
         "_internal/config/economic_calendar.json",
+        "_internal/database/schema.sql",
     ]
     for rel in expected_data:
         full = app_dir / rel
