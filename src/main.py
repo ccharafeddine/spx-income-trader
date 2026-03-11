@@ -2017,7 +2017,19 @@ class TradingBot:
             # blocked by DI's max_daily_trades=1.
 
             if self.tag_n_turn_enabled and self.tag_n_turn:
-                tnt_signal = self.tag_n_turn.check_entry_signal(current_price)
+                # VIX filter: skip TNT entries during high volatility
+                _tnt_max_vix = getattr(self.tag_n_turn, 'max_vix', 0)
+                _tnt_vix_ok = True
+                if _tnt_max_vix:
+                    try:
+                        from src.data.vix_provider import VixProvider
+                        _tnt_vix = VixProvider().get_vix_with_regime()[0]
+                        if _tnt_vix and _tnt_vix > _tnt_max_vix:
+                            _tnt_vix_ok = False
+                            logger.debug(f"TNT skipped: VIX {_tnt_vix:.1f} > max {_tnt_max_vix}")
+                    except Exception:
+                        pass
+                tnt_signal = self.tag_n_turn.check_entry_signal(current_price) if _tnt_vix_ok else None
                 if tnt_signal:
                     logger.info(
                         f"TAG 'N TURN SIGNAL: {tnt_signal['direction'].value.upper()} "

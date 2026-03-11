@@ -81,11 +81,14 @@ tag_n_turn:
   min_bar_range_points: 1.0
   max_hold_days: 7
   use_credit_spreads: true
-  spread_width: 10.0
-  min_credit: 2.0
+  spread_width: 5.0
+  min_credit: 1.0
   delta_target: 0.7
   min_dte: 3
   max_dte: 7
+  stop_buffer: 10.0
+  max_vix: 28.0
+  allow_bullish: false
   weekend_exit_enabled: true
   weekend_exit_time: '15:00'
   weekend_exit_min_profit_pct: 30

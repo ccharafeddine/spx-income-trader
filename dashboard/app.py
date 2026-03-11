@@ -6204,6 +6204,16 @@ def api_backtest_run():
                     _backtest_job['total_days'] = total
                     _backtest_job['current_date'] = str(trading_day)
 
+            # Merge full YAML config into strategy dicts so backtest
+            # picks up all parameters (UI only sends enabled toggle)
+            merged_strategies = strategies
+            if merged_strategies:
+                for sname in ('tag_n_turn', 'bnb', 'orb', 'daily_income'):
+                    yaml_cfg = STRATEGY_PARAMS.get(sname, {})
+                    ui_cfg = merged_strategies.get(sname, {})
+                    if yaml_cfg or ui_cfg:
+                        merged_strategies[sname] = {**yaml_cfg, **ui_cfg}
+
             engine = BacktestEngine(
                 bars_df=bars_df,
                 vix_daily=vix_daily,
@@ -6219,7 +6229,7 @@ def api_backtest_run():
                 fill_quality_factor=fill_quality_factor,
                 max_daily_loss_pct=max_daily_loss,
                 progress_callback=progress_cb,
-                strategies=strategies,
+                strategies=merged_strategies,
             )
 
             results = engine.run()
