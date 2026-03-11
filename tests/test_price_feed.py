@@ -268,3 +268,36 @@ class TestFactory:
         mock_cls.return_value.ttl_seconds = 30
         feed = create_price_feed('live', broker=None)
         assert mock_cls.called
+
+
+class TestPriceFeedHealthReset:
+    """Verify price feed starts with fresh health state (no stale carry-over)."""
+
+    def test_new_feed_starts_with_zero_failures(self):
+        feed = YahooPriceFeed()
+        status = feed.get_health_status()
+        assert status['consecutive_failures'] == 0
+
+    def test_new_feed_source_is_correct(self):
+        feed = YahooPriceFeed()
+        status = feed.get_health_status()
+        assert status['source'] == 'yahoo'
+
+    def test_new_feed_health_status_has_required_keys(self):
+        feed = YahooPriceFeed()
+        status = feed.get_health_status()
+        assert 'source' in status
+        assert 'healthy' in status
+        assert 'last_update_secs_ago' in status
+        assert 'consecutive_failures' in status
+
+    def test_health_resets_on_new_instance_after_failures(self):
+        """Simulate a previous session's failures then verify a new instance starts clean."""
+        feed1 = YahooPriceFeed()
+        # Simulate failures
+        feed1._consecutive_failures = 5
+        assert feed1.get_health_status()['consecutive_failures'] == 5
+
+        # New instance should start fresh (as happens on bot restart)
+        feed2 = YahooPriceFeed()
+        assert feed2.get_health_status()['consecutive_failures'] == 0

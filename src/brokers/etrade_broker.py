@@ -1033,8 +1033,10 @@ class ETradeBroker(BrokerInterface):
         return {'status': 'not_found', 'fill_price': 0, 'filled_quantity': 0}
 
     def get_position_value(self, spread: CreditSpread) -> float:
-        """
-        Get current market value of spread (what it would cost to close).
+        """Get conservative cost to close a short credit spread.
+
+        Uses ask-side pricing: buy back short at ASK, sell long at BID.
+        Returns per-share price (not multiplied by 100) to match entry_price units.
         """
         expiration = spread.expiration.strftime('%Y-%m-%d')
         chain = self.get_options_chain('SPX', expiration)
@@ -1047,18 +1049,14 @@ class ETradeBroker(BrokerInterface):
             return 0
 
         if spread.direction == TradeDirection.BULLISH:
-            # Put spread - use put prices
-            short_mid = (chain[short_strike]['put_bid'] + chain[short_strike]['put_ask']) / 2
-            long_mid = (chain[long_strike]['put_bid'] + chain[long_strike]['put_ask']) / 2
+            short_ask = chain[short_strike]['put_ask']
+            long_bid = chain[long_strike]['put_bid']
         else:
-            # Call spread - use call prices
-            short_mid = (chain[short_strike]['call_bid'] + chain[short_strike]['call_ask']) / 2
-            long_mid = (chain[long_strike]['call_bid'] + chain[long_strike]['call_ask']) / 2
+            short_ask = chain[short_strike]['call_ask']
+            long_bid = chain[long_strike]['call_bid']
 
-        # Spread value = what we'd pay to close (buy back short, sell long)
-        # Return per-share price (not multiplied by 100) to match entry_price units
-        spread_value = short_mid - long_mid
-
+        # Cost to close = buy back short at ASK, sell long at BID
+        spread_value = max(0.0, short_ask - long_bid)
         return spread_value
 
     def get_orders(self, status: Optional[str] = None) -> List[Dict]:

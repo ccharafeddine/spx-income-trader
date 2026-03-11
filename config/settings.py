@@ -392,12 +392,28 @@ DASHBOARD_PORT = int(os.getenv('DASHBOARD_PORT', 5000))
 DASHBOARD_HOST = os.getenv('DASHBOARD_HOST', '127.0.0.1')
 
 # Load strategy parameters
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Deep merge overlay into base dict (same logic as dashboard)."""
+    result = base.copy()
+    for key, value in overlay.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
 def load_strategy_params():
-    """Load strategy parameters from YAML file"""
+    """Load strategy parameters from YAML, overlaid with runtime overrides.
+
+    Merge order: strategy_params.yaml (defaults) → runtime_settings.json
+    (user overrides from Settings page). This ensures the bot respects
+    the same values the dashboard displays.
+    """
     params_file = CONFIG_DIR / 'strategy_params.yaml'
 
     if not params_file.exists():
-        return {
+        settings = {
             'strategy': {
                 'pulse_threshold': 10.0,
                 'spread_width': 5.0,
@@ -415,9 +431,21 @@ def load_strategy_params():
                 'market_close': '16:00'
             }
         }
+    else:
+        with open(params_file, 'r', encoding='utf-8') as f:
+            settings = yaml.safe_load(f) or {}
 
-    with open(params_file, 'r', encoding='utf-8') as f:
-        return yaml.safe_load(f)
+    # Apply runtime overrides (written by dashboard Settings page)
+    runtime_file = Path(DB_PATH).parent / 'runtime_settings.json'
+    if runtime_file.exists():
+        try:
+            import json
+            overrides = json.loads(runtime_file.read_text(encoding='utf-8'))
+            settings = _deep_merge(settings, overrides)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return settings
 
 STRATEGY_PARAMS = load_strategy_params()
 

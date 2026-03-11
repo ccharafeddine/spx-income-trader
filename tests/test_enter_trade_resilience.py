@@ -3,7 +3,7 @@ Tests that enter_trade() and the main loop survive exceptions in save_trade()
 without silently killing the bot thread.
 
 Covers:
-- save_trade() raising Exception -> caught, returns None, trade stays in open_trades
+- save_trade() raising Exception -> caught, returns trade (live on broker), sets _db_write_failed
 - save_trade() raising SystemExit -> caught by BaseException handler, re-raised
 - No non-ASCII characters in position_manager.py log messages (Windows cp1252 safety)
 - Log handlers use utf-8 encoding
@@ -71,16 +71,19 @@ def _make_pm_and_spread():
 class TestSaveTradeExceptionHandling:
     """Verify enter_trade() survives save_trade() failures."""
 
-    def test_save_trade_exception_returns_none(self):
-        """When save_trade() raises Exception, enter_trade() returns None."""
+    def test_save_trade_exception_returns_trade_and_halts(self):
+        """When save_trade() raises, trade is returned (it's live on broker)
+        and _db_write_failed is set to block future entries."""
         pm, spread, bar, db = _make_pm_and_spread()
         db.save_trade.side_effect = Exception("database is locked")
 
         with patch('time.sleep'):
             result = pm.enter_trade(spread, bar, quantity=1)
 
-        # Returns None because save_trade failed
-        assert result is None
+        # Trade is returned because it's already live on broker
+        assert result is not None
+        # Future trading is halted
+        assert pm._db_write_failed is True
 
     def test_save_trade_exception_keeps_trade_in_open_trades(self):
         """Even when save_trade() fails, the trade is still in open_trades
