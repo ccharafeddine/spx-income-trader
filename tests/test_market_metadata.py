@@ -224,6 +224,7 @@ class TestEnterTradeMetadata:
         saved_contexts = []
         db = MagicMock()
         db.save_trade.side_effect = lambda trade, context=None: saved_contexts.append(context)
+        db.save_trade_with_retry.side_effect = lambda trade, **kw: db.save_trade(trade, context=kw.get('context'))
 
         pm = PositionManager(broker=broker, strategy=strategy, db_manager=db)
 
@@ -259,7 +260,7 @@ class TestEnterTradeMetadata:
              patch('src.data.economic_calendar.get_today_events', return_value=[]):
             pm.enter_trade(spread, bar, quantity=1)
 
-        ctx = saved_contexts[0]
+        ctx = saved_contexts[-1]
         # day_of_week uses datetime.now(ET) inside enter_trade
         today_et = datetime.now(ET)
         assert ctx['day_of_week'] == today_et.weekday()
@@ -276,7 +277,7 @@ class TestEnterTradeMetadata:
              patch('src.data.economic_calendar.get_today_events', return_value=[]):
             pm.enter_trade(spread, bar, quantity=1)
 
-        ctx = saved_contexts[0]
+        ctx = saved_contexts[-1]
         assert ctx['entry_time_bucket'] == 'early'
 
     def test_sma_distances_populated(self):
@@ -289,7 +290,7 @@ class TestEnterTradeMetadata:
              patch('src.data.economic_calendar.get_today_events', return_value=[]):
             pm.enter_trade(spread, bar, quantity=1)
 
-        ctx = saved_contexts[0]
+        ctx = saved_contexts[-1]
         # SPX = 6050, SMA50 = 6000 -> +50 pts, +0.83%
         assert ctx['sma50'] == 6000.0
         assert ctx['spx_vs_sma50'] == 50.0
@@ -309,7 +310,7 @@ class TestEnterTradeMetadata:
              patch('src.data.economic_calendar.get_today_events', return_value=[]):
             pm.enter_trade(spread, bar, quantity=1)
 
-        ctx = saved_contexts[0]
+        ctx = saved_contexts[-1]
         # SPX = 6050 > prior_high = 6040 -> 'above'
         assert ctx['prior_day_high'] == 6040.0
         assert ctx['prior_day_low'] == 5980.0
@@ -325,7 +326,7 @@ class TestEnterTradeMetadata:
              patch('src.data.economic_calendar.get_today_events', return_value=[]):
             pm.enter_trade(spread, bar, quantity=1)
 
-        ctx = saved_contexts[0]
+        ctx = saved_contexts[-1]
         assert 'sma50' not in ctx
         assert 'sma200' not in ctx
         assert 'spx_vs_sma50' not in ctx
@@ -344,7 +345,7 @@ class TestEnterTradeMetadata:
              patch('src.data.economic_calendar.get_today_events', return_value=[]):
             pm.enter_trade(spread, bar, quantity=1)
 
-        ctx = saved_contexts[0]
+        ctx = saved_contexts[-1]
         # Day of week (uses datetime.now(ET))
         today_et = datetime.now(ET)
         assert ctx['day_of_week'] == today_et.weekday()

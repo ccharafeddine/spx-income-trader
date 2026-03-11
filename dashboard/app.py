@@ -20,7 +20,7 @@ import yaml
 from collections import defaultdict
 from pathlib import Path
 from datetime import datetime, date, timedelta
-from flask import Flask, render_template, jsonify, request, redirect, url_for
+from flask import Flask, render_template, jsonify, request, redirect, url_for, g
 
 # Project root setup
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -436,11 +436,28 @@ def detect_trading_mode():
 
 
 def get_db_connection():
-    """Get a SQLite connection with WAL mode and timeout for concurrent access."""
-    conn = sqlite3.connect(DATABASE_PATH, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Get a per-request SQLite connection (cached on Flask g).
+
+    Reuses a single connection for the lifetime of the request, then
+    the teardown_appcontext handler closes it.  This eliminates
+    connection churn that caused WAL lock contention with the bot
+    thread.
+    """
+    if 'db_conn' not in g:
+        conn = sqlite3.connect(DATABASE_PATH, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.row_factory = sqlite3.Row
+        g.db_conn = conn
+    return g.db_conn
+
+
+@app.teardown_appcontext
+def _close_db_connection(exc):
+    """Close the per-request database connection."""
+    conn = g.pop('db_conn', None)
+    if conn is not None:
+        conn.close()
 
 
 def _ensure_trades_db():

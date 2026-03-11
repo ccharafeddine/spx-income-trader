@@ -359,6 +359,7 @@ class TestEnterTradeEconomicEvents:
         saved_contexts = []
         db = MagicMock()
         db.save_trade.side_effect = lambda trade, context=None: saved_contexts.append(context)
+        db.save_trade_with_retry.side_effect = lambda trade, **kw: db.save_trade(trade, context=kw.get('context'))
 
         pm = PositionManager(broker=broker, strategy=strategy, db_manager=db)
 
@@ -390,7 +391,7 @@ class TestEnterTradeEconomicEvents:
             trade = pm.enter_trade(spread, bar, quantity=1)
 
         assert trade is not None
-        ctx = saved_contexts[0]
+        ctx = saved_contexts[-1]
         assert 'economic_events' in ctx
         parsed = json.loads(ctx['economic_events'])
         assert parsed == ['FOMC']
@@ -418,6 +419,7 @@ class TestEnterTradeEconomicEvents:
         saved_contexts = []
         db = MagicMock()
         db.save_trade.side_effect = lambda trade, context=None: saved_contexts.append(context)
+        db.save_trade_with_retry.side_effect = lambda trade, **kw: db.save_trade(trade, context=kw.get('context'))
 
         pm = PositionManager(broker=broker, strategy=strategy, db_manager=db)
 
@@ -448,5 +450,5 @@ class TestEnterTradeEconomicEvents:
             trade = pm.enter_trade(spread, bar, quantity=1)
 
         assert trade is not None
-        ctx = saved_contexts[0]
+        ctx = saved_contexts[-1]
         assert 'economic_events' not in ctx

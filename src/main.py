@@ -267,7 +267,7 @@ class TradingBot:
         self._eod_summary_sent_today = False  # Prevent duplicate EOD notifications
         self._reconciliation_done_today = False
         self._market_open_notified = False  # Send market open notification once per day
-        self._last_hourly_update = None  # Track last hourly update notification time
+        self._last_market_update = None  # Track last 30-min market update notification time
         self._danger_alerts_sent = {}  # Track danger alerts sent per trade (avoid spam)
         self._best_trade_today = None  # Best single trade P&L today {pnl, strategy}
 
@@ -838,7 +838,7 @@ class TradingBot:
                     self._eod_summary_sent_today = False
                     self._reconciliation_done_today = False
                     self._market_open_notified = False
-                    self._last_hourly_update = None
+                    self._last_market_update = None
                     self._danger_alerts_sent = {}
                     self._best_trade_today = None
 
@@ -994,6 +994,32 @@ class TradingBot:
                             and current_time.time() >= time(16, 5)
                             and self._start_time_wall
                             and self._start_time_wall.time() < time(16, 0)):
+                        # Expire 0DTE positions BEFORE journal/EOD summary so P&L
+                        # is recorded and open_trades is accurate.
+                        try:
+                            expired_pnl = self.position_manager.monitor_positions()
+                            self._drain_recently_closed()
+                            # Send exit notifications for expired trades
+                            for closed in self.position_manager.recently_closed_trades:
+                                _cpnl = closed.get('pnl', 0)
+                                if self._best_trade_today is None or _cpnl > self._best_trade_today.get('pnl', float('-inf')):
+                                    self._best_trade_today = {'pnl': _cpnl, 'strategy': closed.get('strategy', 'DI')}
+                                if self.notifier:
+                                    self.notifier.send_trade_exit({
+                                        'strategy': closed.get('strategy', 'unknown'),
+                                        'direction': closed['direction'],
+                                        'short_strike': closed.get('short_strike', 0),
+                                        'long_strike': closed.get('long_strike', 0),
+                                        'pnl': closed['pnl'],
+                                        'pnl_pct': closed['pnl_pct'],
+                                        'max_profit_pct': closed.get('max_profit_pct', 0),
+                                        'hold_duration': closed['duration'],
+                                        'exit_reason': closed['reason'],
+                                    })
+                            self.position_manager.recently_closed_trades.clear()
+                        except Exception as e:
+                            logger.warning(f"Pre-journal position expiration failed: {e}")
+
                         self._finalize_daily_journal()
 
                     # Run P&L reconciliation once after market close (live mode only)
@@ -1717,21 +1743,26 @@ class TradingBot:
         except Exception as e:
             logger.warning(f"Reconciliation failed: {e}")
 
-    def _send_hourly_update_if_due(self, current_time):
-        """Send hourly market update notification if on the hour boundary."""
+    def _send_market_update_if_due(self, current_time):
+        """Send market update notification every 30 minutes aligned with bar boundaries (:00 and :30)."""
         if not self.notifier:
             return
         if not self._is_market_open(current_time):
             return
 
         current_et = datetime.now(self.tz)
-        if current_et.minute != 0 and current_et.minute != 30:
-            # Only check on half-hour boundaries (when bars complete)
-            pass
-        if self._last_hourly_update is not None and current_et.hour == self._last_hourly_update.hour:
+        if current_et.minute not in (0, 30):
+            # Only fire on half-hour boundaries when bars complete
             return
 
-        self._last_hourly_update = current_et
+        # Dedup: compute the current 30-min slot (0-47 per day) and skip if already sent
+        current_slot = current_et.hour * 2 + (1 if current_et.minute >= 30 else 0)
+        if self._last_market_update is not None:
+            last_slot = self._last_market_update.hour * 2 + (1 if self._last_market_update.minute >= 30 else 0)
+            if current_slot == last_slot:
+                return
+
+        self._last_market_update = current_et
 
         try:
             # SPX data
@@ -1805,7 +1836,7 @@ class TradingBot:
                 'next_bar_time': next_bar_time,
             })
         except Exception as e:
-            logger.warning(f"Failed to send hourly update: {e}")
+            logger.warning(f"Failed to send market update: {e}")
 
     def _build_no_trade_summary(self, spx_open, spx_close, spx_change_pct, vix_level, vix_regime):
         """Build a human-readable summary of why no trades were taken."""
@@ -2009,8 +2040,8 @@ class TradingBot:
                 if self.bnb_enabled and self.bnb_strategy:
                     self.bnb_strategy.on_bar_complete(bar, current_price)
 
-                # Hourly market update notification
-                self._send_hourly_update_if_due(current_time)
+                # 30-minute market update notification (aligned with bar boundaries)
+                self._send_market_update_if_due(current_time)
 
             # Check parallel strategy tick-level signals (run every cycle, own timing)
             # These execute BEFORE the Daily Income limit gate so they're never
