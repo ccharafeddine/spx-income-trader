@@ -164,6 +164,7 @@ class PDTTracker:
         """Get database connection with WAL mode and timeout for concurrent access."""
         conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=10)
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
         return conn
 
     def _init_db(self):

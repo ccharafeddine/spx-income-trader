@@ -407,6 +407,10 @@ class DatabaseManager:
     def get_daily_counts_by_strategy(self, trade_date: date) -> Dict[str, int]:
         """Get trade counts grouped by strategy_type for a given date.
 
+        Only counts trades that were actually placed (active, closed, expired).
+        Excludes pending (order never filled) and cancelled records so they
+        don't inflate daily trade limits after a crash/restart.
+
         Returns:
             Dict mapping strategy name to trade count, e.g.
             {'daily_income': 1, 'orb': 0, 'tag_n_turn': 0, 'bnb': 0}
@@ -417,6 +421,7 @@ class DatabaseManager:
                 SELECT strategy_type, COUNT(*) as cnt
                 FROM trades
                 WHERE SUBSTR(entry_time, 1, 10) = ?
+                  AND status IN ('active', 'closed', 'expired')
                 GROUP BY strategy_type
             """, (trade_date,))
             return {row[0]: row[1] for row in cursor.fetchall()}
@@ -425,12 +430,14 @@ class DatabaseManager:
         """Get trade count and realized P&L for a given date.
 
         Used to restore in-memory counters after a mid-day restart.
+        Only counts trades that were actually placed (active, closed, expired).
+        Pending/cancelled records are excluded so they don't inflate counters.
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT
-                    COUNT(*) as trades_count,
+                    COUNT(CASE WHEN status IN ('active', 'closed', 'expired') THEN 1 END) as trades_count,
                     COALESCE(SUM(CASE WHEN status = 'closed' THEN pnl ELSE 0 END), 0.0) as realized_pnl,
                     COALESCE(SUM(CASE WHEN status = 'closed' AND pnl > 0 THEN 1 ELSE 0 END), 0) as wins,
                     COALESCE(SUM(CASE WHEN status = 'closed' AND pnl < 0 THEN 1 ELSE 0 END), 0) as losses
@@ -562,6 +569,7 @@ class DatabaseManager:
         """
         conn = sqlite3.connect(self.db_path, timeout=10)
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
         conn.row_factory = sqlite3.Row
         try:
             rows = conn.execute(
