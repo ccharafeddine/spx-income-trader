@@ -83,6 +83,11 @@ class TagNTurnStrategy:
         self.min_dte = config.get('min_dte', 3)
         self.max_dte = config.get('max_dte', 7)
 
+        # Stop / filter parameters
+        self.stop_buffer = config.get('stop_buffer', 5.0)
+        self.max_vix = config.get('max_vix', 0)  # 0 = no VIX filter
+        self.allow_bullish = config.get('allow_bullish', True)
+
         # Weekend hold prevention
         self.weekend_exit_enabled = config.get('weekend_exit_enabled', True)
         self.weekend_exit_time = config.get('weekend_exit_time', '15:00')
@@ -195,14 +200,14 @@ class TagNTurnStrategy:
             triggered = True
 
         if triggered:
-            # Calculate target (opposite BB) and stop (entry band)
+            # Calculate target (opposite BB) and stop (entry band + buffer)
             bands = self.bb_filter.bands
             if direction == 'bullish':
                 target_price = bands['upper']
-                stop_price = bands['lower'] - 5  # Slightly beyond lower band
+                stop_price = bands['lower'] - self.stop_buffer
             else:
                 target_price = bands['lower']
-                stop_price = bands['upper'] + 5  # Slightly beyond upper band
+                stop_price = bands['upper'] + self.stop_buffer
 
             signal = {
                 'strategy': 'tag_n_turn',
@@ -428,6 +433,13 @@ class TagNTurnStrategy:
 
             # Reversal direction is opposite of band tagged
             reversal = 'bullish' if band == 'lower' else 'bearish'
+
+            # Direction filter: skip bullish entries if disabled
+            if reversal == 'bullish' and not self.allow_bullish:
+                logger.debug(
+                    f"TAG 'N TURN: Skipping bullish setup (allow_bullish=false)"
+                )
+                return
 
             self.tag_info = {
                 'band': band,

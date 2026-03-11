@@ -364,18 +364,7 @@ class BacktestEngine:
         self._tnt_enabled = tnt_cfg.get('enabled', False)
         self._tnt_strat: Optional[TagNTurnStrategy] = None
         if self._tnt_enabled:
-            cfg = {
-                'enabled': True,
-                'bb_period': tnt_cfg.get('bb_period', 50),
-                'bb_std': tnt_cfg.get('bb_std', 2.0),
-                'pulse_threshold': tnt_cfg.get('pulse_threshold', 10.0),
-                'max_hold_days': tnt_cfg.get('max_hold_days', 7),
-                'use_credit_spreads': True,
-                'spread_width': tnt_cfg.get('spread_width', 10.0),
-                'min_credit': tnt_cfg.get('min_credit', 2.00),
-                'min_dte': tnt_cfg.get('min_dte', 3),
-                'max_dte': tnt_cfg.get('max_dte', 7),
-            }
+            cfg = {**tnt_cfg, 'enabled': True}
             self._tnt_strat = TagNTurnStrategy(cfg, persistence_path=tmp / 'tnt.json')
 
         # B&B (Bed & Breakfast)
@@ -573,9 +562,14 @@ class BacktestEngine:
             if (self._tnt_enabled and self._tnt_strat
                     and self._tnt_trades_today < 1
                     and not self._tnt_trade):
-                tnt_signal = self._tnt_strat.check_entry_signal(bar.close)
-                if tnt_signal:
-                    self._execute_tnt_entry(bar, bar_dt, tnt_signal, vix)
+                # VIX filter: skip TNT entries during high volatility
+                tnt_max_vix = getattr(self._tnt_strat, 'max_vix', 0)
+                if tnt_max_vix and vix > tnt_max_vix:
+                    pass  # Skip TNT in high-vol environment
+                else:
+                    tnt_signal = self._tnt_strat.check_entry_signal(bar.close)
+                    if tnt_signal:
+                        self._execute_tnt_entry(bar, bar_dt, tnt_signal, vix)
 
             # 0DTE slot: ORB -> DI (B&B is informational-only, no entry)
             if self._0dte_trades_today < 1 and not self._0dte_trade:
