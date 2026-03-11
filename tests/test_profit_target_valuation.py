@@ -444,8 +444,9 @@ class TestDryRunChainPricing:
 
         value = broker.get_position_value(spread)
 
-        # ask-side: short_ask(0.35) - long_bid(0.02) = 0.33
-        assert value == pytest.approx(0.33)
+        # mid-price: short_last(0.225) - long_last(0.07) = 0.155
+        # (backtest uses mid-prices to avoid double-counting BidAskModel slippage)
+        assert value == pytest.approx(0.155)
 
 
 # ============================================================================
