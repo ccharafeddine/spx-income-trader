@@ -11,6 +11,38 @@ import math
 from datetime import datetime, date
 from typing import Dict, Optional
 
+
+def _norm_cdf(x: float) -> float:
+    """Standard normal CDF (Abramowitz & Stegun approximation)."""
+    if x < -10:
+        return 0.0
+    if x > 10:
+        return 1.0
+    t = 1.0 / (1.0 + 0.2316419 * abs(x))
+    d = 0.3989422804014327  # 1 / sqrt(2 * pi)
+    p = d * math.exp(-0.5 * x * x) * (
+        t * (0.319381530 + t * (-0.356563782 + t * (
+            1.781477937 + t * (-1.821255978 + t * 1.330274429))))
+    )
+    return 1.0 - p if x >= 0 else p
+
+
+def _bs_price(S: float, K: float, T: float, sigma: float,
+              option_type: str = 'put') -> float:
+    """Black-Scholes price for a European option (no dividends, r=0)."""
+    if T <= 0 or sigma <= 0:
+        if option_type == 'call':
+            return max(0.0, S - K)
+        return max(0.0, K - S)
+
+    sqrt_T = math.sqrt(T)
+    d1 = (math.log(S / K) + 0.5 * sigma * sigma * T) / (sigma * sqrt_T)
+    d2 = d1 - sigma * sqrt_T
+
+    if option_type == 'call':
+        return S * _norm_cdf(d1) - K * _norm_cdf(d2)
+    return K * _norm_cdf(-d2) - S * _norm_cdf(-d1)
+
 import pytz
 
 from src.brokers.base import BrokerInterface
@@ -102,10 +134,10 @@ class BacktestBroker(BrokerInterface):
 
     def get_options_chain(self, symbol: str, expiration: str) -> Dict[float, Dict]:
         """
-        Generate synthetic options chain using Black-Scholes approximation.
+        Generate synthetic options chain using Black-Scholes pricing.
 
-        Uses the same logic as DryRunBroker._build_synthetic_chain() but
-        with VIX from historical data instead of live feed.
+        Uses VIX as implied volatility and proper BS math so that
+        time value decays realistically for 0DTE positions.
         """
         current_price = self._current_price
         if current_price <= 0:
@@ -124,6 +156,9 @@ class BacktestBroker(BrokerInterface):
                 else:
                     dte = 0.01
 
+        # Convert DTE from days to years for Black-Scholes
+        T = dte / 365.0
+
         # Generate strikes around ATM
         atm_strike = round(current_price / self.strike_interval) * self.strike_interval
         strikes = [atm_strike + (i * self.strike_interval) for i in range(-20, 21)]
@@ -132,17 +167,8 @@ class BacktestBroker(BrokerInterface):
         half_spread = self.bid_ask_spread / 2
 
         for strike in strikes:
-            moneyness = (current_price - strike) / current_price
-
-            call_intrinsic = max(0, current_price - strike)
-            put_intrinsic = max(0, strike - current_price)
-
-            time_factor = (max(dte, 0) ** 0.5) * implied_vol * current_price * 0.4
-            atm_factor = 1 - min(abs(moneyness) * 5, 0.9)
-            time_value = time_factor * atm_factor
-
-            call_mid = call_intrinsic + time_value
-            put_mid = put_intrinsic + time_value
+            call_mid = _bs_price(current_price, strike, T, implied_vol, 'call')
+            put_mid = _bs_price(current_price, strike, T, implied_vol, 'put')
 
             chain[strike] = {
                 'call_bid': max(0.05, call_mid - half_spread),
