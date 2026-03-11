@@ -946,6 +946,12 @@ class BacktestEngine:
         if not trade or trade.status != TradeStatus.ACTIVE:
             return
 
+        # Set correct DTE for swing position valuation (not 0DTE default)
+        if trade.spread.expiration:
+            exp_date = trade.spread.expiration.date() if hasattr(trade.spread.expiration, 'date') else trade.spread.expiration
+            remaining_dte = max((exp_date - trading_day).days, 0.01)
+            self.broker._current_dte = remaining_dte
+
         current_value = self.broker.get_position_value(trade.spread)
         trade.update_pnl(current_value)
 
@@ -963,6 +969,9 @@ class BacktestEngine:
                     'exit_price': bar.close,
                     'strategy': 'tag_n_turn',
                 }
+
+        # Restore DTE to 0DTE default for other position monitoring
+        self.broker._current_dte = 0.01
 
         if tnt_exit:
             reason = tnt_exit.get('reason', 'unknown')
