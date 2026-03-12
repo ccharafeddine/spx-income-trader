@@ -471,12 +471,20 @@ class NotificationManager:
         if open_positions > 0:
             fields.append({'name': 'Carry-Over Positions', 'value': str(open_positions), 'inline': True})
 
+        token_warning = data.get('token_warning')
+        if token_warning:
+            fields.append({'name': '\u26a0\ufe0f Token Warning', 'value': token_warning, 'inline': False})
+
+        color = DISCORD_BLUE
+        if token_warning:
+            color = DISCORD_YELLOW
+
         self._send_rich(
             "Market Open",
             "Bot is now watching for trade setups.",
             level='info',
             fields=fields,
-            color=DISCORD_BLUE,
+            color=color,
         )
 
     def send_bot_started(self, data: dict):
@@ -615,10 +623,18 @@ class NotificationManager:
 
         color = DISCORD_GREEN if daily_pnl >= 0 else DISCORD_RED
 
+        commissions = summary_data.get('commissions', 0)
+        net_pnl = summary_data.get('net_pnl')
+
         fields = [
             {'name': 'Trades', 'value': f"{trades} ({wins}W / {losses}L)", 'inline': True},
-            {'name': 'Daily P&L', 'value': f"${daily_pnl:+.2f}", 'inline': True},
         ]
+        if net_pnl is not None:
+            fields.append({'name': 'Gross P&L', 'value': f"${daily_pnl:+.2f}", 'inline': True})
+            fields.append({'name': 'Fees', 'value': f"-${commissions:.2f}", 'inline': True})
+            fields.append({'name': 'Net P&L', 'value': f"${net_pnl:+.2f}", 'inline': True})
+        else:
+            fields.append({'name': 'Daily P&L', 'value': f"${daily_pnl:+.2f}", 'inline': True})
         if streak:
             fields.append({'name': 'Streak', 'value': streak, 'inline': True})
         fields.append({'name': 'Weekly P&L', 'value': f"${weekly_pnl:+.2f}", 'inline': True})

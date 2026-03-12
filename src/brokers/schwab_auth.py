@@ -236,6 +236,42 @@ class SchwabAuth:
         logger.info("Schwab initial authentication completed successfully")
         return client
 
+    def proactive_refresh(self) -> bool:
+        """Force an access-token refresh to reset the 7-day refresh-token clock.
+
+        schwab-py's OAuth2 session requests a new refresh token every time it
+        refreshes the access token.  By forcing one refresh at startup, we
+        ensure the 7-day window restarts even if the bot was offline all
+        weekend.
+
+        Returns True if the refresh succeeded.
+        """
+        try:
+            client = self._get_or_create_client()
+            # Force the underlying OAuth2 session to refresh its access token.
+            # The session stores the token and calls update_token (which writes
+            # the token file), so we just need to trigger a fetch_token call.
+            session = client.session
+            token = session.token or {}
+
+            new_token = session.refresh_token(
+                session.token_endpoint,
+                refresh_token=token.get('refresh_token'),
+            )
+
+            if new_token and new_token.get('refresh_token'):
+                # Update metadata to reflect the new refresh-token timestamp
+                self._write_metadata()
+                logger.info("Proactive token refresh succeeded — 7-day clock reset")
+                return True
+
+            logger.warning("Proactive token refresh returned no refresh_token")
+            return False
+
+        except Exception as e:
+            logger.warning(f"Proactive token refresh failed: {e}")
+            return False
+
     def _write_metadata(self):
         """Write token creation timestamp to metadata file with restricted permissions."""
         meta = {

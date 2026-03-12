@@ -1558,7 +1558,7 @@ def api_status():
             balance_data = broker.get_account_balance()
             account['current_balance'] = round(float(balance_data.get('cash_available', 0)), 2)
         except Exception as e:
-            logger.debug(f"Could not fetch live cash balance: {e}")
+            logger.warning(f"Live balance fetch failed, using DB-calculated value: {e}")
 
     # Today's summary (after market close)
     today_summary = None
@@ -1571,6 +1571,8 @@ def api_status():
         flagged = [t for t in today_closed if t.get('flag') == 'LOW_CREDIT']
         valid = [t for t in today_closed if t.get('flag') != 'LOW_CREDIT']
         total_pnl = sum(t.get('pnl') or 0 for t in valid)
+        total_commissions = sum(t.get('commissions') or 0 for t in valid)
+        net_pnl = round(total_pnl - total_commissions, 2)
         wins = sum(1 for t in valid if (t.get('pnl') or 0) > 0)
         losses = sum(1 for t in valid if (t.get('pnl') or 0) < 0)
 
@@ -1588,6 +1590,8 @@ def api_status():
             'wins': wins,
             'losses': losses,
             'total_pnl': round(total_pnl, 2),
+            'commissions': round(total_commissions, 2),
+            'net_pnl': net_pnl if total_commissions > 0 else None,
             'result': 'WIN' if total_pnl > 0 else ('LOSS' if total_pnl < 0 else 'FLAT'),
         }
 
@@ -2757,6 +2761,9 @@ def api_journal():
             'time_in_trade_minutes': trade.get('time_in_trade_minutes'),
             'day_type': trade.get('day_type'),
             'daily_move_pct': trade.get('daily_move_pct'),
+            'commissions': trade.get('commissions') or 0,
+            'net_pnl': round((trade.get('pnl') or 0) - (trade.get('commissions') or 0), 2)
+                       if (trade.get('commissions') or 0) > 0 else None,
             'theoretical_credit': trade.get('theoretical_credit'),
             'actual_credit': trade.get('actual_credit'),
             'slippage': trade.get('slippage'),

@@ -535,6 +535,16 @@ class DesktopApp:
                                     f"Schwab token expires in {hrs:.1f} hours. "
                                     f"Plan to re-authenticate."
                                 )
+
+                            # Proactive refresh: reset the 7-day clock on every startup
+                            # so weekends/holidays can't cause silent expiration
+                            if token_health.get('action') != 'expired':
+                                if broker.auth.proactive_refresh():
+                                    token_health = broker.auth.check_token_health()
+                                    logger.info(
+                                        f"Token refreshed at startup — "
+                                        f"{token_health.get('hours_remaining', 0):.0f}h remaining"
+                                    )
                         except Exception as e:
                             logger.warning(f"Could not check token health: {e}")
                     elif active == 'etrade':

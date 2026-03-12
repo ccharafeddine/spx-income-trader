@@ -648,6 +648,9 @@ class PositionManager:
             except Exception as e:
                 logger.warning(f"Failed to save exit context: {e}")
 
+            # Capture commissions/fees from broker for this trade
+            self._capture_trade_fees(trade)
+
             # Record day trade for PDT tracking (if same-day active close)
             if self.pdt_tracker and trade.entry_time and trade.exit_time:
                 entry_date = trade.entry_time.date()
@@ -662,6 +665,27 @@ class PositionManager:
         except Exception as e:
             logger.error(f"Failed to exit trade: {e}", exc_info=True)
     
+    def _capture_trade_fees(self, trade):
+        """Capture commissions/fees from broker for entry and exit orders.
+
+        Queries the broker for fee details on each order and writes the
+        combined total to the trade's commissions field.  Failures are
+        logged but never block trade processing.
+        """
+        if not hasattr(self.broker, 'get_order_fees'):
+            return
+        try:
+            total_fees = 0.0
+            if trade.entry_order_id:
+                total_fees += self.broker.get_order_fees(trade.entry_order_id)
+            if trade.exit_order_id:
+                total_fees += self.broker.get_order_fees(trade.exit_order_id)
+            if total_fees > 0:
+                self.db.update_trade_commissions(trade.id, total_fees)
+                logger.info(f"Commissions captured for {trade.id[:8]}: ${total_fees:.2f}")
+        except Exception as e:
+            logger.warning(f"Failed to capture fees for trade {trade.id[:8]}: {e}")
+
     def has_open_position(self) -> bool:
         """Check if there are any open positions"""
         return len(self.open_trades) > 0
