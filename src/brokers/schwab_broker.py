@@ -671,25 +671,101 @@ class SchwabBroker(BrokerInterface):
     def _parse_order_response(self, order_data: dict) -> Dict:
         """Parse a Schwab order response into our standard format.
 
-        For spread orders (multi-leg), the fill price is the NET credit/debit
-        from the order-level 'price' field -- NOT the average of individual
-        leg prices.  Averaging legs produced wildly wrong entry prices that
-        inflated unrealized P&L and triggered false profit-target exits.
+        For spread orders, computes the actual net credit/debit from per-leg
+        execution fills in orderActivityCollection — NOT the order-level
+        'price' field (which is the limit price, not the actual fill).
+
+        Returns dict with 'status', 'fill_price', 'filled_quantity', and
+        optionally 'leg_fills' (per-leg detail) and 'order_fees'.
         """
         raw_status = order_data.get('status', 'UNKNOWN')
         normalized = _SCHWAB_STATUS_MAP.get(raw_status, 'not_found')
 
         fill_price = 0.0
         filled_quantity = int(order_data.get('filledQuantity', 0) or 0)
+        leg_fills = []
+        order_fees = 0.0
 
         # Determine if this is a multi-leg (spread) order
         order_legs = order_data.get('orderLegCollection', [])
         is_spread = len(order_legs) >= 2
 
         if is_spread:
-            # Spread orders: use the order-level price which is the NET
-            # credit/debit, not individual leg fills.
-            fill_price = float(order_data.get('price', 0) or 0)
+            # Build legId -> instruction map (1-indexed)
+            leg_instructions = {}
+            for i, leg in enumerate(order_legs):
+                leg_instructions[i + 1] = leg.get('instruction', '')
+
+            activities = order_data.get('orderActivityCollection', [])
+
+            if activities and filled_quantity > 0:
+                # Extract actual per-leg fill prices from execution data
+                sell_value = 0.0
+                buy_value = 0.0
+                sell_qty = 0
+                buy_qty = 0
+
+                for activity in activities:
+                    for exec_leg in activity.get('executionLegs', []):
+                        leg_id = exec_leg.get('legId', 0)
+                        price = float(exec_leg.get('price', 0) or 0)
+                        qty = int(exec_leg.get('quantity', 0) or 0)
+                        instruction = leg_instructions.get(leg_id, '')
+
+                        leg_fee = (
+                            float(exec_leg.get('commission', 0) or 0)
+                            + float(exec_leg.get('fees', 0) or 0)
+                            + float(exec_leg.get('miscFees', 0) or 0)
+                        )
+                        order_fees += leg_fee
+
+                        leg_fills.append({
+                            'leg_id': leg_id,
+                            'instruction': instruction,
+                            'price': price,
+                            'quantity': qty,
+                            'fees': round(leg_fee, 4),
+                        })
+
+                        if 'SELL' in instruction:
+                            sell_value += price * qty
+                            sell_qty += qty
+                        elif 'BUY' in instruction:
+                            buy_value += price * qty
+                            buy_qty += qty
+
+                if sell_qty > 0 and buy_qty > 0:
+                    avg_sell = sell_value / sell_qty
+                    avg_buy = buy_value / buy_qty
+                    # Net spread price: positive for credits, use abs()
+                    # so it works as both credit (entry) and debit (close)
+                    fill_price = abs(round(avg_sell - avg_buy, 4))
+
+                    limit_price = float(order_data.get('price', 0) or 0)
+                    if limit_price > 0:
+                        diff = round(fill_price - limit_price, 4)
+                        logger.info(
+                            f"[FILL QUALITY] limit=${limit_price:.4f}, "
+                            f"actual=${fill_price:.4f}, diff=${diff:+.4f} "
+                            f"(sell_avg=${avg_sell:.4f}, buy_avg=${avg_buy:.4f}, "
+                            f"fees=${order_fees:.2f})"
+                        )
+                else:
+                    # Execution legs found but couldn't classify sell/buy
+                    fill_price = float(order_data.get('price', 0) or 0)
+                    logger.warning(
+                        f"Could not compute net from execution legs "
+                        f"(sell_qty={sell_qty}, buy_qty={buy_qty}), "
+                        f"using limit price ${fill_price:.4f}"
+                    )
+            else:
+                # No execution data yet — fall back to order-level limit price
+                if filled_quantity > 0:
+                    fill_price = float(order_data.get('price', 0) or 0)
+                    logger.warning(
+                        f"No orderActivityCollection for filled spread, "
+                        f"using limit price ${fill_price:.4f}"
+                    )
         else:
             # Single-leg orders: use execution leg price
             activities = order_data.get('orderActivityCollection', [])
@@ -705,11 +781,15 @@ class SchwabBroker(BrokerInterface):
         if fill_price == 0 and filled_quantity > 0:
             fill_price = float(order_data.get('price', 0) or 0)
 
-        return {
+        result = {
             'status': normalized,
             'fill_price': float(fill_price),
             'filled_quantity': filled_quantity,
         }
+        if leg_fills:
+            result['leg_fills'] = leg_fills
+            result['order_fees'] = round(order_fees, 2)
+        return result
 
     def _extract_order_id(self, response) -> Optional[int]:
         """Extract order ID from place_order response.
@@ -867,6 +947,9 @@ class SchwabBroker(BrokerInterface):
         acct = data.get('securitiesAccount', {})
         balances = acct.get('currentBalances', {})
 
+        # Log all balance fields for diagnostics
+        logger.info(f"[SCHWAB BALANCES] {balances}")
+
         # Sum unrealized P&L from OPTION positions only (not ETFs, equities, cash)
         # The bot only manages SPX options; including other holdings would
         # pollute the unrealized P&L displayed on the dashboard.
@@ -877,9 +960,11 @@ class SchwabBroker(BrokerInterface):
             if asset_type == 'OPTION':
                 unrealized_pnl += float(pos.get('currentDayProfitLoss', 0) or 0)
 
+        cash_available = float(balances.get('cashBalance', 0) or 0)
+
         return {
             'net_account_value': float(balances.get('liquidationValue', 0) or 0),
-            'cash_available': float(balances.get('cashBalance', 0) or 0),
+            'cash_available': cash_available,
             'buying_power': float(balances.get('buyingPower', 0) or 0),
             'unrealized_pnl': round(unrealized_pnl, 2),
         }

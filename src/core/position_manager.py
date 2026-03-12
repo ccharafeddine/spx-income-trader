@@ -298,17 +298,37 @@ class PositionManager:
                 )
 
             # Create trade record (reusing the pending ID so DB row is updated)
+            actual_fill = order_status['fill_price']
             trade = Trade(
                 id=pending_trade_id,
                 spread=spread,
                 status=TradeStatus.ACTIVE,
                 setup_bar=setup_bar,
-                entry_price=order_status['fill_price'],
+                entry_price=actual_fill,
                 entry_time=datetime.now(self.tz),
                 entry_order_id=order_id,
                 quantity=actual_quantity
             )
             trade._strategy_type = strategy_type  # Carried through to exit notifications
+
+            # Update credit_received with actual fill so P&L cap and
+            # dashboard calculations use the real execution price
+            original_credit = spread.credit_received
+            spread.credit_received = actual_fill
+            if abs(actual_fill - original_credit) > 0.001:
+                logger.info(
+                    f"  Credit updated: theoretical=${original_credit:.4f} -> "
+                    f"actual=${actual_fill:.4f}"
+                )
+
+            # Log per-leg fill details if available
+            if order_status.get('leg_fills'):
+                for lf in order_status['leg_fills']:
+                    logger.info(
+                        f"  Entry leg {lf['leg_id']}: {lf['instruction']} "
+                        f"${lf['price']:.4f} x{lf['quantity']} "
+                        f"(fees=${lf['fees']:.4f})"
+                    )
 
             # Add to open trades
             self.open_trades.append(trade)
@@ -607,6 +627,15 @@ class PositionManager:
                     return
 
                 exit_price = order_status['fill_price']
+
+                # Log per-leg fill details if available
+                if order_status.get('leg_fills'):
+                    for lf in order_status['leg_fills']:
+                        logger.info(
+                            f"  Exit leg {lf['leg_id']}: {lf['instruction']} "
+                            f"${lf['price']:.4f} x{lf['quantity']} "
+                            f"(fees=${lf['fees']:.4f})"
+                        )
 
                 trade.close(
                     exit_price=exit_price,
