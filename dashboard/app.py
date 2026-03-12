@@ -72,6 +72,63 @@ app = Flask(__name__)
 app.secret_key = os.urandom(32)
 ET = pytz.timezone('US/Eastern')
 
+# ---------------------------------------------------------------------------
+# Cached broker instance — avoids creating multiple schwab-py clients that
+# each try to refresh the single-use refresh token.
+# ---------------------------------------------------------------------------
+_cached_broker = None
+_cached_broker_settings_hash = None
+
+
+def _get_cached_broker():
+    """Return a cached broker instance, creating one if needed.
+
+    This prevents the dashboard from creating a new schwab-py client on
+    every API call, which would consume single-use Schwab refresh tokens
+    and invalidate the token for the running bot.
+    """
+    global _cached_broker, _cached_broker_settings_hash
+    settings = _load_settings()
+    active = settings.get('broker', {}).get('active', 'dry_run')
+    # Simple hash to detect settings changes
+    s_hash = (active, str(settings.get('broker', {}).get(active, {})))
+    if _cached_broker is not None and _cached_broker_settings_hash == s_hash:
+        return _cached_broker
+    from src.brokers.broker_factory import get_broker
+    _cached_broker = get_broker(settings)
+    _cached_broker_settings_hash = s_hash
+    return _cached_broker
+
+
+# ---------------------------------------------------------------------------
+# Cached Schwab account balance — 15-second TTL to avoid redundant API calls
+# when multiple browser tabs poll /api/status every ~25 seconds.
+# ---------------------------------------------------------------------------
+_BALANCE_CACHE_TTL = 15  # seconds
+_cached_balance = None       # dict from broker.get_account_balance()
+_cached_balance_ts = 0.0     # time.time() when cached
+
+
+def _get_schwab_balance():
+    """Fetch Schwab account balance, returning cached result within TTL.
+
+    Returns the balance dict on success, or None on failure (logged at WARNING).
+    Thread-safe: worst case two concurrent calls both fetch — no corruption.
+    """
+    global _cached_balance, _cached_balance_ts
+    now = time.time()
+    if _cached_balance is not None and (now - _cached_balance_ts) < _BALANCE_CACHE_TTL:
+        return _cached_balance
+    try:
+        broker = _get_cached_broker()
+        balance = broker.get_account_balance()
+        _cached_balance = balance
+        _cached_balance_ts = time.time()
+        return balance
+    except Exception as e:
+        logger.warning(f"Schwab balance fetch failed, using DB fallback: {e}")
+        return None
+
 # Per-session API token for CSRF protection.
 # Embedded in every served page; validated on all state-changing requests.
 # Since the dashboard binds to 127.0.0.1, this token prevents cross-origin
@@ -1482,16 +1539,11 @@ def api_pdt_status():
         portfolio_cfg = STRATEGY_PARAMS.get('portfolio', {})
         account_equity = portfolio_cfg.get('account_size', 0)
         if mode == 'LIVE':
-            try:
-                settings = _load_settings()
-                from src.brokers.broker_factory import get_broker
-                _broker = get_broker(settings)
-                _bal = _broker.get_account_balance()
+            _bal = _get_schwab_balance()
+            if _bal is not None:
                 _nav = float(_bal.get('net_account_value', 0))
                 if _nav > 0:
                     account_equity = _nav
-            except Exception:
-                pass
 
         tracker = PDTTracker(
             db_path=DATABASE_PATH,
@@ -1560,20 +1612,19 @@ def api_status():
             'closed_trades': [],
         }
 
-    # In live mode, fetch actual balances from broker
+    # In live mode, fetch actual balances from Schwab (cached 15s)
     if mode == 'LIVE':
-        try:
-            settings = _load_settings()
-            from src.brokers.broker_factory import get_broker
-            broker = get_broker(settings)
-            balance_data = broker.get_account_balance()
+        balance_data = _get_schwab_balance()
+        if balance_data is not None:
             nav = float(balance_data.get('net_account_value', 0))
             cash = float(balance_data.get('cash_available', 0))
             if nav > 0:
                 account['total_equity'] = round(nav, 2)
             account['current_balance'] = round(cash, 2)
-        except Exception as e:
-            logger.warning(f"Live balance fetch failed, using DB-calculated value: {e}")
+            # Use Schwab-reported unrealized P&L when positions are open
+            schwab_unrealized = balance_data.get('unrealized_pnl')
+            if schwab_unrealized is not None and account.get('positions'):
+                account['unrealized_pnl'] = round(schwab_unrealized, 2)
 
     # Today's summary (after market close)
     today_summary = None
@@ -1859,8 +1910,16 @@ def api_schwab_auth_status():
             callback_url=schwab_creds.get('callback_url', 'https://127.0.0.1'),
             token_path=schwab_cfg.get('token_path'),
         )
-        authenticated = auth.is_authenticated()
+        # IMPORTANT: Do NOT call auth.is_authenticated() here — that creates
+        # a schwab-py client which triggers an access-token refresh.  Schwab
+        # refresh tokens are single-use, so if the running bot already consumed
+        # the one on disk, this second refresh will fail and invalidate the
+        # token.  Instead, check the token file existence + metadata only.
+        token_file_exists = os.path.exists(auth.token_path)
         token_status = auth.get_token_status()
+        # Token is "authenticated" if the file exists and the metadata says
+        # the refresh token hasn't expired yet.
+        authenticated = token_file_exists and token_status.get('valid', False)
         return jsonify({
             'configured': True,
             'authenticated': authenticated,
@@ -5564,8 +5623,7 @@ def api_set_trading_mode():
     if mode == 'live':
         # Save current balance as dry-run balance, fetch live balance from broker
         try:
-            from src.brokers.broker_factory import get_broker
-            broker = get_broker(settings)
+            broker = _get_cached_broker()
             if hasattr(broker, 'connect'):
                 broker.connect()
             balance_data = broker.get_account_balance()
@@ -5667,10 +5725,14 @@ def api_validate_live():
 
     if creds_ok:
         try:
-            from src.brokers.broker_factory import get_broker
-            broker = get_broker(settings)
+            broker = _get_cached_broker()
             if active_broker == 'schwab':
-                connected = broker.auth.is_authenticated()
+                # Use file-based check to avoid consuming the single-use
+                # refresh token that the running bot holds in memory.
+                connected = (
+                    os.path.exists(broker.auth.token_path)
+                    and broker.auth.get_token_status().get('valid', False)
+                )
             elif active_broker == 'etrade':
                 connected = broker.connect() if hasattr(broker, 'connect') else broker.auth.is_authenticated()
             else:

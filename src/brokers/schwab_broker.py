@@ -867,10 +867,16 @@ class SchwabBroker(BrokerInterface):
         acct = data.get('securitiesAccount', {})
         balances = acct.get('currentBalances', {})
 
+        # Sum unrealized P&L from open positions (if present in the response)
+        unrealized_pnl = 0.0
+        for pos in acct.get('positions', []):
+            unrealized_pnl += float(pos.get('currentDayProfitLoss', 0) or 0)
+
         return {
             'net_account_value': float(balances.get('liquidationValue', 0) or 0),
             'cash_available': float(balances.get('cashBalance', 0) or 0),
             'buying_power': float(balances.get('buyingPower', 0) or 0),
+            'unrealized_pnl': round(unrealized_pnl, 2),
         }
 
     def get_order_fees(self, order_id: str) -> float:
