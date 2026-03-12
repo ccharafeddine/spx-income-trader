@@ -619,12 +619,15 @@ class TradingBot:
                 'open_positions': _open_count,
             })
         
-        # Log system event
-        self.db.log_event("bot_started", "Trading bot started", {
-            "mode": TRADING_MODE,
-            "dte0_trades": self.dte0_trades_today,
-            "tnt_trades": self.tnt_trades_today
-        })
+        # Log system event (non-fatal if DB is locked)
+        try:
+            self.db.log_event("bot_started", "Trading bot started", {
+                "mode": TRADING_MODE,
+                "dte0_trades": self.dte0_trades_today,
+                "tnt_trades": self.tnt_trades_today
+            })
+        except Exception as e:
+            logger.warning(f"Failed to log bot_started event: {e}")
         
         # Resolve any trades that expired while bot was offline
         try:

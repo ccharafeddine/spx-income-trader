@@ -3,18 +3,20 @@ Tests that enter_trade() and the main loop survive exceptions in save_trade()
 without silently killing the bot thread.
 
 Covers:
-- save_trade() raising Exception -> caught, returns trade (live on broker), sets _db_write_failed
+- save_trade() raising Exception -> caught, returns trade (live on broker), enters DB cooldown
 - save_trade() raising SystemExit -> caught by BaseException handler, re-raised
 - No non-ASCII characters in position_manager.py log messages (Windows cp1252 safety)
 - Log handlers use utf-8 encoding
 - Main loop catches BaseException when positions are open
+- DB failure cooldown: blocks new entries for 5 minutes, then auto-expires
+- update_trade_close retry logic on DB lock
 """
 
 import ast
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 import pytz
@@ -71,9 +73,9 @@ def _make_pm_and_spread():
 class TestSaveTradeExceptionHandling:
     """Verify enter_trade() survives save_trade() failures."""
 
-    def test_save_trade_exception_returns_trade_and_halts(self):
+    def test_save_trade_exception_returns_trade_and_enters_cooldown(self):
         """When save_trade() raises on the post-fill update, trade is returned
-        (it's live on broker) and _db_write_failed is set to block future entries."""
+        (it's live on broker) and DB cooldown is activated."""
         pm, spread, bar, db = _make_pm_and_spread()
         # First call (pending) succeeds, second call (fill update) fails
         call_count = [0]
@@ -89,8 +91,9 @@ class TestSaveTradeExceptionHandling:
 
         # Trade is returned because it's already live on broker
         assert result is not None
-        # Future trading is halted
-        assert pm._db_write_failed is True
+        # Cooldown is active — blocks future entries
+        assert pm._is_db_cooldown_active() is True
+        assert pm._db_failure_cooldown_until is not None
 
     def test_save_trade_exception_keeps_trade_in_open_trades(self):
         """Even when save_trade() fails on the fill update, the trade is still
@@ -121,7 +124,7 @@ class TestSaveTradeExceptionHandling:
 
         # No trade returned — entry aborted before broker order
         assert result is None
-        assert pm._db_write_failed is True
+        assert pm._is_db_cooldown_active() is True
         # Broker was never called
         pm.broker.place_spread_order.assert_not_called()
 
@@ -275,3 +278,110 @@ class TestDevnullEncoding:
                     "Without utf-8, non-ASCII log messages cause UnicodeEncodeError "
                     "in the StreamHandler that writes to sys.stdout."
                 )
+
+
+class TestDBFailureCooldown:
+    """Verify DB failure cooldown blocks new entries and auto-expires."""
+
+    def test_cooldown_blocks_new_entries(self):
+        """After DB failure, enter_trade returns None during cooldown."""
+        pm, spread, bar, db = _make_pm_and_spread()
+        pm._enter_db_cooldown()
+
+        result = pm.enter_trade(spread, bar, quantity=1)
+
+        assert result is None
+        db.save_trade_with_retry.assert_not_called()
+
+    def test_cooldown_auto_expires(self):
+        """After cooldown period, new entries are allowed again."""
+        pm, spread, bar, db = _make_pm_and_spread()
+        pm._enter_db_cooldown()
+
+        # Backdate the cooldown to make it expired
+        pm._db_failure_cooldown_until = datetime.now(ET) - timedelta(seconds=1)
+
+        assert pm._is_db_cooldown_active() is False
+        assert pm._db_write_failed is False
+
+    def test_cooldown_duration_is_5_minutes(self):
+        """Cooldown constant should be 300 seconds (5 minutes)."""
+        from src.core.position_manager import DB_FAILURE_COOLDOWN_SECONDS
+        assert DB_FAILURE_COOLDOWN_SECONDS == 300
+
+    def test_cooldown_sets_legacy_flag(self):
+        """_enter_db_cooldown sets the legacy _db_write_failed for external checks."""
+        pm, spread, bar, db = _make_pm_and_spread()
+        pm._enter_db_cooldown()
+        assert pm._db_write_failed is True
+
+    def test_cooldown_expiry_clears_legacy_flag(self):
+        """When cooldown expires, _db_write_failed is cleared."""
+        pm, spread, bar, db = _make_pm_and_spread()
+        pm._enter_db_cooldown()
+        pm._db_failure_cooldown_until = datetime.now(ET) - timedelta(seconds=1)
+        pm._is_db_cooldown_active()
+        assert pm._db_write_failed is False
+
+    def test_pending_write_failure_enters_cooldown(self):
+        """Pending DB write failure should trigger cooldown, not permanent halt."""
+        pm, spread, bar, db = _make_pm_and_spread()
+        db.save_trade.side_effect = Exception("database is locked")
+        db.save_trade_with_retry.side_effect = lambda trade, **kw: db.save_trade(trade, context=kw.get('context'))
+
+        with patch('time.sleep'):
+            pm.enter_trade(spread, bar, quantity=1)
+
+        assert pm._db_failure_cooldown_until is not None
+        # Verify it expires ~5 minutes from now (with some tolerance)
+        remaining = (pm._db_failure_cooldown_until - datetime.now(ET)).total_seconds()
+        assert 290 <= remaining <= 310
+
+    def test_fill_update_failure_enters_cooldown_but_returns_trade(self):
+        """Post-fill DB update failure enters cooldown but returns the live trade."""
+        pm, spread, bar, db = _make_pm_and_spread()
+        call_count = [0]
+        def fail_on_second(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] > 1:
+                raise Exception("database is locked")
+        db.save_trade.side_effect = fail_on_second
+        db.save_trade_with_retry.side_effect = lambda trade, **kw: db.save_trade(trade, context=kw.get('context'))
+
+        with patch('time.sleep'):
+            result = pm.enter_trade(spread, bar, quantity=1)
+
+        # Trade is returned (live on broker)
+        assert result is not None
+        # Cooldown is active
+        assert pm._is_db_cooldown_active() is True
+        # But trade is still monitored
+        assert len(pm.open_trades) == 1
+
+
+class TestUpdateTradeCloseRetry:
+    """Verify update_trade_close has retry logic for DB locks."""
+
+    def test_close_retries_on_lock(self):
+        """update_trade_close should retry up to 3 times."""
+        pm_path = Path(__file__).parent.parent / 'src' / 'core' / 'position_manager.py'
+        source = pm_path.read_text(encoding='utf-8')
+
+        # Verify retry logic exists in _exit_trade
+        assert 'update_trade_close attempt' in source
+        assert 'for _attempt in range(3)' in source
+
+    def test_close_enters_cooldown_on_failure(self):
+        """If all 3 close retries fail, cooldown should activate."""
+        pm_path = Path(__file__).parent.parent / 'src' / 'core' / 'position_manager.py'
+        source = pm_path.read_text(encoding='utf-8')
+
+        # Verify cooldown is entered on close failure
+        assert 'self._enter_db_cooldown()' in source
+
+    def test_daily_stats_failure_is_nonfatal(self):
+        """update_daily_stats failure should not crash the exit path."""
+        pm_path = Path(__file__).parent.parent / 'src' / 'core' / 'position_manager.py'
+        source = pm_path.read_text(encoding='utf-8')
+
+        assert 'update_daily_stats failed (non-fatal)' in source

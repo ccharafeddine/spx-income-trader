@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import uuid
 import pytz
@@ -14,6 +14,9 @@ if TYPE_CHECKING:
     from .pdt_tracker import PDTTracker
 
 logger = logging.getLogger(__name__)
+
+# Cooldown period after a DB write failure — no new trades during this window.
+DB_FAILURE_COOLDOWN_SECONDS = 300  # 5 minutes
 
 
 class PositionManager:
@@ -48,6 +51,11 @@ class PositionManager:
         self._day_open: Optional[float] = None
         self._prev_close: Optional[float] = None
 
+        # DB failure cooldown — blocks new entries for DB_FAILURE_COOLDOWN_SECONDS
+        # after a write failure.  Replaces the old permanent _db_write_failed flag
+        # so the bot can recover automatically without a restart.
+        self._db_failure_cooldown_until: Optional[datetime] = None
+
         if pdt_tracker:
             logger.info("PositionManager initialized with PDT protection")
         else:
@@ -59,13 +67,43 @@ class PositionManager:
         self._prev_close = prev_close
         logger.info(f"Daily cache set: day_open=${day_open:,.2f}, prev_close=${prev_close:,.2f}")
 
+    def _enter_db_cooldown(self):
+        """Enter a cooldown period after a DB write failure.
+
+        During cooldown, no new trades are allowed.  The bot keeps running
+        (monitoring existing positions, processing exits) but won't attempt
+        new entries that would require DB writes.
+        """
+        self._db_failure_cooldown_until = (
+            datetime.now(self.tz) + timedelta(seconds=DB_FAILURE_COOLDOWN_SECONDS)
+        )
+        # Keep legacy flag for any external code that checks it
+        self._db_write_failed = True
+        logger.critical(
+            f"DB failure cooldown active for {DB_FAILURE_COOLDOWN_SECONDS}s -- "
+            f"no new trades until {self._db_failure_cooldown_until.strftime('%H:%M:%S')} ET"
+        )
+
+    def _is_db_cooldown_active(self) -> bool:
+        """Check whether the DB failure cooldown is still active."""
+        if self._db_failure_cooldown_until is None:
+            return False
+        now = datetime.now(self.tz)
+        if now >= self._db_failure_cooldown_until:
+            # Cooldown expired — clear it
+            logger.info("DB failure cooldown expired -- new entries allowed")
+            self._db_failure_cooldown_until = None
+            self._db_write_failed = False
+            return False
+        return True
+
     def _send_db_failure_alert(self, trade, error):
         """Send a critical Discord notification when a DB write fails for a live trade."""
         try:
             from src.utils.notifications import NotificationManager, DISCORD_RED
             notifier = NotificationManager()
             notifier._send_rich(
-                subject="DATABASE WRITE FAILED — LIVE TRADE UNRECORDED",
+                subject="DATABASE WRITE FAILED - LIVE TRADE UNRECORDED",
                 message=(
                     f"Trade {trade.id} is LIVE on broker but the database write "
                     f"failed after all retries.\n"
@@ -137,11 +175,12 @@ class PositionManager:
             Trade object if successful, None otherwise
         """
         try:
-            # Block new entries if a previous DB write failed
-            if getattr(self, '_db_write_failed', False):
-                logger.critical(
-                    "BLOCKED: Cannot enter new trade -- previous DB write failed. "
-                    "Fix the database issue and restart the bot."
+            # Block new entries during DB failure cooldown
+            if self._is_db_cooldown_active():
+                remaining = (self._db_failure_cooldown_until - datetime.now(self.tz)).total_seconds()
+                logger.warning(
+                    f"BLOCKED: DB failure cooldown active ({remaining:.0f}s remaining). "
+                    f"No new trades until {self._db_failure_cooldown_until.strftime('%H:%M:%S')} ET."
                 )
                 return None
 
@@ -216,7 +255,7 @@ class PositionManager:
                     f"Cannot write pending trade to DB: {db_err}. "
                     f"Aborting entry to prevent unrecorded live trade."
                 )
-                self._db_write_failed = True
+                self._enter_db_cooldown()
                 return None
 
             # Place order
@@ -367,9 +406,9 @@ class PositionManager:
                 logger.critical(
                     f"DATABASE WRITE FAILED for live trade {trade.id}: {db_err}. "
                     f"Trade is LIVE on broker (pending record exists). "
-                    f"Halting all further trading until resolved."
+                    f"Entering cooldown -- no new trades for {DB_FAILURE_COOLDOWN_SECONDS}s."
                 )
-                self._db_write_failed = True
+                self._enter_db_cooldown()
                 # Send Discord alert so the operator knows immediately
                 self._send_db_failure_alert(trade, db_err)
                 # Trade stays in open_trades so it can still be monitored/closed
@@ -610,8 +649,35 @@ class PositionManager:
             })
 
             # Update database (use targeted UPDATE to preserve entry context)
-            self.db.update_trade_close(trade)
-            self.db.update_daily_stats(trade.entry_time.date())
+            # Retry with backoff — DB lock during close is recoverable and must
+            # not crash the bot or lose the exit record.
+            import time as _time_mod
+            _close_saved = False
+            for _attempt in range(3):
+                try:
+                    self.db.update_trade_close(trade)
+                    _close_saved = True
+                    break
+                except Exception as _db_close_err:
+                    if _attempt < 2:
+                        _delay = (0.1, 0.5)[min(_attempt, 1)]
+                        logger.warning(
+                            f"update_trade_close attempt {_attempt + 1}/3 failed: "
+                            f"{_db_close_err}. Retrying in {_delay}s..."
+                        )
+                        _time_mod.sleep(_delay)
+                    else:
+                        logger.critical(
+                            f"update_trade_close FAILED for trade {trade.id} after 3 attempts: "
+                            f"{_db_close_err}. Trade closed in memory but DB not updated."
+                        )
+                        self._enter_db_cooldown()
+
+            if _close_saved:
+                try:
+                    self.db.update_daily_stats(trade.entry_time.date())
+                except Exception as _stats_err:
+                    logger.warning(f"update_daily_stats failed (non-fatal): {_stats_err}")
 
             # Build and save exit context for analytics
             try:
