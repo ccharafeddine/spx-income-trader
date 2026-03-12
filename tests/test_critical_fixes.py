@@ -248,24 +248,22 @@ portfolio:
 class TestDBWriteFailureHaltsTrading:
     """Verify that a DB write failure prevents further trade entries."""
 
-    def test_db_write_failed_flag_blocks_new_entries(self):
+    def test_db_cooldown_blocks_new_entries(self):
         from src.core.position_manager import PositionManager
-        pm = MagicMock(spec=PositionManager)
-        pm._db_write_failed = True
-        pm.enter_trade = PositionManager.enter_trade.__get__(pm)
+        from tests.test_enter_trade_resilience import _make_pm_and_spread
 
-        result = pm.enter_trade(
-            spread=MagicMock(),
-            setup_bar=MagicMock(),
-            quantity=1,
-        )
+        pm, spread, bar, _ = _make_pm_and_spread()
+        pm._enter_db_cooldown()
+
+        result = pm.enter_trade(spread, bar, quantity=1)
         assert result is None
 
-    def test_db_write_failed_flag_not_set_by_default(self):
-        """New PositionManager should not have _db_write_failed set."""
-        from src.core.position_manager import PositionManager
-        pm = PositionManager.__new__(PositionManager)
-        assert not getattr(pm, '_db_write_failed', False)
+    def test_db_cooldown_not_active_by_default(self):
+        """New PositionManager should not have cooldown active."""
+        from tests.test_enter_trade_resilience import _make_pm_and_spread
+
+        pm, _, _, _ = _make_pm_and_spread()
+        assert pm._is_db_cooldown_active() is False
 
 
 # ============================================================================

@@ -534,17 +534,26 @@ class TestSchwabAuth:
     def test_token_fresh_not_expiring(self):
         """A 1-day-old token should not be expiring soon."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            token_path = os.path.join(tmpdir, 'schwab_token.json')
             meta_path = os.path.join(tmpdir, 'schwab_token_meta.json')
             auth = SchwabAuth(
                 app_key='test', app_secret='test',
-                token_path=os.path.join(tmpdir, 'schwab_token.json'),
+                token_path=token_path,
             )
             auth._meta_path = meta_path
+
+            # Create dummy token file with mtime matching meta
+            created = datetime.now() - timedelta(days=1)
+            with open(token_path, 'w') as f:
+                json.dump({'token': {}}, f)
+            # Set mtime to match the meta timestamp
+            mtime = created.timestamp()
+            os.utime(token_path, (mtime, mtime))
 
             # Write metadata with token created 1 day ago
             with open(meta_path, 'w') as f:
                 json.dump({
-                    'token_created_at': (datetime.now() - timedelta(days=1)).isoformat(),
+                    'token_created_at': created.isoformat(),
                     'refresh_token_lifetime_days': 7,
                 }, f)
 
@@ -555,16 +564,23 @@ class TestSchwabAuth:
     def test_token_6_days_old_expiring_soon(self):
         """A 6-day-old token should be expiring soon (< 48 hours left)."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            token_path = os.path.join(tmpdir, 'schwab_token.json')
             meta_path = os.path.join(tmpdir, 'schwab_token_meta.json')
             auth = SchwabAuth(
                 app_key='test', app_secret='test',
-                token_path=os.path.join(tmpdir, 'schwab_token.json'),
+                token_path=token_path,
             )
             auth._meta_path = meta_path
 
+            created = datetime.now() - timedelta(days=6)
+            with open(token_path, 'w') as f:
+                json.dump({'token': {}}, f)
+            mtime = created.timestamp()
+            os.utime(token_path, (mtime, mtime))
+
             with open(meta_path, 'w') as f:
                 json.dump({
-                    'token_created_at': (datetime.now() - timedelta(days=6)).isoformat(),
+                    'token_created_at': created.isoformat(),
                 }, f)
 
             status = auth.get_token_status()
@@ -574,16 +590,23 @@ class TestSchwabAuth:
     def test_token_7_days_old_expired(self):
         """A 7+ day old token should show as expired."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            token_path = os.path.join(tmpdir, 'schwab_token.json')
             meta_path = os.path.join(tmpdir, 'schwab_token_meta.json')
             auth = SchwabAuth(
                 app_key='test', app_secret='test',
-                token_path=os.path.join(tmpdir, 'schwab_token.json'),
+                token_path=token_path,
             )
             auth._meta_path = meta_path
 
+            created = datetime.now() - timedelta(days=8)
+            with open(token_path, 'w') as f:
+                json.dump({'token': {}}, f)
+            mtime = created.timestamp()
+            os.utime(token_path, (mtime, mtime))
+
             with open(meta_path, 'w') as f:
                 json.dump({
-                    'token_created_at': (datetime.now() - timedelta(days=8)).isoformat(),
+                    'token_created_at': created.isoformat(),
                 }, f)
 
             status = auth.get_token_status()
@@ -598,14 +621,17 @@ class TestSchwabAuth:
             auth = SchwabAuth(app_key='test', app_secret='test', token_path=token_path)
             auth._meta_path = meta_path
 
-            # Create token file so get_token_status reports valid=True
+            created = datetime.now() - timedelta(days=5)
+            # Create token file with mtime matching meta
             with open(token_path, 'w') as f:
                 f.write('{}')
+            mtime = created.timestamp()
+            os.utime(token_path, (mtime, mtime))
 
             # Token created 5 days ago (48 hours remaining)
             with open(meta_path, 'w') as f:
                 json.dump({
-                    'token_created_at': (datetime.now() - timedelta(days=5)).isoformat(),
+                    'token_created_at': created.isoformat(),
                 }, f)
 
             # Within 72 hours? Yes (48h remaining < 72)

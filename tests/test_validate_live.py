@@ -105,7 +105,7 @@ def test_sandbox_warning_allows_proceed(mock_settings, mock_creds, client):
     mock_broker.get_account_balance.return_value = {'net_account_value': 50000.0}
     mock_broker.get_options_chain.return_value = [{'strike': 5000}, {'strike': 5010}]
 
-    with patch('src.brokers.broker_factory.get_broker', return_value=mock_broker):
+    with patch('dashboard.app._get_cached_broker', return_value=mock_broker):
         data = _post_validate(client)
 
     assert data['can_proceed'] is True
@@ -128,7 +128,7 @@ def test_connection_failure_blocks(mock_settings, mock_creds, client):
     mock_broker = MagicMock()
     mock_broker.connect.return_value = False
 
-    with patch('src.brokers.broker_factory.get_broker', return_value=mock_broker):
+    with patch('dashboard.app._get_cached_broker', return_value=mock_broker):
         data = _post_validate(client)
 
     assert data['can_proceed'] is False
@@ -151,7 +151,7 @@ def test_options_failure_blocks(mock_settings, mock_creds, client):
     mock_broker.get_account_balance.return_value = {'net_account_value': 50000.0}
     mock_broker.get_options_chain.return_value = []
 
-    with patch('src.brokers.broker_factory.get_broker', return_value=mock_broker):
+    with patch('dashboard.app._get_cached_broker', return_value=mock_broker):
         data = _post_validate(client)
 
     assert data['can_proceed'] is False
@@ -176,7 +176,7 @@ def test_all_checks_pass(mock_settings, mock_creds, client):
     mock_broker.get_account_balance.return_value = {'net_account_value': 50000.0}
     mock_broker.get_options_chain.return_value = [{'strike': 5000}, {'strike': 5010}]
 
-    with patch('src.brokers.broker_factory.get_broker', return_value=mock_broker):
+    with patch('dashboard.app._get_cached_broker', return_value=mock_broker):
         data = _post_validate(client)
 
     assert data['can_proceed'] is True
@@ -206,7 +206,7 @@ def test_warnings_only_allows_proceed(mock_settings, mock_creds, client):
     mock_broker.get_account_balance.return_value = {'net_account_value': 40000.0}
     mock_broker.get_options_chain.return_value = [{'strike': 5000}]
 
-    with patch('src.brokers.broker_factory.get_broker', return_value=mock_broker):
+    with patch('dashboard.app._get_cached_broker', return_value=mock_broker):
         data = _post_validate(client)
 
     assert data['can_proceed'] is True
@@ -234,7 +234,7 @@ def test_schwab_all_checks_pass(mock_settings, mock_schwab_cfg, client):
     mock_broker.get_account_balance.return_value = {'net_account_value': 50000.0}
     mock_broker.get_options_chain.return_value = [{'strike': 5000}, {'strike': 5010}]
 
-    with patch('src.brokers.broker_factory.get_broker', return_value=mock_broker):
+    with patch('dashboard.app._get_cached_broker', return_value=mock_broker):
         data = _post_validate(client)
 
     assert data['can_proceed'] is True
