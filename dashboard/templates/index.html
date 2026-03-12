@@ -4562,7 +4562,7 @@ async function updateStatus() {
     summaryEl.classList.add('visible');
     const ts = d.today_summary;
     const resEl = document.getElementById('summary-result');
-    resEl.textContent = ts.result + ' ' + fmt$(ts.total_pnl);
+    resEl.textContent = ts.result + ' ' + fmt$(ts.net_pnl != null ? ts.net_pnl : ts.total_pnl);
     resEl.className = 'summary-result ' + ts.result.toLowerCase();
 
     let statsHtml =
@@ -4571,7 +4571,10 @@ async function updateStatus() {
       '<div class="summary-stat"><div class="val">' + ts.signals_generated + '</div><div class="lbl">Signals</div></div>' +
       '<div class="summary-stat"><div class="val">' + ts.valid_trades + '</div><div class="lbl">Valid Trades</div></div>' +
       '<div class="summary-stat"><div class="val">' + ts.wins + '/' + ts.losses + '</div><div class="lbl">W / L</div></div>' +
-      '<div class="summary-stat"><div class="val ' + colorClass(ts.total_pnl) + '">' + fmt$(ts.total_pnl) + '</div><div class="lbl">Net P&L</div></div>';
+      '<div class="summary-stat"><div class="val ' + colorClass(ts.net_pnl != null ? ts.net_pnl : ts.total_pnl) + '">' + fmt$(ts.net_pnl != null ? ts.net_pnl : ts.total_pnl) + '</div><div class="lbl">' + (ts.net_pnl != null ? 'Net P&L' : 'P&L') + '</div></div>';
+    if (ts.net_pnl != null) {
+      statsHtml += '<div class="summary-stat"><div class="val" style="color:var(--text-dim)">' + fmt$(ts.commissions) + '</div><div class="lbl">Fees</div></div>';
+    }
     if (ts.flagged_trades > 0) {
       statsHtml += '<div class="summary-stat"><div class="val" style="color:var(--amber)">' + ts.flagged_trades + '</div><div class="lbl">Flagged</div></div>';
     }
