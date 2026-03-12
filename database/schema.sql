@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS trades (
     pnl_percent REAL,
     max_profit REAL,
     max_risk REAL,
+    commissions REAL DEFAULT 0.0,  -- total fees/commissions (both legs combined)
 
     -- Position details
     quantity INTEGER NOT NULL,

@@ -266,6 +266,7 @@ class TradingBot:
         self._journal_finalized = False
         self._eod_summary_sent_today = False  # Prevent duplicate EOD notifications
         self._reconciliation_done_today = False
+        self._post_settlement_refresh_done = False
         self._market_open_notified = False  # Send market open notification once per day
         self._last_market_update = None  # Track last 30-min market update notification time
         self._danger_alerts_sent = {}  # Track danger alerts sent per trade (avoid spam)
@@ -837,6 +838,7 @@ class TradingBot:
                     self._journal_finalized = False
                     self._eod_summary_sent_today = False
                     self._reconciliation_done_today = False
+                    self._post_settlement_refresh_done = False
                     self._market_open_notified = False
                     self._last_market_update = None
                     self._danger_alerts_sent = {}
@@ -962,13 +964,28 @@ class TradingBot:
                         _open_count = _row[0] if _row else 0
                     except Exception:
                         _open_count = len(self.position_manager.get_open_trades())
-                    self.notifier.send_market_open({
+                    _market_open_data = {
                         'vix_level': _vl,
                         'vix_regime': _vr,
                         'open_positions': _open_count,
                         'mode': TRADING_MODE,
                         'spx_price': self._current_spx_price if self._current_spx_price > 0 else None,
-                    })
+                    }
+                    # Add token warning if < 48h remaining
+                    if not self.dry_run:
+                        try:
+                            auth = getattr(self.broker, 'auth', None)
+                            if auth and hasattr(auth, 'check_token_health'):
+                                _th = auth.check_token_health()
+                                _hrs = _th.get('hours_remaining', 999)
+                                if _hrs < 48:
+                                    _market_open_data['token_warning'] = (
+                                        f"Token expires in {_hrs:.0f}h — "
+                                        f"re-authenticate before it expires"
+                                    )
+                        except Exception:
+                            pass
+                    self.notifier.send_market_open(_market_open_data)
 
                 self._market_was_open = market_open_now
 
@@ -1025,6 +1042,20 @@ class TradingBot:
                     # Run P&L reconciliation once after market close (live mode only)
                     if not self.dry_run and not self._reconciliation_done_today:
                         self._run_pnl_reconciliation()
+
+                    # Post-settlement balance refresh (~4:20 PM ET, after SPX cash settlement)
+                    if (not self.dry_run
+                            and not self._post_settlement_refresh_done
+                            and current_time.time() >= time(16, 20)):
+                        self._post_settlement_balance_refresh()
+
+                    # EOD Discord summary (~4:25 PM ET, after settlement + fee backfill)
+                    # Deferred from journal finalization so it includes post-settlement
+                    # equity and net P&L with commissions for expired 0DTE trades.
+                    if (not self._eod_summary_sent_today
+                            and self._journal_finalized
+                            and current_time.time() >= time(16, 25)):
+                        self._send_eod_summary_notification()
 
                     logger.info(f"Market closed ({current_time.strftime('%a %H:%M')} ET). Next check in 60s...")
                     self._interruptible_sleep(60)
@@ -1637,80 +1668,132 @@ class TradingBot:
                 f"{len(self._journal_rejections)} rejections"
             )
 
-            # Send EOD summary notification (once per day)
-            if self.notifier and not self._eod_summary_sent_today:
-                try:
-                    self._eod_summary_sent_today = True
-                    dm = self.portfolio.drawdown_manager
-
-                    # Query DB for today's actual trade stats (authoritative source)
-                    db_summary = self.db.get_daily_summary(trade_date)
-                    db_trades = db_summary.get('trades_count', 0)
-                    db_pnl = db_summary.get('realized_pnl', 0.0)
-
-                    # Compute equity from DB: starting capital + realized P&L
-                    try:
-                        _starting = STRATEGY_PARAMS.get('portfolio', {}).get('account_size', 50000.0)
-                        with self.db._get_connection() as _conn:
-                            _row = _conn.execute(
-                                "SELECT COALESCE(SUM(pnl), 0) FROM trades "
-                                "WHERE LOWER(status) IN ('closed', 'expired') "
-                                "AND credit_received >= 1.0"
-                            ).fetchone()
-                        live_equity = round(_starting + (_row[0] if _row else 0), 2)
-                    except Exception:
-                        live_equity = None
-
-                    # Wins/losses from DB (authoritative source)
-                    _wins = db_summary.get('wins', 0)
-                    _losses = db_summary.get('losses', 0)
-
-                    # Streak from DrawdownManager (tracks consecutive wins/losses)
-                    _streak = ''
-                    if dm:
-                        _cl = getattr(dm, 'consecutive_losses', 0)
-                        _cw = getattr(dm, 'consecutive_wins', 0)
-                        if _cl > 0:
-                            _streak = f"{_cl}L"
-                        elif _cw > 0:
-                            _streak = f"{_cw}W"
-
-                    # Gather open swing positions for EOD notification
-                    _open_swings = []
-                    for _t in self.position_manager.get_open_trades():
-                        _open_swings.append({
-                            'direction': _t.spread.direction.value,
-                            'short_strike': _t.spread.short_leg.strike,
-                            'long_strike': _t.spread.long_leg.strike,
-                            'unrealized_pnl': _t.pnl or 0,
-                        })
-
-                    # Build ET close time string for EOD subtitle
-                    _et_now = datetime.now(self.tz)
-                    _close_time_str = _et_now.strftime('%I:%M %p').lstrip('0')
-
-                    self.notifier.send_eod_summary({
-                        'trades_count': db_trades,
-                        'wins': _wins,
-                        'losses': _losses,
-                        'daily_pnl': db_pnl,
-                        'weekly_pnl': dm.weekly_realized_pnl if dm else 0.0,
-                        'monthly_pnl': dm.monthly_realized_pnl if dm else 0.0,
-                        'equity': live_equity,
-                        'streak': _streak,
-                        'open_swings': _open_swings,
-                        'no_trade_reason': no_trade_summary if db_trades == 0 else None,
-                        'spx_close': spx_close,
-                        'spx_high': spx_quote.get('high') if spx_quote else None,
-                        'spx_low': spx_quote.get('low') if spx_quote else None,
-                        'spx_change_pct': spx_change_pct,
-                        'close_time_str': _close_time_str,
-                    })
-                except Exception as eod_err:
-                    logger.warning(f"Failed to send EOD summary: {eod_err}")
+            # Stash market data for the deferred EOD summary notification
+            # (sent at ~4:25 PM after settlement refresh + fee backfill)
+            self._eod_spx_close = spx_close
+            self._eod_spx_quote = spx_quote
+            self._eod_spx_change_pct = spx_change_pct
+            self._eod_no_trade_summary = no_trade_summary
 
         except Exception as e:
             logger.warning(f"Failed to save daily journal: {e}")
+
+    def _send_eod_summary_notification(self):
+        """Send EOD Discord summary after settlement refresh + fee backfill.
+
+        Deferred from journal finalization (~4:05 PM) to ~4:25 PM so the
+        notification includes post-settlement equity and net P&L with
+        commissions for expired 0DTE trades.
+        """
+        if not self.notifier or self._eod_summary_sent_today:
+            return
+        self._eod_summary_sent_today = True
+
+        try:
+            trade_date = self.current_trading_date
+            dm = self.portfolio.drawdown_manager
+
+            # Query DB for today's actual trade stats (authoritative source)
+            db_summary = self.db.get_daily_summary(trade_date)
+            db_trades = db_summary.get('trades_count', 0)
+            db_pnl = db_summary.get('realized_pnl', 0.0)
+
+            # Query commissions for net P&L
+            _daily_commissions = 0.0
+            try:
+                with self.db._get_connection() as _conn:
+                    _comm_row = _conn.execute(
+                        "SELECT COALESCE(SUM(commissions), 0) FROM trades "
+                        "WHERE SUBSTR(entry_time, 1, 10) = ? "
+                        "AND status IN ('closed', 'expired')",
+                        (str(trade_date),)
+                    ).fetchone()
+                _daily_commissions = _comm_row[0] if _comm_row else 0.0
+            except Exception:
+                pass
+
+            # Use post-settlement equity if available, else compute from DB
+            live_equity = None
+            try:
+                balance_path = Path(DATABASE_PATH).parent / 'post_settlement_balance.json'
+                if balance_path.exists():
+                    with open(balance_path) as f:
+                        bal = json.load(f)
+                    if bal.get('date') == str(trade_date):
+                        live_equity = bal.get('net_account_value')
+            except Exception:
+                pass
+
+            if live_equity is None:
+                try:
+                    _starting = STRATEGY_PARAMS.get('portfolio', {}).get('account_size', 50000.0)
+                    with self.db._get_connection() as _conn:
+                        _row = _conn.execute(
+                            "SELECT COALESCE(SUM(pnl), 0) FROM trades "
+                            "WHERE LOWER(status) IN ('closed', 'expired') "
+                            "AND credit_received >= 1.0"
+                        ).fetchone()
+                    live_equity = round(_starting + (_row[0] if _row else 0), 2)
+                except Exception:
+                    pass
+
+            # Wins/losses from DB (authoritative source)
+            _wins = db_summary.get('wins', 0)
+            _losses = db_summary.get('losses', 0)
+
+            # Streak from DrawdownManager
+            _streak = ''
+            if dm:
+                _cl = getattr(dm, 'consecutive_losses', 0)
+                _cw = getattr(dm, 'consecutive_wins', 0)
+                if _cl > 0:
+                    _streak = f"{_cl}L"
+                elif _cw > 0:
+                    _streak = f"{_cw}W"
+
+            # Open swing positions
+            _open_swings = []
+            for _t in self.position_manager.get_open_trades():
+                _open_swings.append({
+                    'direction': _t.spread.direction.value,
+                    'short_strike': _t.spread.short_leg.strike,
+                    'long_strike': _t.spread.long_leg.strike,
+                    'unrealized_pnl': _t.pnl or 0,
+                })
+
+            _et_now = datetime.now(self.tz)
+            _close_time_str = _et_now.strftime('%I:%M %p').lstrip('0')
+
+            # Use market data stashed during journal finalization
+            spx_close = getattr(self, '_eod_spx_close', None)
+            spx_quote = getattr(self, '_eod_spx_quote', None)
+            spx_change_pct = getattr(self, '_eod_spx_change_pct', None)
+            no_trade_summary = getattr(self, '_eod_no_trade_summary', None)
+
+            _eod_data = {
+                'trades_count': db_trades,
+                'wins': _wins,
+                'losses': _losses,
+                'daily_pnl': db_pnl,
+                'weekly_pnl': dm.weekly_realized_pnl if dm else 0.0,
+                'monthly_pnl': dm.monthly_realized_pnl if dm else 0.0,
+                'equity': live_equity,
+                'streak': _streak,
+                'open_swings': _open_swings,
+                'no_trade_reason': no_trade_summary if db_trades == 0 else None,
+                'spx_close': spx_close,
+                'spx_high': spx_quote.get('high') if spx_quote else None,
+                'spx_low': spx_quote.get('low') if spx_quote else None,
+                'spx_change_pct': spx_change_pct,
+                'close_time_str': _close_time_str,
+            }
+            if _daily_commissions > 0:
+                _eod_data['commissions'] = round(_daily_commissions, 2)
+                _eod_data['net_pnl'] = round(db_pnl - _daily_commissions, 2)
+            self.notifier.send_eod_summary(_eod_data)
+
+        except Exception as eod_err:
+            logger.warning(f"Failed to send EOD summary: {eod_err}")
 
     def _run_pnl_reconciliation(self):
         """Run P&L reconciliation against broker and write result to state file."""
@@ -1725,9 +1808,12 @@ class TradingBot:
                 json.dump(result, f, indent=2)
 
             n_disc = len(result['discrepancies'])
+            fee_msg = ""
+            if result.get('fee_slippage_delta') is not None:
+                fee_msg = f", fees/slippage ${result['fee_slippage_delta']:+.2f}"
             logger.info(
                 f"Reconciliation complete: {result['matched']} matched, "
-                f"{n_disc} discrepancies, DB P&L ${result['total_db_pnl']:+.2f}"
+                f"{n_disc} discrepancies, DB P&L ${result['total_db_pnl']:+.2f}{fee_msg}"
             )
 
             if n_disc > 0 and self.notifier:
@@ -1742,6 +1828,92 @@ class TradingBot:
 
         except Exception as e:
             logger.warning(f"Reconciliation failed: {e}")
+
+    def _post_settlement_balance_refresh(self):
+        """Refresh account balance after SPX cash settlement (~4:15 PM ET).
+
+        Queries broker for post-settlement balances and writes them to a
+        state file so the dashboard can display accurate end-of-day values.
+        """
+        try:
+            balance = self.broker.get_account_balance()
+            nav = balance.get('net_account_value', 0)
+            cash = balance.get('cash_available', 0)
+
+            # Write state file for dashboard consumption
+            balance_path = Path(DATABASE_PATH).parent / 'post_settlement_balance.json'
+            balance_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(balance_path, 'w') as f:
+                json.dump({
+                    'net_account_value': nav,
+                    'cash_available': cash,
+                    'buying_power': balance.get('buying_power', 0),
+                    'timestamp': datetime.now(self.tz).isoformat(),
+                    'date': str(self.current_trading_date),
+                }, f, indent=2)
+
+            logger.info(
+                f"Post-settlement balance refresh: NAV=${nav:,.2f}, "
+                f"Cash=${cash:,.2f}"
+            )
+
+            # Backfill commissions for trades missing fee data (expired 0DTE)
+            self._backfill_missing_commissions()
+
+            self._post_settlement_refresh_done = True
+
+        except Exception as e:
+            logger.warning(f"Post-settlement balance refresh failed: {e}")
+
+    def _backfill_missing_commissions(self):
+        """Backfill commissions for today's trades that have zero commissions.
+
+        Expired 0DTE options don't have an exit order, so fees are only
+        available via the transaction history after settlement.  This queries
+        the Schwab transactions API and matches by entry_order_id.
+        """
+        if not hasattr(self.broker, 'get_transactions_for_date'):
+            return
+        try:
+            trades = self.db.get_trades_by_date(self.current_trading_date)
+            # Find trades with zero commissions
+            needs_fees = [
+                t for t in trades
+                if (t.get('commissions') or 0) == 0
+                and t.get('status', '').lower() in ('closed', 'expired')
+            ]
+            if not needs_fees:
+                return
+
+            txns = self.broker.get_transactions_for_date(self.current_trading_date)
+            if not txns:
+                return
+
+            # Build order_id → total fees map (aggregate across transactions)
+            order_fees = {}
+            for txn in txns:
+                oid = txn.get('order_id', '')
+                if oid:
+                    order_fees[oid] = order_fees.get(oid, 0) + txn.get('fees', 0)
+
+            backfilled = 0
+            for trade in needs_fees:
+                total = 0.0
+                entry_oid = trade.get('entry_order_id', '')
+                exit_oid = trade.get('exit_order_id', '')
+                if entry_oid and entry_oid in order_fees:
+                    total += order_fees[entry_oid]
+                if exit_oid and exit_oid in order_fees:
+                    total += order_fees[exit_oid]
+                if total > 0:
+                    self.db.update_trade_commissions(trade['id'], round(total, 2))
+                    backfilled += 1
+
+            if backfilled:
+                logger.info(f"Post-settlement fee backfill: {backfilled} trade(s) updated")
+
+        except Exception as e:
+            logger.warning(f"Post-settlement fee backfill failed: {e}")
 
     def _send_market_update_if_due(self, current_time):
         """Send market update notification every 30 minutes aligned with bar boundaries (:00 and :30)."""

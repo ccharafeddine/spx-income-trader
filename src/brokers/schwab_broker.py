@@ -872,3 +872,79 @@ class SchwabBroker(BrokerInterface):
             'cash_available': float(balances.get('cashBalance', 0) or 0),
             'buying_power': float(balances.get('buyingPower', 0) or 0),
         }
+
+    def get_order_fees(self, order_id: str) -> float:
+        """Get total commissions/fees for a filled order.
+
+        Queries the order detail and sums commissions + fees from
+        the orderActivityCollection.  Returns 0.0 if unavailable.
+        """
+        try:
+            client = self._get_client()
+            account_hash = self._get_account_hash()
+
+            resp = self._call_api(client.get_order, int(order_id), account_hash,
+                                  context=f"get_order_fees({order_id})")
+            order_data = resp.json()
+
+            total_fees = 0.0
+            # Order-level commission field (some Schwab responses include this)
+            total_fees += float(order_data.get('commission', 0) or 0)
+            total_fees += float(order_data.get('fees', 0) or 0)
+
+            # Execution-level fees from orderActivityCollection
+            for activity in order_data.get('orderActivityCollection', []):
+                for leg in activity.get('executionLegs', []):
+                    total_fees += float(leg.get('commission', 0) or 0)
+                    total_fees += float(leg.get('fees', 0) or 0)
+                    total_fees += float(leg.get('miscFees', 0) or 0)
+
+            return round(total_fees, 2)
+
+        except Exception as e:
+            logger.warning(f"Failed to get fees for order {order_id}: {e}")
+            return 0.0
+
+    def get_transactions_for_date(self, trade_date: date) -> List[Dict]:
+        """Get all TRADE transactions for a specific date.
+
+        Returns a list of transaction dicts with order_id and fees extracted.
+        Used for post-settlement fee reconciliation on expired 0DTE options.
+        """
+        try:
+            client = self._get_client()
+            account_hash = self._get_account_hash()
+            from schwab.client import Client
+
+            resp = self._call_api(
+                client.get_transactions,
+                account_hash,
+                start_date=trade_date,
+                end_date=trade_date,
+                transaction_types=[Client.Transactions.TransactionType.TRADE],
+                context=f"get_transactions({trade_date})",
+            )
+            transactions = resp.json()
+
+            results = []
+            for txn in transactions:
+                order_id = str(txn.get('orderId', '') or '')
+                fees = float(txn.get('fees', {}).get('commission', 0) or 0)
+                fees += float(txn.get('fees', {}).get('optRegFee', 0) or 0)
+                fees += float(txn.get('fees', {}).get('secFee', 0) or 0)
+                fees += float(txn.get('fees', {}).get('additionalFee', 0) or 0)
+                fees += float(txn.get('fees', {}).get('cdscFee', 0) or 0)
+
+                results.append({
+                    'order_id': order_id,
+                    'transaction_id': str(txn.get('transactionId', '')),
+                    'type': txn.get('type', ''),
+                    'description': txn.get('description', ''),
+                    'fees': round(fees, 4),
+                    'net_amount': float(txn.get('netAmount', 0) or 0),
+                })
+            return results
+
+        except Exception as e:
+            logger.warning(f"Failed to get transactions for {trade_date}: {e}")
+            return []

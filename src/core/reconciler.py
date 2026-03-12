@@ -212,6 +212,44 @@ class TradeReconciler:
             if t.get('status', '').lower() == 'closed' and t.get('pnl') is not None
         ]
         total_db_pnl = round(sum(t['pnl'] for t in closed_trades), 2)
+        total_commissions = round(
+            sum(t.get('commissions', 0) or 0 for t in closed_trades), 2
+        )
+        total_net_pnl = round(total_db_pnl - total_commissions, 2)
+
+        # Compare bot P&L against actual account equity change to surface fees/slippage
+        account_pnl = None
+        fee_slippage_delta = None
+        starting_equity = None
+        ending_equity = None
+        try:
+            balance = self.broker.get_account_balance()
+            ending_equity = balance.get('net_account_value')
+            if ending_equity is not None:
+                # Try to read starting equity from previous day's post-settlement file
+                from pathlib import Path
+                balance_file = Path(self.db.db_path).parent / 'post_settlement_balance.json'
+                if balance_file.exists():
+                    import json
+                    with open(balance_file) as f:
+                        prev = json.load(f)
+                    prev_date = prev.get('date', '')
+                    prev_nav = prev.get('net_account_value')
+                    # Only use if it's from a previous day (not today's post-settlement)
+                    if prev_nav is not None and prev_date != str(trade_date):
+                        starting_equity = prev_nav
+                        account_pnl = round(ending_equity - starting_equity, 2)
+                        # Use net P&L (gross - commissions) for comparison
+                        fee_slippage_delta = round(total_net_pnl - account_pnl, 2)
+                        logger.info(
+                            f"Fee/slippage analysis: Gross P&L=${total_db_pnl:+.2f}, "
+                            f"Commissions=${total_commissions:.2f}, "
+                            f"Net P&L=${total_net_pnl:+.2f}, "
+                            f"Account P&L=${account_pnl:+.2f}, "
+                            f"Residual=${fee_slippage_delta:+.2f}"
+                        )
+        except Exception as e:
+            logger.debug(f"Could not compute fee/slippage delta: {e}")
 
         return {
             'date': str(trade_date),
@@ -221,8 +259,14 @@ class TradeReconciler:
             'matched': matched,
             'discrepancies': discrepancies,
             'total_db_pnl': total_db_pnl,
+            'total_commissions': total_commissions,
+            'total_net_pnl': total_net_pnl,
             'total_broker_pnl': None,  # Would require reconstructing from fills
             'pnl_delta': None,
+            'account_pnl': account_pnl,
+            'fee_slippage_delta': fee_slippage_delta,
+            'starting_equity': starting_equity,
+            'ending_equity': ending_equity,
             'broker_supports_order_list': broker_supports_order_list,
             'run_timestamp': datetime.now().isoformat(),
         }

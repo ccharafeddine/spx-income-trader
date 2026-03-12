@@ -137,6 +137,8 @@ class DatabaseManager:
                 # Analytics
                 ('vix_at_exit', 'REAL'),
                 ('bb_agreement', 'INTEGER'),
+                # Commissions/fees
+                ('commissions', 'REAL DEFAULT 0.0'),
             ]
 
             for col_name, col_type in new_columns:
@@ -378,6 +380,17 @@ class DatabaseManager:
             conn.commit()
             logger.debug(f"Trade {trade_id} exit context updated")
     
+    def update_trade_commissions(self, trade_id: str, commissions: float):
+        """Update commissions/fees for a trade."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE trades SET commissions = ? WHERE id = ?",
+                (round(commissions, 2), trade_id),
+            )
+            conn.commit()
+            logger.debug(f"Trade {trade_id} commissions updated: ${commissions:.2f}")
+
     def get_open_trades(self) -> List[Dict]:
         """Get all open trades"""
         with self._get_connection() as conn:
