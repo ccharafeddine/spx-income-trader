@@ -18,21 +18,6 @@ The entire pipeline runs autonomously. The bot handles strike selection, order s
 
 ---
 
-## Live Trading Status
-
-First live trading session completed on **March 10, 2025** using Charles Schwab with 1 contract. The session exposed several critical issues in position valuation and order response parsing that have since been fixed:
-
-- **Spread fill price parsing**: Schwab multi-leg order responses now use the order-level net credit/debit (`price` field) instead of averaging individual leg execution prices, which inflated the apparent entry price
-- **Ask-side position valuation**: All brokers now value open spreads conservatively (buy back short at ASK, sell long at BID) instead of using mid-price, which understated the cost to close
-- **Max-profit cap**: Unrealized P&L is capped at the theoretical maximum to prevent inflated calculations from triggering premature profit target exits
-- **Chain-based dry-run pricing**: Dry-run and backtest brokers now use the options chain with bid/ask spreads instead of intrinsic-only valuation
-- **SPX 5-cent rounding**: All spread order prices rounded to nearest $0.05 per exchange rules
-- **DB write failure safety**: If the database save fails after a broker order fills, all further entries are blocked for the session
-
-These fixes are covered by 60+ dedicated tests. The system is currently configured for conservative 1-contract trading as it continues live validation.
-
----
-
 ## Strategies
 
 ### Core Strategies
@@ -81,26 +66,43 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - VIX regime awareness (low / normal / elevated / high / extreme)
 - Win/loss streak tracking with frozen previous-streak display
 - Max-profit cap: unrealized P&L is capped at the theoretical maximum (credit received x 100 x quantity), preventing inflated profit calculations from triggering premature exits
-- DB write failure halts trading: if the database save fails after a trade is placed on the broker, all further entries are blocked for the session to prevent untracked positions
+- DB write failure cooldown: if the database save fails after a broker order fills, new entries are blocked for 5 minutes (auto-expiring) to prevent untracked positions. Exit path retries 3 times with backoff before activating cooldown. Replaces permanent session halt.
 - SPX 5-cent rounding: all spread order prices are rounded to the nearest $0.05 increment per exchange rules
 
 ### Broker Integration
 - Multi-broker architecture with pluggable broker interface
 - **E\*TRADE**: Full API integration with OAuth flow, token auto-renewal (90-min cycle), order preview/place/confirm pipeline
-- **Charles Schwab**: schwab-py integration with OAuth2 authorization, automatic token refresh, and full options order support. Spread order fill prices parsed from the order-level net credit/debit (not averaged individual leg prices).
+- **Charles Schwab**: schwab-py integration with OAuth2 authorization, automatic token refresh, and full options order support. Spread order fill prices parsed from the order-level net credit/debit (not averaged individual leg prices). Commission and fee capture from order details.
 - **Interactive Brokers**: ib_insync integration via TWS/IB Gateway. Snapshot market data, options chain discovery via reqSecDefOptParams, BAG combo orders for credit spreads, live/paper trading with automatic port selection. Dashboard connect/disconnect controls.
 - **Dry-run mode** (default): Real market data via Yahoo Finance with simulated fills using Black-Scholes pricing. No broker credentials needed.
 - **Ask-side position valuation**: All brokers (Schwab, E\*TRADE, IBKR, dry-run, backtest sim) value open positions conservatively -- buy back the short leg at ASK, sell the long leg at BID. This reflects the actual cost to close rather than an optimistic mid-price estimate.
 - **Shadow mode** (dry-run only): Read-only Schwab comparison that runs alongside the dry-run broker. Compares simulated fills against live Schwab quotes at entry, exit, and periodically (every 15 min). Logs price divergence, credit divergence, and whether the trade decision would differ. Dashboard panel shows summary stats and recent comparisons. Enable/disable via the Settings sidebar toggle.
 - Reactive 401 handling with automatic token refresh and retry on E\*TRADE and Schwab
-- Proactive token freshness checks before order placement
+- Proactive token freshness checks before order placement and at bot startup (resets 7-day refresh token expiry clock)
+- Token expiry warning (<48h remaining) included in market-open Discord notification
 - Rate limit (429) protection with exponential backoff
+- Live account balance polling: dashboard serves real broker equity, cash, and unrealized P&L in live mode with 15-second TTL cache. Cached broker instance prevents consuming single-use Schwab refresh tokens. Falls back to DB-calculated values on failure.
+
+### Fee Tracking
+- Commission and fee capture from Schwab order details after fill (entry + exit orders)
+- Post-settlement fee backfill at ~4:20 PM ET for expired 0DTE trades via transaction history API
+- Dashboard, journal, and Discord notifications display net P&L (gross minus commissions)
+- `commissions` column in trades table with automatic schema migration
 
 ### Database Separation
 - Dry-run and live trading use separate databases (`trades_dryrun.db` / `trades_live.db`)
 - Switching modes shows only trades from that mode
 - Backtest results stored in a shared database (mode-independent)
 - Schema auto-created on first access for new mode (schema.sql bundled in PyInstaller builds)
+
+### Database Reliability
+- WAL mode with `busy_timeout=5000` on all connections to handle concurrent read/write contention
+- Pending trade record written before broker order to prevent orphaned trades on crash
+- `save_trade_with_retry()` with 3-attempt exponential backoff on all critical writes
+- Exit path (`update_trade_close`) retries 3 times with backoff before activating cooldown
+- `update_daily_stats` failure is non-fatal (logged at WARNING, does not block exit)
+- Per-request connection caching in dashboard (Flask `g` + teardown)
+- Critical Discord alert when all save retries are exhausted
 
 ### Chart & Visualization
 - Real-time SPX candlestick chart with four timeframe toggles: 4h, 1h, 30m, 5m
@@ -229,20 +231,21 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 
 ### Discord Notifications
 - Bot startup: mode, equity, open positions, ET time
-- Market open (9:30 AM ET): SPX price, VIX level and regime, carry-over positions
+- Market open (9:30 AM ET): SPX price, VIX level and regime, carry-over positions, token expiry warning if <48h remaining
 - Market update every 30 minutes (aligned with bar boundaries at :00 and :30 during market hours): SPX price and session change, VIX, session high/low range, bars built, pulse bars detected, open position details (strikes, unrealized P&L, time held), next bar time
 - Trade entry: strategy, direction, strikes, credit per contract, total credit, quantity, breakeven, max risk, expiry
-- Trade exit: strategy, direction, strikes, P&L, exit reason, hold duration
-- End of day summary: trades (W/L), daily/weekly/monthly P&L, SPX close and session range, equity, win rate, streak, open swing positions, no-trade reason with pulse bar count and VIX context
+- Trade exit: strategy, direction, strikes, net P&L (after commissions), exit reason, hold duration
+- End of day summary (deferred to ~4:25 PM ET to include post-settlement fees): trades (W/L), daily/weekly/monthly P&L, SPX close and session range, equity, win rate, streak, open swing positions, no-trade reason with pulse bar count and VIX context
 - Circuit breaker alert: loss amount vs limit, halted status
 - Short strike breach warning: critical alert when SPX crosses the short strike
+- DB write failure alert: critical notification when all save retries are exhausted on a live trade
 - Bot stopped: shutdown reason, uptime, trade count
 - Watchdog auto-restart: crash reason, restart count
 - All channels configurable (Slack, Discord, generic webhook) with per-channel min severity level
 - Mode-aware footer on all Discord embeds (DRY RUN / LIVE / DEMO)
 
 ### Data & Storage
-- SQLite database with WAL mode for concurrent read/write access
+- SQLite database with WAL mode and `busy_timeout=5000` for concurrent read/write access
 - Separate databases for dry-run and live trading modes
 - OS keychain credential storage (Windows Credential Manager / macOS Keychain / Linux Secret Service)
 - Automatic database migrations on startup (column additions, index creation)
@@ -287,23 +290,23 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 
 ![Trade Performance Overview](screenshots/TradePerformanceOverview.png)
 
-**Backtest — Full Run (2019–2025)** -- Long-run backtest example showing equity curve and key performance metrics across six years.
+**Backtest -- Full Run (2019-2025)** -- Long-run backtest example showing equity curve and key performance metrics across six years.
 
 ![Backtest Full Run](screenshots/Backtest_20190101-20251231_example.png)
 
-**Analytics — Equity & Drawdown** -- Equity curve, rolling drawdown chart, and performance summary cards.
+**Analytics -- Equity & Drawdown** -- Equity curve, rolling drawdown chart, and performance summary cards.
 
 ![Analytics 1](screenshots/Analytics_20190101-20251231_1.png)
 
-**Analytics — Regime & Win Rate** -- VIX regime breakdown, market direction drilldown, win rate by day/time/regime, and direction comparison.
+**Analytics -- Regime & Win Rate** -- VIX regime breakdown, market direction drilldown, win rate by day/time/regime, and direction comparison.
 
 ![Analytics 2](screenshots/Analytics_20190101-20251231_2.png)
 
-**Analytics — P&L Attribution & Execution Quality** -- Theta/delta/vega decomposition, slippage analysis by time bucket and VIX regime, and exit reason breakdown.
+**Analytics -- P&L Attribution & Execution Quality** -- Theta/delta/vega decomposition, slippage analysis by time bucket and VIX regime, and exit reason breakdown.
 
 ![Analytics 3](screenshots/Analytics_20190101-20251231_3.png)
 
-**Analytics — Risk Metrics** -- Calmar ratio, VaR 95/99, CVaR, tail ratio, win/loss streaks, and rolling win rate windows.
+**Analytics -- Risk Metrics** -- Calmar ratio, VaR 95/99, CVaR, tail ratio, win/loss streaks, and rolling win rate windows.
 
 ![Analytics 4](screenshots/Analytics_20190101-20251231_4.png)
 
@@ -337,14 +340,14 @@ Portfolio Manager (2-slot limits, risk gates, circuit breaker, PDT gate)
     v
 Broker Interface
     |--- E*TRADE Broker (live orders via OAuth API)
-    |--- Schwab Broker (live orders via schwab-py OAuth2)
+    |--- Schwab Broker (live orders via schwab-py OAuth2, fee capture)
     |--- IBKR Broker (live orders via ib_insync, TWS/Gateway)
     |--- Dry-Run Broker (real data, simulated fills via Black-Scholes)
     |
     v
-Position Manager (P&L tracking, exit management, partial fill tracking, PDT-conditional 1pm, DB-failure halt)
+Position Manager (P&L tracking, exit management, partial fill tracking, PDT-conditional 1pm, DB-failure cooldown)
     |
-    +---> SQLite Database (mode-specific: dry-run / live)
+    +---> SQLite Database (mode-specific: dry-run / live, WAL + busy_timeout, retry-on-lock)
     +---> Flask Dashboard (Overview, Calendar, Journal, Analytics, Backtest, Logs)
     +---> Notification Manager (Slack, Discord, email, SMS, webhooks)
     +---> Prometheus Metrics (/metrics)
@@ -353,7 +356,7 @@ Position Manager (P&L tracking, exit management, partial fill tracking, PDT-cond
     +---> Shadow Comparator (dry-run vs. live Schwab price/credit comparison)
 ```
 
-**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1,300+ tests), GitHub Actions CI
+**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1,380+ tests), GitHub Actions CI
 
 ---
 
@@ -496,7 +499,7 @@ src/
         broker_factory.py    # Broker selection and instantiation
         etrade_broker.py     # E*TRADE live trading (OAuth, orders)
         etrade_auth.py       # E*TRADE OAuth token management
-        schwab_broker.py     # Schwab live trading (schwab-py)
+        schwab_broker.py     # Schwab live trading (schwab-py, fee capture)
         schwab_auth.py       # Schwab OAuth2 token management
         ibkr_broker.py       # Interactive Brokers live trading (ib_insync)
         dry_run_broker.py    # Simulated execution with real data
@@ -541,7 +544,7 @@ config/
     settings.py              # Environment, paths, DB config, keyring integration, runtime_settings deep merge
 
 database/
-    db_manager.py            # SQLite operations (WAL mode, migrations)
+    db_manager.py            # SQLite operations (WAL mode, migrations, retry-on-lock)
     schema.sql               # Database schema
     demo_recordings/         # Pre-built and session-recorded demo JSONL files
 
@@ -564,7 +567,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 
 ## Testing
 
-1,300+ tests covering:
+1,380+ tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays, morning bias filter, TNT weekend hold prevention)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
 - Position management (sizing, P&L calculation, exit triggers, partial fill tracking)
@@ -586,14 +589,18 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 - VIX + time-of-day bid-ask spread model (BidAskModel) and fill quality factor
 - Slippage tracking and database migrations
 - Database separation (dry-run vs live mode)
+- Database reliability (save_trade_with_retry, WAL busy_timeout, pending-before-order, DB lock recovery)
 - Analytics computations (BB agreement, trade duration, direction drilldown, P&L attribution, regime analysis, execution quality)
 - Backtest engine PDT mode and BB agreement tracking
 - Chart data endpoints (unified bar history, paginated lazy loading, historical trade queries)
 - Timestamp normalization across year boundaries (YYYY-MM-DD HH:MM format, correct sort order)
-- Enter-trade resilience (save_trade exception handling, DB write failure halts trading, BaseException re-raise for SystemExit/KeyboardInterrupt)
+- Enter-trade resilience (save_trade exception handling, DB cooldown auto-expiry, BaseException re-raise for SystemExit/KeyboardInterrupt)
 - FRED calendar service (release standardization, short code mapping, caching, API/static fallback, endpoint structure)
 - Production stability guards: AST-based scan for non-ASCII characters in logger calls, UTF-8 encoding on all RotatingFileHandler instances, BaseException handlers in enter_trade/main loop/bot thread, devnull redirect encoding
 - Profit target valuation: max-profit cap enforcement, ask-side pricing across all brokers, Schwab spread fill price parsing, chain-based dry-run/backtest pricing, no false immediate profit target triggers
+- Fee capture and net P&L accuracy (commission recording, post-settlement backfill, dashboard/journal/notification display)
+- Live balance polling (Schwab account balance cache, dry-run guard, failure fallback, cache TTL enforcement)
+- EOD expiration ordering (0DTE positions expired before journal finalization)
 
 ```bash
 python -m pytest tests/ -v
@@ -696,3 +703,32 @@ This is a personal project. It is not financial advice.
 ## License
 
 MIT License - See [LICENSE](LICENSE) for details.
+
+---
+
+## Live Trading Status
+
+First live trading session completed on **March 10, 2026** using Charles Schwab with 1 contract. The initial session exposed critical issues in position valuation, order response parsing, and database reliability that have since been fixed and hardened:
+
+**Order execution and valuation fixes:**
+- **Spread fill price parsing**: Schwab multi-leg order responses now use the order-level net credit/debit (`price` field) instead of averaging individual leg execution prices, which inflated the apparent entry price
+- **Ask-side position valuation**: All brokers now value open spreads conservatively (buy back short at ASK, sell long at BID) instead of using mid-price, which understated the cost to close
+- **Max-profit cap**: Unrealized P&L is capped at the theoretical maximum to prevent inflated calculations from triggering premature profit target exits
+- **Chain-based dry-run pricing**: Dry-run and backtest brokers now use the options chain with bid/ask spreads instead of intrinsic-only valuation
+- **SPX 5-cent rounding**: All spread order prices rounded to nearest $0.05 per exchange rules
+
+**Database reliability fixes (March 11 crash loop incident):**
+- **DB write failure cooldown**: Replaced permanent session halt with auto-expiring 5-minute cooldown after DB write failure. Exit path retries 3 times with backoff before activating cooldown.
+- **Pending-before-order**: Trade record written to DB before broker order is placed, preventing orphaned live trades on crash
+- **save_trade_with_retry**: 3-attempt exponential backoff on all critical DB writes with critical Discord alert on exhaustion
+- **WAL busy_timeout**: All SQLite connections use `busy_timeout=5000` to handle concurrent dashboard/bot contention
+- **Protected startup**: `bot_started` log event wrapped in try/except to prevent DB lock from crashing startup
+
+**Dashboard and broker integration fixes:**
+- **Live balance polling**: Dashboard serves real Schwab equity, cash, and unrealized P&L with 15-second TTL cache instead of stale DB-calculated values
+- **Token auth display**: Fixed dashboard showing token as "rejected" by switching to file-based auth checks and caching the broker instance (prevents consuming single-use Schwab refresh tokens)
+- **Fee capture**: Commissions recorded from Schwab order details; post-settlement backfill for expired 0DTE trades; net P&L displayed across dashboard, journal, and Discord
+- **EOD summary timing**: Deferred from ~4:05 PM to ~4:25 PM ET to include post-settlement fee data
+- **Proactive token refresh**: Token refreshed at bot startup to reset 7-day expiry; expiry warning in market-open notification
+
+These fixes are covered by 200+ dedicated tests. The system is configured for conservative 1-contract trading as it continues live validation.
