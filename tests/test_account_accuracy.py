@@ -186,12 +186,9 @@ class TestDashboardBalanceFallback:
 
     def test_fallback_uses_warning_level(self):
         """The dashboard balance fallback should use logger.warning, not debug."""
-        import inspect
         # Read the actual source to verify logging level
         app_path = Path(__file__).parent.parent / 'dashboard' / 'app.py'
         source = app_path.read_text()
 
-        # Should NOT have debug for this message
-        assert 'logger.debug(f"Could not fetch live cash balance' not in source
-        # Should have warning
-        assert 'logger.warning(f"Live balance fetch failed, using DB-calculated value' in source
+        # Should have warning for Schwab balance fetch failure
+        assert 'logger.warning(f"Schwab balance fetch failed, using DB fallback' in source

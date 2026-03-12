@@ -89,7 +89,7 @@ class SchwabAuth:
 
     def get_token_status(self) -> Dict:
         """Get detailed token status including expiry information."""
-        if not os.path.exists(self._meta_path):
+        if not os.path.exists(self.token_path):
             return {
                 'valid': False,
                 'created_at': None,
@@ -99,23 +99,30 @@ class SchwabAuth:
             }
 
         try:
-            with open(self._meta_path, 'r') as f:
-                meta = json.load(f)
+            # Determine when the refresh token was last issued.
+            # Priority: meta file timestamp, but if the token file is newer
+            # (schwab-py auto-refreshed), use the token file's mtime instead.
+            created_at = None
 
-            created_str = meta.get('token_created_at')
-            if not created_str:
-                return {
-                    'valid': False,
-                    'created_at': None,
-                    'expires_at': None,
-                    'hours_remaining': 0,
-                    'expiring_soon': True,
-                }
+            if os.path.exists(self._meta_path):
+                with open(self._meta_path, 'r') as f:
+                    meta = json.load(f)
+                created_str = meta.get('token_created_at')
+                if created_str:
+                    created_at = datetime.fromisoformat(created_str)
+                    if created_at.tzinfo is None:
+                        created_at = _ET.localize(created_at)
 
-            created_at = datetime.fromisoformat(created_str)
-            # Ensure timezone-aware comparison (ET-aware)
-            if created_at.tzinfo is None:
-                created_at = _ET.localize(created_at)
+            # Check if the token file was written more recently than the meta
+            # timestamp — schwab-py writes the file on every auto-refresh,
+            # which also issues a new refresh token.
+            token_mtime = datetime.fromtimestamp(
+                os.path.getmtime(self.token_path), tz=_ET
+            )
+            if created_at is None or token_mtime > created_at + timedelta(minutes=5):
+                created_at = token_mtime
+
+            created_str = created_at.isoformat()
             expires_at = created_at + timedelta(days=REFRESH_TOKEN_LIFETIME_DAYS)
             now = datetime.now(_ET)
             remaining = expires_at - now
