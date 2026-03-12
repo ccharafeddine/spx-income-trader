@@ -721,6 +721,8 @@ First live session. Exposed critical issues in position valuation, order respons
 - **Chain-based dry-run pricing**: Dry-run and backtest brokers now use the options chain with bid/ask spreads instead of intrinsic-only valuation
 - **SPX 5-cent rounding**: All spread order prices rounded to nearest $0.05 per exchange rules
 
+![Day 1 Dashboard — March 10, 2026](screenshots/DailyMelt_Day1_03102026.png)
+
 ### Day 2 — March 11, 2026 (CPI Day)
 
 **Trade:** Bullish put credit spread 6795/6790, entered 11:01 ET on a bullish pulse bar at 10:30 with 94.3% close position
@@ -744,14 +746,27 @@ First live session. Exposed critical issues in position valuation, order respons
 - **Post-settlement balance refresh:** Automatic broker balance query at 4:20 PM ET after SPX cash settlement.
 - **Dashboard balance fallback logging:** WARNING-level log when live balance fetch fails and falls back to DB-calculated values.
 
+![Day 2 Dashboard — March 11, 2026](screenshots/DailyMelt_Day2_03112026.png)
+
 ### Day 3 — March 12, 2026
 
 **Trade:** Bearish call credit spread 6690/6695, entered on bearish pulse bar
 **Result:** Win — profit target reached at 79% of max profit, closed at 2:50 PM ET after 5h 19m
 **Schwab account impact:** +$220.30 (net of fees)
 **All infrastructure fixes from Day 2 confirmed working:** trade recorded to database, Discord footer shows "live", no DB lock errors, no crash loops
-**Remaining fix deployed:** Actual fill price capture from Schwab's per-leg execution data (`orderActivityCollection[].executionLegs[]`) replacing limit order price for accurate P&L
+
+**Fixes deployed:**
+- **Actual fill price capture:** Rewrote `_parse_order_response()` to extract per-leg fills from Schwab's `orderActivityCollection[].executionLegs[]` instead of using the limit order price. Computes real net credit/debit as `abs(avg_sell - avg_buy)` from execution legs with `[FILL QUALITY]` logging of limit-vs-actual diff.
+- **Per-leg fee capture:** Extracts `commission`, `fees`, and `miscFees` from each execution leg for accurate net P&L.
+- **Net P&L display:** Dashboard trade history and aggregate stats (total P&L, win rate, avg/max win/loss) now show net P&L (gross minus commissions) instead of gross.
+- **Cash balance from Schwab:** Dashboard Cash Balance now uses `cashBalance` from Schwab API instead of showing total equity.
+- **Instance lock zombie fix:** `shutdown()` now calls `os._exit(1)` if the bot thread doesn't exit within 10 seconds, preventing zombie processes where the watchdog crash-loops and spams Discord.
+- **Stale process termination:** On Windows, `_acquire_instance_lock()` now attempts `taskkill /F` on stale processes before raising a lock conflict error.
+- **Lock conflict Discord notification:** When `BotAlreadyRunningError` is caught in desktop mode, a "Instance Lock Conflict" notification is sent to Discord so the user knows another instance was detected.
+- **DB trade records corrected:** Updated March 11 and March 12 trades with actual Schwab fill data (commissions, actual credit received, slippage).
 
 **Test suite:** 1,247 → 1,406+ tests across the two-day session (+159 new tests)
+
+![Day 3 Dashboard — March 12, 2026](screenshots/DailyMelt_Day3_03122026.png)
 
 The system is configured for conservative 1-contract trading as it continues live validation.
