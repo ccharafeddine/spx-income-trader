@@ -5789,7 +5789,7 @@ async function updateHistory() {
       const strikes = (t.short_strike || '--') + '/' + (t.long_strike || '--');
       const reason = t.exit_reason || '--';
       const reasonShort = shortExitReason(reason);
-      const pnl = t.pnl || 0;
+      const pnl = t.net_pnl != null ? t.net_pnl : (t.pnl || 0);
       const running = t.running_total || 0;
       const isFlagged = t.flag === 'LOW_CREDIT';
       const rowClass = isFlagged ? ' class="trade-flagged"' : '';

@@ -580,6 +580,17 @@ class DesktopApp:
                 self._bot_crashed = True
                 self._bot_crash_error = str(e)
                 self._bot_crash_time = datetime.now()
+            # Send Discord notification about the lock conflict
+            try:
+                from src.utils.notifications import NotificationManager
+                nm = NotificationManager()
+                nm._send_rich(
+                    "Instance Lock Conflict",
+                    str(e),
+                    level='critical',
+                )
+            except Exception as notify_err:
+                logger.warning(f"Failed to send lock conflict notification: {notify_err}")
             return
         except Exception as e:
             logger.error(f"Bot thread error: {e}", exc_info=True)
@@ -1234,7 +1245,11 @@ class DesktopApp:
             logger.info("Waiting for bot thread to exit...")
             self._bot_thread.join(timeout=10)
             if self._bot_thread.is_alive():
-                logger.warning("Bot thread did not exit within 10s timeout")
+                logger.warning("Bot thread did not exit within 10s timeout -- forcing process exit")
+                # Force-kill: the bot thread is stuck and won't exit gracefully.
+                # Without this, the process lingers as a zombie with the watchdog
+                # crash-looping and spamming Discord notifications.
+                os._exit(1)
             else:
                 logger.info("Bot thread exited cleanly")
 

@@ -475,9 +475,30 @@ class TradingBot:
                     self._lock_fd = None
                     existing_pid = int(existing) if existing.isdigit() else None
                     if existing_pid and self._is_pid_alive(existing_pid):
-                        raise BotAlreadyRunningError(
-                            f"Another bot instance is running (PID {existing_pid})"
+                        # Try to kill the stale process before giving up
+                        logger.warning(
+                            f"Stale bot process detected (PID {existing_pid}), "
+                            f"attempting to terminate..."
                         )
+                        try:
+                            import subprocess
+                            subprocess.run(
+                                ['taskkill', '/F', '/PID', str(existing_pid)],
+                                capture_output=True, timeout=5,
+                            )
+                            # Give the OS a moment to release the file lock
+                            import time as _time
+                            _time.sleep(1)
+                        except Exception as kill_err:
+                            logger.warning(f"Failed to kill stale process: {kill_err}")
+
+                        # Check if it's still alive after kill attempt
+                        if self._is_pid_alive(existing_pid):
+                            raise BotAlreadyRunningError(
+                                f"Another bot instance is running (PID {existing_pid}) "
+                                f"and could not be terminated"
+                            )
+                        logger.info(f"Stale process PID {existing_pid} terminated successfully")
                     # Stale lock -- delete and retry once
                     try:
                         self._lockfile_path.unlink()
