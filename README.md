@@ -356,7 +356,7 @@ Position Manager (P&L tracking, exit management, partial fill tracking, PDT-cond
     +---> Shadow Comparator (dry-run vs. live Schwab price/credit comparison)
 ```
 
-**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1,380+ tests), GitHub Actions CI
+**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1,406+ tests), GitHub Actions CI
 
 ---
 
@@ -567,7 +567,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 
 ## Testing
 
-1,380+ tests covering:
+1,406+ tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays, morning bias filter, TNT weekend hold prevention)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
 - Position management (sizing, P&L calculation, exit triggers, partial fill tracking)
@@ -706,9 +706,13 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-## Live Trading Status
+## Live Validation Log
 
-First live trading session completed on **March 10, 2026** using Charles Schwab with 1 contract. The initial session exposed critical issues in position valuation, order response parsing, and database reliability that have since been fixed and hardened:
+Live testing began **March 10, 2026** on a Schwab account with 1-contract maximum sizing.
+
+### Day 1 — March 10, 2026 (Initial Session)
+
+First live session. Exposed critical issues in position valuation, order response parsing, and database reliability. All issues fixed before Day 2.
 
 **Order execution and valuation fixes:**
 - **Spread fill price parsing**: Schwab multi-leg order responses now use the order-level net credit/debit (`price` field) instead of averaging individual leg execution prices, which inflated the apparent entry price
@@ -717,18 +721,37 @@ First live trading session completed on **March 10, 2026** using Charles Schwab 
 - **Chain-based dry-run pricing**: Dry-run and backtest brokers now use the options chain with bid/ask spreads instead of intrinsic-only valuation
 - **SPX 5-cent rounding**: All spread order prices rounded to nearest $0.05 per exchange rules
 
-**Database reliability fixes (March 11 crash loop incident):**
-- **DB write failure cooldown**: Replaced permanent session halt with auto-expiring 5-minute cooldown after DB write failure. Exit path retries 3 times with backoff before activating cooldown.
-- **Pending-before-order**: Trade record written to DB before broker order is placed, preventing orphaned live trades on crash
-- **save_trade_with_retry**: 3-attempt exponential backoff on all critical DB writes with critical Discord alert on exhaustion
-- **WAL busy_timeout**: All SQLite connections use `busy_timeout=5000` to handle concurrent dashboard/bot contention
-- **Protected startup**: `bot_started` log event wrapped in try/except to prevent DB lock from crashing startup
+### Day 2 — March 11, 2026 (CPI Day)
 
-**Dashboard and broker integration fixes:**
-- **Live balance polling**: Dashboard serves real Schwab equity, cash, and unrealized P&L with 15-second TTL cache instead of stale DB-calculated values
-- **Token auth display**: Fixed dashboard showing token as "rejected" by switching to file-based auth checks and caching the broker instance (prevents consuming single-use Schwab refresh tokens)
-- **Fee capture**: Commissions recorded from Schwab order details; post-settlement backfill for expired 0DTE trades; net P&L displayed across dashboard, journal, and Discord
-- **EOD summary timing**: Deferred from ~4:05 PM to ~4:25 PM ET to include post-settlement fee data
-- **Proactive token refresh**: Token refreshed at bot startup to reset 7-day expiry; expiry warning in market-open notification
+**Trade:** Bullish put credit spread 6795/6790, entered 11:01 ET on a bullish pulse bar at 10:30 with 94.3% close position
+**VIX:** 25.25 (HIGH regime), SPX opened at 6,790.09
+**Result:** Loss — SPX sold off to 6,775.80 (-1.36%), position expired at max loss
+**Schwab account impact:** -$337.44
+**Strategy assessment:** Clean execution, correct entry per all rules. Loss was directional — market moved against the position on a high-volatility CPI day
 
-These fixes are covered by 200+ dedicated tests. The system is configured for conservative 1-contract trading as it continues live validation.
+**Infrastructure bugs discovered and fixed:**
+- **SQLite lock contention (critical):** Flask dashboard holding unclosed connections blocked bot's trade writes, causing live trades to execute on Schwab with no database record. Fixed via `busy_timeout` of 5000ms on all connection sites, retry loop with exponential backoff on `save_trade()`, Flask `teardown_appcontext` cleanup, and a pending-to-active-to-closed lifecycle that writes a DB record before placing any broker order.
+- **Schwab client instantiation:** Dashboard was creating a new Schwab client on every API call, consuming single-use refresh tokens and causing token expiration race conditions. Fixed with cached broker singleton.
+- **EOD summary timing:** Summary was firing at 4:05 PM before 0DTE settlement. Moved to 4:25 PM post-settlement with commission backfill.
+- **Discord notification footer:** Was incorrectly showing "dry-run" in live mode due to `notifier.mode` never being set in the desktop app code path. Fixed.
+- **Startup token health checks:** Added proactive token refresh on startup to reset the 7-day clock and immediate `check_token_health()` call to surface expired tokens before the main loop.
+- **Full fee capture:** Implemented via Schwab's transaction history API with per-leg fee extraction and net P&L display.
+- **Live balance polling:** Dashboard now polls Schwab every 15 seconds with TTL cache for real-time equity, cash, and unrealized P&L.
+- **30-minute Discord updates:** Changed from hourly to every 30 minutes aligned with bar boundaries.
+- **Daily count filters:** Pending/cancelled records excluded from trade counts to prevent false daily limit blocks after crashes.
+- **DB write failure alerting:** CRITICAL Discord notification if trade write fails after all retries.
+- **Crash loop prevention:** 5-minute cooldown after DB failure, graceful degradation instead of crash.
+- **Post-settlement balance refresh:** Automatic broker balance query at 4:20 PM ET after SPX cash settlement.
+- **Dashboard balance fallback logging:** WARNING-level log when live balance fetch fails and falls back to DB-calculated values.
+
+### Day 3 — March 12, 2026
+
+**Trade:** Bearish call credit spread 6690/6695, entered on bearish pulse bar
+**Result:** Win — profit target reached at 79% of max profit, closed at 2:50 PM ET after 5h 19m
+**Schwab account impact:** +$220.30 (net of fees)
+**All infrastructure fixes from Day 2 confirmed working:** trade recorded to database, Discord footer shows "live", no DB lock errors, no crash loops
+**Remaining fix deployed:** Actual fill price capture from Schwab's per-leg execution data (`orderActivityCollection[].executionLegs[]`) replacing limit order price for accurate P&L
+
+**Test suite:** 1,247 → 1,406+ tests across the two-day session (+159 new tests)
+
+The system is configured for conservative 1-contract trading as it continues live validation.

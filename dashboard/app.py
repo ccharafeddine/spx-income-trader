@@ -1621,7 +1621,8 @@ def api_status():
             cash = float(balance_data.get('cash_available', 0))
             if nav > 0:
                 account['total_equity'] = round(nav, 2)
-            account['current_balance'] = round(cash, 2)
+            if cash > 0:
+                account['current_balance'] = round(cash, 2)
             # Use Schwab-reported unrealized P&L (options-only) when positions are open
             schwab_unrealized = balance_data.get('unrealized_pnl')
             if schwab_unrealized is not None and account.get('positions'):
