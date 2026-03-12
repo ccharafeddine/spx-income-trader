@@ -785,16 +785,16 @@ def compute_account(conn, spx_price, starting_capital=None):
 
     # Realized P&L from valid closed/expired trades (exclude flagged)
     valid_closed = [t for t in closed_trades if not t.get('flag')]
-    realized_pnl = sum(t.get('pnl') or 0 for t in valid_closed)
+    realized_pnl = sum((t.get('pnl') or 0) - (t.get('commissions') or 0) for t in valid_closed)
 
-    # Today's realized P&L (also exclude flagged)
+    # Today's realized P&L (also exclude flagged), net of commissions
     today_str = datetime.now(ET).date().isoformat()
     daily_realized = 0.0
     for t in valid_closed:
         exit_t = t.get('exit_time', '') or ''
         entry_t = t.get('entry_time', '') or ''
         if exit_t.startswith(today_str) or entry_t.startswith(today_str):
-            daily_realized += t.get('pnl') or 0
+            daily_realized += (t.get('pnl') or 0) - (t.get('commissions') or 0)
 
     # Open positions and unrealized P&L
     unrealized_pnl = 0.0
@@ -1622,10 +1622,13 @@ def api_status():
             if nav > 0:
                 account['total_equity'] = round(nav, 2)
             account['current_balance'] = round(cash, 2)
-            # Use Schwab-reported unrealized P&L when positions are open
+            # Use Schwab-reported unrealized P&L (options-only) when positions are open
             schwab_unrealized = balance_data.get('unrealized_pnl')
             if schwab_unrealized is not None and account.get('positions'):
                 account['unrealized_pnl'] = round(schwab_unrealized, 2)
+                # Daily P&L = today's realized (net of commissions) + Schwab unrealized
+                account['daily_pnl'] = round(
+                    account.get('daily_pnl', 0) + schwab_unrealized, 2)
 
     # Today's summary (after market close)
     today_summary = None

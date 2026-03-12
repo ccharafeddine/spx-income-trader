@@ -2,7 +2,7 @@
 
 ![CI](https://github.com/ccharafeddine/spx-income-trader/actions/workflows/ci.yml/badge.svg) ![Python 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Automated SPX 0DTE options income trading system. Runs parallel credit spread strategies on the S&P 500 index, autonomously from market open to close, with real-time risk management, a web dashboard, full backtesting, session recording, and multi-broker support (E\*TRADE, Charles Schwab, Interactive Brokers, dry-run simulation). Ships as a standalone desktop app for Windows and macOS.
+Automated SPX 0DTE options income trading system. Runs parallel credit spread strategies on the S&P 500 index, autonomously from market open to close, with real-time risk management, a web dashboard, full backtesting, session recording, and multi-broker support (Charles Schwab (live-tested), E\*TRADE, Interactive Brokers, dry-run simulation). Ships as a standalone desktop app for Windows and macOS.
 
 ---
 
@@ -70,10 +70,10 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - SPX 5-cent rounding: all spread order prices are rounded to the nearest $0.05 increment per exchange rules
 
 ### Broker Integration
-- Multi-broker architecture with pluggable broker interface
-- **E\*TRADE**: Full API integration with OAuth flow, token auto-renewal (90-min cycle), order preview/place/confirm pipeline
-- **Charles Schwab**: schwab-py integration with OAuth2 authorization, automatic token refresh, and full options order support. Spread order fill prices parsed from the order-level net credit/debit (not averaged individual leg prices). Commission and fee capture from order details.
-- **Interactive Brokers**: ib_insync integration via TWS/IB Gateway. Snapshot market data, options chain discovery via reqSecDefOptParams, BAG combo orders for credit spreads, live/paper trading with automatic port selection. Dashboard connect/disconnect controls.
+- Multi-broker architecture with pluggable broker interface. **Only Charles Schwab has been tested in live trading sessions.** E\*TRADE and IBKR integrations are implemented and pass CI but have not been validated with real money.
+- **Charles Schwab** (live-tested): schwab-py integration with OAuth2 authorization, automatic token refresh, and full options order support. Spread order fill prices parsed from the order-level net credit/debit (not averaged individual leg prices). Commission and fee capture from order details.
+- **E\*TRADE** (untested live): Full API integration with OAuth flow, token auto-renewal (90-min cycle), order preview/place/confirm pipeline
+- **Interactive Brokers** (untested live): ib_insync integration via TWS/IB Gateway. Snapshot market data, options chain discovery via reqSecDefOptParams, BAG combo orders for credit spreads, live/paper trading with automatic port selection. Dashboard connect/disconnect controls.
 - **Dry-run mode** (default): Real market data via Yahoo Finance with simulated fills using Black-Scholes pricing. No broker credentials needed.
 - **Ask-side position valuation**: All brokers (Schwab, E\*TRADE, IBKR, dry-run, backtest sim) value open positions conservatively -- buy back the short leg at ASK, sell the long leg at BID. This reflects the actual cost to close rather than an optimistic mid-price estimate.
 - **Shadow mode** (dry-run only): Read-only Schwab comparison that runs alongside the dry-run broker. Compares simulated fills against live Schwab quotes at entry, exit, and periodically (every 15 min). Logs price divergence, credit divergence, and whether the trade decision would differ. Dashboard panel shows summary stats and recent comparisons. Enable/disable via the Settings sidebar toggle.
@@ -339,9 +339,9 @@ Portfolio Manager (2-slot limits, risk gates, circuit breaker, PDT gate)
     |
     v
 Broker Interface
-    |--- E*TRADE Broker (live orders via OAuth API)
-    |--- Schwab Broker (live orders via schwab-py OAuth2, fee capture)
-    |--- IBKR Broker (live orders via ib_insync, TWS/Gateway)
+    |--- Schwab Broker (live-tested, orders via schwab-py OAuth2, fee capture)
+    |--- E*TRADE Broker (untested live, orders via OAuth API)
+    |--- IBKR Broker (untested live, orders via ib_insync, TWS/Gateway)
     |--- Dry-Run Broker (real data, simulated fills via Black-Scholes)
     |
     v
@@ -418,9 +418,9 @@ python app_desktop.py
 
 **Broker Setup:**
 
-- **Schwab**: Launch the app, go to Settings, enter your Schwab API credentials, and complete the OAuth2 flow. The bot handles token refresh automatically. Set `broker.active: schwab` in `strategy_params.yaml`.
-- **E\*TRADE**: Configure your consumer key and secret via the Settings page or OS keychain. OAuth token renewal runs on a 90-minute cycle. Set `broker.active: etrade`.
-- **Interactive Brokers**: Start TWS or IB Gateway with API connections enabled (File > Global Configuration > API > Settings). Configure host, port, and client ID via the Setup page or Settings. Paper trading auto-selects port 7497. Set `broker.active: ibkr`.
+- **Schwab** (live-tested): Launch the app, go to Settings, enter your Schwab API credentials, and complete the OAuth2 flow. The bot handles token refresh automatically. Set `broker.active: schwab` in `strategy_params.yaml`.
+- **E\*TRADE** (untested live): Configure your consumer key and secret via the Settings page or OS keychain. OAuth token renewal runs on a 90-minute cycle. Set `broker.active: etrade`.
+- **Interactive Brokers** (untested live): Start TWS or IB Gateway with API connections enabled (File > Global Configuration > API > Settings). Configure host, port, and client ID via the Setup page or Settings. Paper trading auto-selects port 7497. Set `broker.active: ibkr`.
 - **Dry Run** (default): No broker config needed. Uses real market data with simulated fills.
 
 **Configuration:**
@@ -499,9 +499,9 @@ src/
         broker_factory.py    # Broker selection and instantiation
         etrade_broker.py     # E*TRADE live trading (OAuth, orders)
         etrade_auth.py       # E*TRADE OAuth token management
-        schwab_broker.py     # Schwab live trading (schwab-py, fee capture)
+        schwab_broker.py     # Schwab live trading (schwab-py, fee capture) [live-tested]
         schwab_auth.py       # Schwab OAuth2 token management
-        ibkr_broker.py       # Interactive Brokers live trading (ib_insync)
+        ibkr_broker.py       # Interactive Brokers live trading (ib_insync) [untested live]
         dry_run_broker.py    # Simulated execution with real data
     analytics/
         regime_analysis.py   # VIX/direction regime performance and drilldown
@@ -585,7 +585,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 - Session recording (fixed filename mode, start/stop lifecycle, dashboard list/load routes, path traversal protection)
 - Trade reconciliation (DB vs. broker comparison, mismatch detection)
 - Monitoring and observability (Prometheus metrics, health endpoint)
-- Schwab, E*TRADE, and IBKR broker integration (connect/disconnect, market data, order execution, position value, ask-side valuation)
+- Schwab (live-tested), E*TRADE, and IBKR broker integration (connect/disconnect, market data, order execution, position value, ask-side valuation)
 - VIX + time-of-day bid-ask spread model (BidAskModel) and fill quality factor
 - Slippage tracking and database migrations
 - Database separation (dry-run vs live mode)

@@ -867,10 +867,15 @@ class SchwabBroker(BrokerInterface):
         acct = data.get('securitiesAccount', {})
         balances = acct.get('currentBalances', {})
 
-        # Sum unrealized P&L from open positions (if present in the response)
+        # Sum unrealized P&L from OPTION positions only (not ETFs, equities, cash)
+        # The bot only manages SPX options; including other holdings would
+        # pollute the unrealized P&L displayed on the dashboard.
         unrealized_pnl = 0.0
         for pos in acct.get('positions', []):
-            unrealized_pnl += float(pos.get('currentDayProfitLoss', 0) or 0)
+            instrument = pos.get('instrument', {})
+            asset_type = instrument.get('assetType', '')
+            if asset_type == 'OPTION':
+                unrealized_pnl += float(pos.get('currentDayProfitLoss', 0) or 0)
 
         return {
             'net_account_value': float(balances.get('liquidationValue', 0) or 0),
