@@ -1538,6 +1538,7 @@ def api_pdt_status():
         # Read account equity — prefer live Schwab balance, fall back to YAML
         portfolio_cfg = STRATEGY_PARAMS.get('portfolio', {})
         account_equity = portfolio_cfg.get('account_size', 0)
+        mode = detect_trading_mode()
         if mode == 'LIVE':
             _bal = _get_schwab_balance()
             if _bal is not None:
