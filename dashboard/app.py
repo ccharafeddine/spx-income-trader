@@ -2539,14 +2539,19 @@ def api_history():
         ]
 
         # Compute aggregate from trade-level data (more accurate than daily_stats)
+        # Use net P&L (gross - commissions) so dashboard matches Schwab account
         if closed:
             valid = [t for t in closed if t.get('flag') != 'LOW_CREDIT']
+            for t in valid:
+                t['net_pnl'] = round(
+                    (t.get('pnl') or 0) - (t.get('commissions') or 0), 2
+                )
             aggregate['total_trades'] = len(valid)
-            wins_list = [t['pnl'] for t in valid if (t.get('pnl') or 0) > 0]
-            losses_list = [t['pnl'] for t in valid if (t.get('pnl') or 0) < 0]
+            wins_list = [t['net_pnl'] for t in valid if t['net_pnl'] > 0]
+            losses_list = [t['net_pnl'] for t in valid if t['net_pnl'] < 0]
             aggregate['wins'] = len(wins_list)
             aggregate['losses'] = len(losses_list)
-            aggregate['total_pnl'] = round(sum(t.get('pnl') or 0 for t in valid), 2)
+            aggregate['total_pnl'] = round(sum(t['net_pnl'] for t in valid), 2)
             if aggregate['total_trades'] > 0:
                 aggregate['win_rate'] = round(
                     aggregate['wins'] / aggregate['total_trades'] * 100, 1
@@ -2558,12 +2563,12 @@ def api_history():
                 aggregate['max_loss'] = round(min(losses_list), 2)
                 aggregate['avg_loss'] = round(sum(losses_list) / len(losses_list), 2)
 
-        # Compute running total (oldest first, then reverse for display)
+        # Compute running total using net P&L (oldest first, then reverse)
         closed_chrono = sorted(closed, key=lambda t: t.get('entry_time', ''))
         running = 0.0
         for t in closed_chrono:
-            pnl = t.get('pnl') or 0
-            running += pnl
+            net = round((t.get('pnl') or 0) - (t.get('commissions') or 0), 2)
+            running += net
             t['running_total'] = round(running, 2)
         trades = list(reversed(closed_chrono))
 
