@@ -1478,9 +1478,20 @@ def api_pdt_status():
     try:
         from src.core.pdt_tracker import PDTTracker
 
-        # Read account equity from strategy params (same source as dry-run broker)
+        # Read account equity — prefer live Schwab balance, fall back to YAML
         portfolio_cfg = STRATEGY_PARAMS.get('portfolio', {})
         account_equity = portfolio_cfg.get('account_size', 0)
+        if mode == 'LIVE':
+            try:
+                settings = _load_settings()
+                from src.brokers.broker_factory import get_broker
+                _broker = get_broker(settings)
+                _bal = _broker.get_account_balance()
+                _nav = float(_bal.get('net_account_value', 0))
+                if _nav > 0:
+                    account_equity = _nav
+            except Exception:
+                pass
 
         tracker = PDTTracker(
             db_path=DATABASE_PATH,
@@ -1549,14 +1560,18 @@ def api_status():
             'closed_trades': [],
         }
 
-    # In live mode, fetch actual cash balance from broker
+    # In live mode, fetch actual balances from broker
     if mode == 'LIVE':
         try:
             settings = _load_settings()
             from src.brokers.broker_factory import get_broker
             broker = get_broker(settings)
             balance_data = broker.get_account_balance()
-            account['current_balance'] = round(float(balance_data.get('cash_available', 0)), 2)
+            nav = float(balance_data.get('net_account_value', 0))
+            cash = float(balance_data.get('cash_available', 0))
+            if nav > 0:
+                account['total_equity'] = round(nav, 2)
+            account['current_balance'] = round(cash, 2)
         except Exception as e:
             logger.warning(f"Live balance fetch failed, using DB-calculated value: {e}")
 
