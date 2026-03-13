@@ -4796,13 +4796,30 @@ async function updateToday() {
   prevOpenPositionCount = openCount;
   prevClosedTodayCount = closedCount;
 
-  // Fetch initial bars from unified endpoint if not yet loaded
-  if (!allChartBars[chartTimeframe] || !allChartBars[chartTimeframe].length) {
-    const barsData = await fetchJSON('/api/chart/bars?tf=' + chartTimeframe);
-    if (barsData && barsData.bars && barsData.bars.length) {
-      allChartBars[chartTimeframe] = _dedupBars(barsData.bars);
-      if (barsData.bb) allChartBB[chartTimeframe] = barsData.bb;
-    }
+  // Update trade plan panel with position data
+  updateTradePlan(d.open_positions, d);
+}
+
+// ---------------------------------------------------------------
+// Chart update — runs on its own 10-second cycle, independent of
+// the main 30-second refreshAll() loop.
+// ---------------------------------------------------------------
+async function updateChart() {
+  var chartEl = document.getElementById('candle-chart');
+  if (chartEl) chartEl.style.transition = 'opacity 0.2s';
+
+  const d = await fetchJSON('/api/today');
+  if (!d) { if (chartEl) chartEl.style.opacity = '1'; return; }
+  latestTodayData = d;
+
+  // Show subtle loading indicator
+  if (chartEl) chartEl.style.opacity = '0.7';
+
+  // Fetch bars from unified endpoint (always refresh for live data)
+  const barsData = await fetchJSON('/api/chart/bars?tf=' + chartTimeframe);
+  if (barsData && barsData.bars && barsData.bars.length) {
+    allChartBars[chartTimeframe] = _dedupBars(barsData.bars);
+    if (barsData.bb) allChartBB[chartTimeframe] = barsData.bb;
   }
   // Load historical trades once
   if (!histTradesLoaded) _loadHistoricalTrades();
@@ -4854,8 +4871,8 @@ async function updateToday() {
   // Render candlestick chart
   renderChart(d);
 
-  // Update trade plan panel with position data
-  updateTradePlan(d.open_positions, d);
+  // Restore opacity
+  if (chartEl) chartEl.style.opacity = '1';
 }
 
 function _findClosestBarIdx(sortedTimestamps, sortedCloses, timeStr) {
@@ -5313,6 +5330,7 @@ function renderChart(d) {
     }
 
     const layout = {
+      datarevision: Date.now(),
       paper_bgcolor: '#0a0e17', plot_bgcolor: '#0a0e17',
       font: {color: '#6b7280', family: 'JetBrains Mono, Consolas, monospace', size: 11},
       margin: {l: 55, r: 90, t: 15, b: 55},
@@ -7828,6 +7846,8 @@ async function loadDevMode() {
 checkDesktopMode();
 loadDevMode();
 refreshAll().then(() => { initialLoad = false; });
+updateChart();                        // first chart paint immediately
+setInterval(() => { updateChart(); }, 10000);   // 10-second independent chart poll
 checkForUpdates();
 
 // ---------------------------------------------------------------

@@ -2280,11 +2280,20 @@ def api_chart_bars():
         start_date = end_date - timedelta(days=days)
 
         yf_interval = '1h' if tf == '4h' else tf
-        df = yf.download(
-            '^GSPC', start=start_date.isoformat(), end=end_date.isoformat(),
-            interval=yf_interval, progress=False, auto_adjust=True,
-        )
+        # 5m bars require period='1d' (date-range downloads fail for intraday < 1h)
+        if tf == '5m':
+            df = yf.download(
+                '^GSPC', period='1d',
+                interval='5m', progress=False, auto_adjust=True,
+            )
+        else:
+            df = yf.download(
+                '^GSPC', start=start_date.isoformat(), end=end_date.isoformat(),
+                interval=yf_interval, progress=False, auto_adjust=True,
+            )
         if df is None or df.empty:
+            if tf == '5m':
+                logger.warning("5m chart bars: yfinance returned empty data")
             return jsonify({'success': True, 'bars': [], 'bb': None, 'oldest_date': None})
 
         from src.utils.market_calendar import is_trading_day
