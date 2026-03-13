@@ -770,7 +770,7 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 **Trade:** Bearish call credit spread 6660/6665 (2 contracts), entered 11:01 ET on bearish pulse bar at 10:30
 **VIX:** 26.34 (HIGH regime), SPX opened at 6,673.49 (-0.99% gap down)
 **Result:** Win — profit target reached at 82% of max profit, closed at 3:22 PM ET after 4h 21m
-**Schwab account impact:** +$410.42 (net of $9.58 fees)
+**Schwab account impact:** +$410.42 (net of fees)
 **First 2-contract trade:** Budget-based sizing scaled up from 1 to 2 contracts based on account equity and daily loss budget
 
 **Fixes deployed:**
