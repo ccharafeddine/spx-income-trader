@@ -3052,6 +3052,7 @@ header::after {
       </div>
       <div class="spacer"></div>
       <button class="btn-sm" onclick="exportJournal()">Export CSV</button>
+      <button class="btn-sm" onclick="exportTaxReport()">Export Tax Report</button>
       <button class="btn-sm" id="expand-all-btn" onclick="expandAllCards()">Expand All</button>
     </div>
 
@@ -6716,6 +6717,148 @@ function exportJournal() {
   const a = document.createElement('a');
   a.href = url;
   a.download = 'trade_journal_' + new Date().toISOString().split('T')[0] + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportTaxReport() {
+  if (!window.journalData || !window.journalData.journal) {
+    alert('No journal data to export');
+    return;
+  }
+
+  const trades = window.journalData.journal.filter(t =>
+    t.status === 'closed' || t.status === 'expired'
+  );
+  if (trades.length === 0) {
+    alert('No closed trades to export');
+    return;
+  }
+
+  const acct = window.journalData.account_number_masked || '';
+
+  // Sort by entry date (oldest first for tax reporting)
+  trades.sort((a, b) => (a.entry_time || '').localeCompare(b.entry_time || ''));
+
+  // Determine date range
+  const firstDate = (trades[0].entry_time || '').substring(0, 10);
+  const lastDate = (trades[trades.length - 1].entry_time || '').substring(0, 10);
+
+  // Header info section
+  let csv = '# SPX Options Tax Report\n';
+  csv += '# Account: ' + acct + '\n';
+  csv += '# Date Range: ' + firstDate + ' to ' + lastDate + '\n';
+  csv += '# Section 1256 Contracts — 60% Long-Term / 40% Short-Term (IRC §1256)\n';
+  csv += '# All financial data sourced from Charles Schwab execution records\n';
+  csv += '#\n';
+
+  // Column headers
+  const columns = [
+    'Date Opened', 'Date Closed', 'Description', 'Underlying Symbol',
+    'Option Type', 'Spread Type', 'Short Strike', 'Long Strike',
+    'Quantity', 'Proceeds', 'Cost Basis', 'Commissions & Fees',
+    'Net Gain/Loss', 'Holding Period', 'Term', 'Section 1256 Contract',
+    'Schwab Order ID', 'Account Number'
+  ];
+  csv += columns.join(',') + '\n';
+
+  // Running totals for summary
+  let totalProceeds = 0;
+  let totalCostBasis = 0;
+  let totalCommissions = 0;
+  let totalNetGainLoss = 0;
+
+  trades.forEach(t => {
+    const entryDate = (t.entry_time || '').substring(0, 10);
+    const exitDate = (t.exit_time || '').substring(0, 10);
+
+    // Determine option type from direction
+    const dirRaw = (t.direction_raw || t.direction || '').toLowerCase();
+    let optionType, spreadDesc;
+    if (dirRaw === 'bullish' || dirRaw === 'put credit') {
+      optionType = 'Put';
+      spreadDesc = 'SPX 0DTE Put Credit Spread ' + t.short_strike + '/' + t.long_strike;
+    } else {
+      optionType = 'Call';
+      spreadDesc = 'SPX 0DTE Call Credit Spread ' + t.short_strike + '/' + t.long_strike;
+    }
+
+    const qty = t.quantity || 1;
+    const credit = t.credit_received || 0;
+
+    // Proceeds = total credit received (sale price for credit spread)
+    const proceeds = Math.round(credit * 100 * qty * 100) / 100;
+
+    // Cost basis = exit debit paid, or settlement value
+    // For credit spreads: exit_price * 100 * qty is the debit to close
+    const exitPrice = t.exit_price !== null && t.exit_price !== undefined
+      ? t.exit_price : 0;
+    const costBasis = Math.round(exitPrice * 100 * qty * 100) / 100;
+
+    const commissions = Math.round((t.commissions || 0) * 100) / 100;
+    const netGainLoss = Math.round((proceeds - costBasis - commissions) * 100) / 100;
+
+    // Term (days held) — 0DTE is always 0 or 1 day
+    let termDays = 0;
+    if (entryDate && exitDate) {
+      const d1 = new Date(entryDate);
+      const d2 = new Date(exitDate);
+      termDays = Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
+    }
+
+    // Schwab order ID (use entry order ID)
+    const orderId = t.entry_order_id || '';
+
+    totalProceeds += proceeds;
+    totalCostBasis += costBasis;
+    totalCommissions += commissions;
+    totalNetGainLoss += netGainLoss;
+
+    const row = [
+      entryDate,
+      exitDate,
+      '"' + spreadDesc + '"',
+      'SPX',
+      optionType,
+      'Vertical Credit Spread',
+      t.short_strike,
+      t.long_strike,
+      qty,
+      proceeds.toFixed(2),
+      costBasis.toFixed(2),
+      commissions.toFixed(2),
+      netGainLoss.toFixed(2),
+      'Short-Term',
+      termDays,
+      'Yes',
+      orderId,
+      acct
+    ];
+    csv += row.join(',') + '\n';
+  });
+
+  // Summary row
+  csv += '\n';
+  csv += ',,,,,,,Total,' + trades.length + ',';
+  csv += totalProceeds.toFixed(2) + ',';
+  csv += totalCostBasis.toFixed(2) + ',';
+  csv += totalCommissions.toFixed(2) + ',';
+  csv += totalNetGainLoss.toFixed(2) + ',,,,,\n';
+  csv += '\n';
+  csv += '# Section 1256 Tax Treatment:\n';
+  csv += '# 60% of net gain/loss is treated as long-term capital gain/loss\n';
+  csv += '# 40% of net gain/loss is treated as short-term capital gain/loss\n';
+  csv += '# 60% Long-Term: ,' + (totalNetGainLoss * 0.6).toFixed(2) + '\n';
+  csv += '# 40% Short-Term: ,' + (totalNetGainLoss * 0.4).toFixed(2) + '\n';
+
+  // Download
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'spx_tax_report_' + new Date().toISOString().split('T')[0] + '.csv';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

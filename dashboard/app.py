@@ -2868,6 +2868,11 @@ def api_journal():
             'prior_day_high': trade.get('prior_day_high'),
             'prior_day_low': trade.get('prior_day_low'),
             'spx_vs_prior_range': trade.get('spx_vs_prior_range'),
+            # Order IDs and gross P&L for tax reporting
+            'entry_order_id': trade.get('entry_order_id'),
+            'exit_order_id': trade.get('exit_order_id'),
+            'pnl_gross': trade.get('pnl'),
+            'exit_price': trade.get('exit_price'),
         }
 
         # Apply filters
@@ -2966,11 +2971,17 @@ def api_journal():
         'max_daily_loss_dollars': max_daily_loss_dollars,
     }
 
+    # Masked account number for tax reporting
+    schwab_cfg = STRATEGY_PARAMS.get('broker', {}).get('schwab', {})
+    raw_acct = schwab_cfg.get('account_number', '')
+    masked_acct = f"****{raw_acct[-4:]}" if len(raw_acct) >= 4 else ''
+
     return jsonify({
         'journal': journal_entries,
         'stats': stats,
         'strategy_params': strategy_params,
         'strategy_breakdown': strategy_breakdown,
+        'account_number_masked': masked_acct,
     })
 
 
