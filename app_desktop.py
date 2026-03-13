@@ -81,6 +81,131 @@ except Exception:
 # Helpers
 # ----------------------------------------------------------------------
 
+# ----------------------------------------------------------------------
+# Singleton lock — only one instance may run at a time
+# ----------------------------------------------------------------------
+
+_LOCK_FILE = BASE_DIR / '.app.lock'
+_lock_fh = None  # held open for the process lifetime
+
+
+def _read_lock_info():
+    """Read PID and mode from the lock file (best effort)."""
+    try:
+        import json as _json
+        return _json.loads(_LOCK_FILE.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+
+
+def _is_pid_alive(pid):
+    """Check if a process with *pid* is still running."""
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            SYNCHRONIZE = 0x00100000
+            handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        except Exception:
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except (ProcessLookupError, PermissionError):
+            return False
+
+
+def acquire_instance_lock():
+    """Acquire an exclusive instance lock.
+
+    If another instance is already running:
+      - If the existing instance is *live* → always abort (never evict live).
+      - If the existing instance is *dry-run* and we are *live* → evict it.
+      - Otherwise → abort.
+
+    Returns True if lock was acquired, False if we should exit.
+    """
+    global _lock_fh
+    import json as _json
+
+    _LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    # Check for an existing instance
+    if _LOCK_FILE.exists():
+        info = _read_lock_info()
+        existing_pid = info.get('pid')
+        existing_mode = info.get('mode', 'unknown')
+
+        if existing_pid and _is_pid_alive(existing_pid):
+            # Another instance is genuinely running
+            our_mode = os.environ.get('TRADING_MODE', 'dry-run')
+            if existing_mode == 'live' or our_mode != 'live':
+                # Never evict a live instance; dry-run yields to anything
+                logger.error(
+                    f"Another instance is already running "
+                    f"(PID {existing_pid}, mode={existing_mode}). Exiting."
+                )
+                return False
+            else:
+                # We are live, existing is dry-run → evict it
+                logger.warning(
+                    f"Evicting dry-run instance (PID {existing_pid}) "
+                    f"to start in live mode."
+                )
+                try:
+                    if sys.platform == 'win32':
+                        os.system(f'taskkill /F /PID {existing_pid} >nul 2>&1')
+                    else:
+                        os.kill(existing_pid, signal.SIGTERM)
+                    # Brief wait for process to exit
+                    for _ in range(20):
+                        if not _is_pid_alive(existing_pid):
+                            break
+                        time.sleep(0.25)
+                except Exception as e:
+                    logger.warning(f"Failed to evict PID {existing_pid}: {e}")
+        # Stale lock file from a crashed process — safe to overwrite
+
+    # Write our info and hold the file open
+    try:
+        _lock_fh = open(_LOCK_FILE, 'w', encoding='utf-8')
+        _json.dump({'pid': os.getpid(), 'mode': os.environ.get('TRADING_MODE', 'dry-run')}, _lock_fh)
+        _lock_fh.flush()
+        # On Windows, hold an exclusive lock so no other process can overwrite
+        if sys.platform == 'win32':
+            import msvcrt
+            msvcrt.locking(_lock_fh.fileno(), msvcrt.LK_NBLCK, 1)
+    except Exception as e:
+        logger.error(f"Failed to acquire instance lock: {e}")
+        return False
+    return True
+
+
+def release_instance_lock():
+    """Release the singleton lock on shutdown."""
+    global _lock_fh
+    try:
+        if _lock_fh:
+            if sys.platform == 'win32':
+                import msvcrt
+                try:
+                    _lock_fh.seek(0)
+                    msvcrt.locking(_lock_fh.fileno(), msvcrt.LK_UNLCK, 1)
+                except Exception:
+                    pass
+            _lock_fh.close()
+            _lock_fh = None
+        if _LOCK_FILE.exists():
+            _LOCK_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def _find_available_port(start_port, max_tries=11):
     """Find an available port, trying start_port through start_port + max_tries - 1."""
     for offset in range(max_tries):
@@ -412,6 +537,24 @@ class DesktopApp:
         self.shutdown()
 
     # ------------------------------------------------------------------
+    # Instance lock helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _update_lock_mode(mode):
+        """Update the lock file with the current bot mode."""
+        global _lock_fh
+        if _lock_fh and not _lock_fh.closed:
+            try:
+                import json as _json
+                _lock_fh.seek(0)
+                _lock_fh.truncate()
+                _json.dump({'pid': os.getpid(), 'mode': mode}, _lock_fh)
+                _lock_fh.flush()
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
     # Version update check
     # ------------------------------------------------------------------
 
@@ -451,6 +594,8 @@ class DesktopApp:
             self._bot_mode = mode
             self._bot_started_at = datetime.now()
             self._bot_starting = True
+            # Update lock file so other instances see our current mode
+            self._update_lock_mode(mode)
             self._bot_crashed = False
             self._bot_crash_error = None
             self._bot_crash_time = None
@@ -1253,6 +1398,7 @@ class DesktopApp:
             else:
                 logger.info("Bot thread exited cleanly")
 
+        release_instance_lock()
         logger.info("Desktop app shutdown complete")
 
 
@@ -1322,6 +1468,11 @@ def main():
         from dashboard.app import app as flask_app
         flask_app._demo_mode = True
         flask_app._replay_engine = engine
+
+    # Singleton check — prevent multiple instances from competing for the DB
+    if not acquire_instance_lock():
+        print("Another instance is already running. Exiting.")
+        sys.exit(1)
 
     desktop_app = DesktopApp(port=args.port)
 

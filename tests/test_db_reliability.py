@@ -359,12 +359,12 @@ class TestBusyTimeout:
     """Verify that PRAGMA busy_timeout is set on ALL DB connections."""
 
     def test_db_manager_get_connection_sets_busy_timeout(self, tmp_path):
-        """DatabaseManager._get_connection should have busy_timeout = 5000."""
+        """DatabaseManager._get_connection should have busy_timeout >= 5000."""
         db, _ = _make_db(tmp_path)
         conn = db._get_connection()
         try:
             result = conn.execute("PRAGMA busy_timeout").fetchone()
-            assert result[0] == 5000
+            assert result[0] >= 5000
         finally:
             conn.close()
 

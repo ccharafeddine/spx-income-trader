@@ -634,9 +634,12 @@ def classify_trades(conn, spx_price):
             # Expired but DB wasn't updated (bot wasn't running at close)
             # Calculate final P&L based on SPX price at expiration
             _resolve_expired_trade(t, spx_price)
-            # Persist resolved P&L to DB so calendar/other queries see it
+            # Persist resolved P&L to DB so calendar/other queries see it.
+            # Use a separate short-lived connection to avoid holding a write
+            # lock on the main request connection (which blocks the bot).
             try:
-                conn.execute(
+                wconn = _open_db(DATABASE_PATH, row_factory=False)
+                wconn.execute(
                     """UPDATE trades SET status=?, pnl=?, exit_time=?,
                               exit_reason=?, exit_price=?, spx_at_exit=?
                        WHERE id=?""",
@@ -644,7 +647,8 @@ def classify_trades(conn, spx_price):
                      t['exit_reason'], t['exit_price'],
                      t.get('spx_at_exit'), t['id']),
                 )
-                conn.commit()
+                wconn.commit()
+                wconn.close()
             except Exception as e:
                 logger.debug(f"Failed to persist expired trade resolution: {e}")
             _annotate_trade(t)

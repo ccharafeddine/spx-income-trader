@@ -31,9 +31,9 @@ class DatabaseManager:
     
     def _get_connection(self):
         """Get database connection with WAL mode and busy timeout for concurrent access."""
-        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=10)
+        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES, timeout=15)
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA busy_timeout = 10000")
         return conn
     
     def _init_db(self):
@@ -294,8 +294,8 @@ class DatabaseManager:
             logger.debug(f"Trade {trade.id} saved to database")
 
     def save_trade_with_retry(self, trade, context: Optional[Dict] = None,
-                              max_attempts: int = 3,
-                              delays: tuple = (0.1, 0.5, 1.0)):
+                              max_attempts: int = 5,
+                              delays: tuple = (0.2, 0.5, 1.0, 2.0, 4.0)):
         """Save trade with exponential backoff retries for lock contention.
 
         This wraps save_trade() with retries so that transient 'database is
