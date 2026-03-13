@@ -211,11 +211,21 @@ class TradeReconciler:
             t for t in trades
             if t.get('status', '').lower() == 'closed' and t.get('pnl') is not None
         ]
-        total_db_pnl = round(sum(t['pnl'] for t in closed_trades), 2)
+        # Gross P&L: use gross_pnl when available (reconciled), else pnl (legacy)
+        total_db_pnl = round(
+            sum((t.get('gross_pnl') if t.get('gross_pnl') is not None else t['pnl'])
+                for t in closed_trades), 2
+        )
         total_commissions = round(
             sum(t.get('commissions', 0) or 0 for t in closed_trades), 2
         )
-        total_net_pnl = round(total_db_pnl - total_commissions, 2)
+        # Net P&L: for reconciled trades pnl is already net;
+        # for legacy trades subtract commissions
+        total_net_pnl = round(sum(
+            t['pnl'] if t.get('gross_pnl') is not None
+            else t['pnl'] - (t.get('commissions', 0) or 0)
+            for t in closed_trades
+        ), 2)
 
         # Compare bot P&L against actual account equity change to surface fees/slippage
         account_pnl = None

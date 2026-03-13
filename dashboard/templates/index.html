@@ -368,6 +368,14 @@ header::after {
     inset 0 -2px 4px rgba(0,0,0,0.2);
 }
 
+/* WINDOW_CLOSED (Grey/Dim) - Trading window over, nothing to do */
+.status-light[data-state="window_closed"] .led {
+  background: radial-gradient(circle at 30% 30%, #6b7280, #4b5563);
+  box-shadow:
+    0 0 3px rgba(107, 114, 128, 0.3),
+    inset 0 -2px 4px rgba(0,0,0,0.2);
+}
+
 /* DISABLED (Dim/Off) */
 .status-light[data-state="disabled"] .led {
   background: #1f2937;
@@ -476,6 +484,7 @@ header::after {
 }
 .strat-state.watching { background: rgba(6,182,212,0.15); color: var(--cyan); }
 .strat-state.idle { background: rgba(107,114,128,0.2); color: var(--text-dim); }
+.strat-state.window_closed { background: rgba(107,114,128,0.2); color: var(--text-dim); }
 .strat-state.active, .strat-state.position { background: var(--green-dim); color: var(--green); }
 .strat-state.pending { background: rgba(245,158,11,0.15); color: var(--amber); }
 .strat-state.signal { background: rgba(245,158,11,0.15); color: var(--amber); }
@@ -4205,7 +4214,7 @@ function updateStrategyStatuses(data) {
     } else if (data.market && data.market.is_open && isInMorningWindow()) {
       setLightState(dailyLight, dailyLabel, 'watching', 'Watching');
     } else if (data.market && data.market.is_open) {
-      setLightState(dailyLight, dailyLabel, 'idle', 'Window Closed');
+      setLightState(dailyLight, dailyLabel, 'window_closed', 'Window Closed');
     } else {
       setLightState(dailyLight, dailyLabel, 'idle', 'Idle');
     }

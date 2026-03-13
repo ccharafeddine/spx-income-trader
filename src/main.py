@@ -1720,19 +1720,29 @@ class TradingBot:
             # Query DB for today's actual trade stats (authoritative source)
             db_summary = self.db.get_daily_summary(trade_date)
             db_trades = db_summary.get('trades_count', 0)
-            db_pnl = db_summary.get('realized_pnl', 0.0)
 
-            # Query commissions for net P&L
+            # Query net P&L, gross P&L, and commissions
+            # Handles both reconciled trades (pnl = broker net) and
+            # legacy trades (pnl = gross, commissions subtracted)
+            db_pnl = db_summary.get('realized_pnl', 0.0)
             _daily_commissions = 0.0
+            _daily_gross = db_pnl  # default: gross = net when no commissions
             try:
                 with self.db._get_connection() as _conn:
-                    _comm_row = _conn.execute(
-                        "SELECT COALESCE(SUM(commissions), 0) FROM trades "
-                        "WHERE SUBSTR(entry_time, 1, 10) = ? "
+                    _pnl_row = _conn.execute(
+                        "SELECT "
+                        "  COALESCE(SUM(CASE WHEN gross_pnl IS NOT NULL THEN pnl "
+                        "       ELSE pnl - COALESCE(commissions, 0) END), 0.0), "
+                        "  COALESCE(SUM(COALESCE(gross_pnl, pnl)), 0.0), "
+                        "  COALESCE(SUM(commissions), 0.0) "
+                        "FROM trades WHERE SUBSTR(entry_time, 1, 10) = ? "
                         "AND status IN ('closed', 'expired')",
                         (str(trade_date),)
                     ).fetchone()
-                _daily_commissions = _comm_row[0] if _comm_row else 0.0
+                if _pnl_row:
+                    db_pnl = _pnl_row[0]          # correct net P&L
+                    _daily_gross = _pnl_row[1]     # gross P&L for display
+                    _daily_commissions = _pnl_row[2]
             except Exception:
                 pass
 
@@ -1753,7 +1763,10 @@ class TradingBot:
                     _starting = STRATEGY_PARAMS.get('portfolio', {}).get('account_size', 50000.0)
                     with self.db._get_connection() as _conn:
                         _row = _conn.execute(
-                            "SELECT COALESCE(SUM(pnl), 0) FROM trades "
+                            "SELECT COALESCE(SUM("
+                            "  CASE WHEN gross_pnl IS NOT NULL THEN pnl "
+                            "       ELSE pnl - COALESCE(commissions, 0) END"
+                            "), 0) FROM trades "
                             "WHERE LOWER(status) IN ('closed', 'expired') "
                             "AND credit_received >= 1.0"
                         ).fetchone()
@@ -1798,7 +1811,7 @@ class TradingBot:
                 'trades_count': db_trades,
                 'wins': _wins,
                 'losses': _losses,
-                'daily_pnl': db_pnl,
+                'daily_pnl': round(_daily_gross, 2),  # gross for "Gross P&L" display
                 'weekly_pnl': dm.weekly_realized_pnl if dm else 0.0,
                 'monthly_pnl': dm.monthly_realized_pnl if dm else 0.0,
                 'equity': live_equity,
@@ -1813,7 +1826,7 @@ class TradingBot:
             }
             if _daily_commissions > 0:
                 _eod_data['commissions'] = round(_daily_commissions, 2)
-                _eod_data['net_pnl'] = round(db_pnl - _daily_commissions, 2)
+                _eod_data['net_pnl'] = round(db_pnl, 2)  # db_pnl is already correct net
             self.notifier.send_eod_summary(_eod_data)
 
         except Exception as eod_err:

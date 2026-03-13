@@ -84,10 +84,11 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Live account balance polling: dashboard serves real broker equity, cash, and unrealized P&L in live mode with 15-second TTL cache. Cached broker instance prevents consuming single-use Schwab refresh tokens. Falls back to DB-calculated values on failure.
 
 ### Fee Tracking
+- **Broker P&L reconciliation:** After a trade closes, a background thread fetches Schwab transaction history, matches all 4 spread legs by order ID, and sums `netAmount` fields to get the true broker P&L (net of all embedded fees). Stored as canonical `pnl` (broker net), `gross_pnl` (price-based), and derived `commissions`. Falls back to price-based if fetch fails. Retry with 8s delay + 15s on partial match.
 - Commission and fee capture from Schwab order details after fill (entry + exit orders)
 - Post-settlement fee backfill at ~4:20 PM ET for expired 0DTE trades via transaction history API
-- Dashboard, journal, and Discord notifications display net P&L (gross minus commissions)
-- `commissions` column in trades table with automatic schema migration
+- Dashboard, journal, and Discord notifications display net P&L via `_trade_net_pnl()` helper (detects reconciled vs legacy trades)
+- `commissions` and `gross_pnl` columns in trades table with automatic schema migration
 
 ### Database Separation
 - Dry-run and live trading use separate databases (`trades_dryrun.db` / `trades_live.db`)
@@ -756,7 +757,22 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ![Day 3 Dashboard — March 12, 2026](screenshots/DailyMelt_Day3_03122026.png)
 
-**Test suite:** 1,247 → 1,467+ tests across the three-day session (+220 new tests)
+### Day 4 — March 13, 2026
+
+**Trade:** Bearish call credit spread 6660/6665 (2 contracts), entered 11:01 ET on bearish pulse bar at 10:30
+**VIX:** 26.34 (HIGH regime), SPX opened at 6,673.49 (-0.99% gap down)
+**Result:** Win — profit target reached at 82% of max profit, closed at 3:22 PM ET after 4h 21m
+**Schwab account impact:** +$410.42 (net of $9.58 fees)
+**First 2-contract trade:** Budget-based sizing scaled up from 1 to 2 contracts based on account equity and daily loss budget
+
+**Fixes deployed:**
+- **Broker P&L reconciliation:** After a trade closes, a background thread fetches Schwab transaction history, matches all 4 legs by order ID, and sums `netAmount` fields (which include embedded fees) to get the true broker P&L. Stores as canonical `pnl` (broker net), `gross_pnl` (price-based), and derived `commissions = gross_pnl - broker_pnl`. Falls back to price-based P&L if fetch fails or fewer than 4 legs match. Retry logic: 8s initial delay + 15s retry on partial match. Added `gross_pnl REAL` column to schema with automatic migration.
+- **Unified net P&L helper:** `_trade_net_pnl()` detects reconciled trades (`gross_pnl IS NOT NULL` means `pnl` is already broker net) vs legacy trades (subtracts commissions). All 7 downstream consumers updated: account bar, daily realized, today summary, analytics aggregates, running totals, journal entries, exit analysis.
+- **Calendar bug fix:** Journal calendar was showing today's closed trades as open because it queried raw DB status without resolving expired trades. Added `_resolve_expired_trade()` call in the calendar endpoint, matching the list view's `classify_trades()` logic.
+- **Window closed LED fix:** "WINDOW CLOSED" strategy state was rendering with a red LED (falling through to `idle` state). Added explicit `window_closed` CSS state with grey LED gradient and updated JS to use `setLightState('window_closed', 'Window Closed')`.
+- **Live data directory discovery:** Diagnosed that the compiled exe writes to `AppData\Local\SPXIncomeTrader\` (via platformdirs) while the project root `database/trades_live.db` is a stale copy. All 3 live trades (Mar 11-13) were correctly recorded in the platformdirs DB. Backfilled `gross_pnl` column and reconciled all trade records with broker net P&L.
+
+**Test suite:** 1,467+ → 1,502+ tests (+35 new tests covering broker P&L reconciliation, calendar resolution, LED states)
 
 ---
 

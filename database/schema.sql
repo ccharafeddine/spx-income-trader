@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS trades (
 
     -- P&L
     pnl REAL,
+    gross_pnl REAL,               -- price-based P&L before fees (for reference/debugging)
     pnl_percent REAL,
     max_profit REAL,
     max_risk REAL,
