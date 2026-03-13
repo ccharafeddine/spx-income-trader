@@ -5,7 +5,7 @@ description: Comprehensive security, logic, analytics, and strategy audit for Th
 
 # Trading Bot Audit Skill
 
-A systematic audit framework for The Daily Melt automated SPX options trading system. Covers nine domains: strategy correctness, settings propagation, security, data integrity, backtest realism, desktop app / demo mode, analytics & reporting, price feed architecture, and risk management.
+A systematic audit framework for The Daily Melt automated SPX options trading system. Covers nine domains: strategy correctness, settings propagation, security, data integrity, backtest realism, desktop app / demo mode, analytics & reporting, price feed architecture, and risk management. The dashboard has five tabs: Overview, Trade Journal, Analytics, Backtest, and Logs. Economic calendar events (FOMC, CPI, NFP, GDP, PCE) appear as badges on Trade Journal calendar day cells and in the Overview left panel.
 
 ## When To Use
 
@@ -183,7 +183,7 @@ Verify:
 Check the settings save/load cycle:
 - GET /api/settings returns current values from strategy_params.yaml
 - POST /api/settings writes changes back to strategy_params.yaml
-- ALLOWED_SETTINGS_PATHS allowlist prevents arbitrary key injection
+- ALLOWED_SETTINGS_PATHS allowlist prevents arbitrary key injection (includes `developer_mode`)
 - Sensitive values are redacted in GET response via _redact_secrets()
 
 ### 2B. Critical Settings That Must Hot-Reload
@@ -198,6 +198,9 @@ Check the settings save/load cycle:
 | tnt.weekend_hold_prevention.enabled | Enables/disables Friday gate | TNT checks config each evaluation |
 | tnt.weekend_hold_prevention.profit_threshold_pct | Changes Friday exit threshold | TNT reads on next evaluation |
 | notifications.discord.webhook_url | Changes where notifications go | Next notification uses new URL |
+| developer_mode | Hides/shows Backtest tab, Logs tab, Analytics backtest data source dropdown | Dashboard reads via /api/settings on page load |
+
+**Developer Mode:** Top-level `developer_mode` setting in runtime_settings.json, included in ALLOWED_SETTINGS_PATHS. Toggled via Account > Trading Settings > EXPERIMENTAL. When off: Backtest tab hidden, Logs tab hidden, Analytics backtest data source dropdown hidden.
 
 **Critical:** DrawdownManager.reload_config() must be called from the settings save handler in app.py whenever drawdown limit percentages change. If not called, the dashboard shows new limits but the engine enforces old ones.
 
@@ -247,7 +250,14 @@ git log --all -p | grep -iE "(consumer_key|consumer_secret|app_key|app_secret|we
 
 - Token files (schwab_token.json, etrade token): chmod 0o600?
 - Log files: No account numbers, API keys, or tokens in output?
-- Single-instance lock: OS-level file lock with PID check?
+
+### 3D. Singleton Instance Lock
+
+- Only one app instance can run at a time (app_desktop.py)
+- Lock file at BASE_DIR/.app.lock stores PID and mode (live/dry-run)
+- Live mode takes priority: evicts any running dry-run instance
+- Auto-releases on crash via Windows file lock (msvcrt)
+- Verify: launching a second instance while one is running is blocked (or evicts dry-run if new instance is live)
 
 ---
 
@@ -261,6 +271,10 @@ git log --all -p | grep -iE "(consumer_key|consumer_secret|app_key|app_secret|we
 - Crash recovery: If bot crashes with open positions, does restart find them?
 - Daily counter restoration: Does _restore_daily_counters work on mid-day restart?
 - Correct database used: dry-run reads/writes trades_dryrun.db, live reads/writes trades_live.db
+- `save_trade_with_retry()`: 5 attempts with delays (0.2, 0.5, 1.0, 2.0, 4.0 seconds)
+- `busy_timeout` on bot DB connections: 10000ms
+- Dashboard expire-trade writes in `classify_trades()` use a separate short-lived connection via `_open_db()` instead of the main request connection (avoids holding write locks that block the bot)
+- DB failure Discord alerts are deduplicated: only one alert per cooldown period via `_db_alert_sent` flag on PositionManager
 
 ### 4B. State File Integrity
 
@@ -286,6 +300,7 @@ git log --all -p | grep -iE "(consumer_key|consumer_secret|app_key|app_secret|we
 ### 4D. Display Accuracy
 
 - Dashboard P&L matches database records?
+- Net P&L (gross - commissions) computed consistently across all views: `_compute_exit_analysis()`, `api_journal_calendar()`, Trade Journal, Analytics
 - Calendar view shows correct trade/no-trade days?
 - Risk Status bars read from correct state files (daily from portfolio_state.json, weekly/monthly from drawdown_state.json)?
 - W/L streak query excludes pnl=0 (scratch trades don't break streaks)?
@@ -347,7 +362,22 @@ git log --all -p | grep -iE "(consumer_key|consumer_secret|app_key|app_secret|we
 - Demo mode does NOT write to real database?
 - Bar model compatibility: getattr(bar, 'tick_count', 0) used in recorder hooks?
 
-### 6C. Build System
+### 6C. Singleton Instance Lock
+
+- app_desktop.py enforces single-instance via BASE_DIR/.app.lock
+- Lock file contains PID and mode (live/dry-run)
+- Live mode evicts running dry-run instances; dry-run cannot evict live
+- Windows file lock via msvcrt auto-releases on crash
+- Verify: start dry-run, then start live — dry-run should be evicted
+
+### 6D. Developer Mode Toggle
+
+- Account > Trading Settings > EXPERIMENTAL section
+- When off: Backtest tab, Logs tab, and Analytics backtest data source dropdown are hidden
+- Setting: `developer_mode` (top-level) in runtime_settings.json
+- Dashboard reads setting via /api/settings on page load
+
+### 6E. Build System
 
 - **Windows:** PyInstaller via build/build_windows.py, output in dist/The Daily Melt/
 - **macOS:** py2app via build/build_macos.py, output in dist/The Daily Melt.app/
@@ -412,7 +442,19 @@ git log --all -p | grep -iE "(consumer_key|consumer_secret|app_key|app_secret|we
 - "P&L" renders without double-escaping in PDF?
 - Strategy abbreviations in trade log: DI, TNT, ORB, B&B?
 
-### 7G. Chart Visualization
+### 7G. Trade History & Performance Panel
+
+- Syncs with Trade Journal view: shows data for the calendar month being viewed or the list period dropdown
+- Title updates dynamically to reflect the selected period
+- Removed from periodic refreshAll() tasks (updates only on Trade Journal navigation)
+
+### 7H. Economic Calendar Integration
+
+- FRED API events (FOMC, CPI, NFP, GDP, PCE) appear as badges on Trade Journal calendar day cells
+- Standalone Calendar tab removed (merged into Trade Journal)
+- Today's events still shown in Overview left panel
+
+### 7I. Chart Visualization
 
 - Four timeframes render correctly: 4h, 1h, 30m, 5m?
 - Bollinger Bands overlay on 1h and 4h only (not 30m/5m)?
@@ -525,6 +567,8 @@ Verify all notification types fire correctly and contain accurate data:
 All timestamps in ET (America/New_York), 12-hour format with AM/PM.
 Hourly updates color-coded: blue (flat/up), yellow (down >0.5%), red (down >1%).
 
+**DB failure alert deduplication:** `_send_db_failure_alert()` checks `self._db_alert_sent` flag on PositionManager. Only one alert fires per cooldown period — subsequent failures within the same cooldown are suppressed. Verify the flag resets correctly after the cooldown expires.
+
 ---
 
 ## Audit Report Template
@@ -553,6 +597,7 @@ Document findings in docs/full_system_audit.md using this structure:
 | Credentials not in git | PASS/FAIL | ... |
 | Flask bound to localhost | PASS/FAIL | ... |
 | CSRF protection | PASS/FAIL | ... |
+| Singleton instance lock | PASS/FAIL | ... |
 
 ### Section 4: Data Integrity
 
@@ -562,6 +607,11 @@ Document findings in docs/full_system_audit.md using this structure:
 | portfolio_state.json schema | PASS/FAIL | ... |
 | drawdown_state.json schema | PASS/FAIL | ... |
 | Backfill on startup | PASS/FAIL | ... |
+| save_trade_with_retry (5 attempts) | PASS/FAIL | ... |
+| busy_timeout 10000ms | PASS/FAIL | ... |
+| classify_trades separate DB conn | PASS/FAIL | ... |
+| DB alert deduplication | PASS/FAIL | ... |
+| Net P&L consistency across views | PASS/FAIL | ... |
 
 ### Section 5: Backtest Realism
 
@@ -580,6 +630,8 @@ Document findings in docs/full_system_audit.md using this structure:
 | System tray icon | PASS/FAIL | ... |
 | Demo mode isolation | PASS/FAIL | ... |
 | Headless mode | PASS/FAIL | ... |
+| Singleton instance lock | PASS/FAIL | ... |
+| Developer mode toggle | PASS/FAIL | ... |
 
 ### Section 7: Analytics & Reporting
 
@@ -594,6 +646,8 @@ Document findings in docs/full_system_audit.md using this structure:
 | Chart (4 timeframes) | N/A | N/A | PASS/FAIL | PASS/FAIL |
 | Chart (scrollable/lazy) | N/A | N/A | PASS/FAIL | PASS/FAIL |
 | Chart (Bollinger Bands) | N/A | N/A | PASS/FAIL | PASS/FAIL |
+| Trade History & Perf sync | N/A | N/A | PASS/FAIL | PASS/FAIL |
+| Economic calendar badges | N/A | N/A | PASS/FAIL | PASS/FAIL |
 
 ### Section 8: Price Feed
 
@@ -618,6 +672,7 @@ Document findings in docs/full_system_audit.md using this structure:
 | TNT LED wired to DB positions | PASS/FAIL | ... |
 | Settings sliders → engine alignment | PASS/FAIL | ... |
 | Notifications contain correct data | PASS/FAIL | ... |
+| DB failure alert deduplication | PASS/FAIL | ... |
 
 ### Section 10: Fixes Required
 
@@ -631,7 +686,7 @@ Ordered by severity:
 
 1. All CRITICAL fixes first
 2. All HIGH fixes
-3. Run full test suite after each fix (1157+ tests expected as of Mar 2026)
+3. Run full test suite after each fix (1,467+ tests expected as of Mar 2026)
 4. Update the audit report with fix status
 
 ---

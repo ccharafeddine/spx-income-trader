@@ -177,14 +177,28 @@ Read `src/core/portfolio_manager.py` and `src/main.py`:
 41. **Live trading database exists (or will auto-create)**
     - `database/trades_live.db` exists, OR WARN (auto-created on first connection)
 
-42. **WAL mode enabled**
+42. **WAL mode enabled and busy_timeout increased**
     - db_manager.py contains `PRAGMA journal_mode=WAL`
+    - Bot DB connections set `busy_timeout` to 10000 ms (previously 5000)
 
 43. **No open positions in live database**
     - If trades_live.db exists: open_positions must be empty
     - If stale open positions found: FAIL — must resolve before starting
 
-44. **drawdown_state.json schema valid**
+44. **save_trade_with_retry() configured for 5 attempts**
+    - Retry count increased from 3 to 5 for trade persistence reliability
+    - Dashboard writes use separate short-lived DB connections (no long-held locks)
+
+45. **No stale .app.lock file from a crashed process**
+    - Check `BASE_DIR/.app.lock` — if present with no running app process, delete it
+    - Singleton instance lock ensures only one app instance runs at a time
+    - Live mode takes priority and evicts running dry-run instances
+
+46. **Only one instance running before going live**
+    - Verify no other Daily Melt instance is active (check task manager / process list)
+    - The singleton lock prevents accidental dual instances but operator should confirm
+
+47. **drawdown_state.json schema valid**
     - Contains: current_date (str), current_iso_week (int), current_iso_year (int),
       current_month (int), current_year (int), daily/weekly/monthly_realized_pnl (float),
       daily/weekly/monthly_breaker_triggered (bool)
@@ -195,45 +209,49 @@ Read `src/core/portfolio_manager.py` and `src/main.py`:
 
 ### Section 6: Notification System
 
-45. **At least one notification channel configured**
+48. **At least one notification channel configured**
     - At least one of: discord.enabled: true, slack.enabled: true, webhook.enabled: true
     - FAIL if all channels disabled
 
-46. **Discord webhook URL is non-empty if enabled**
+49. **Discord webhook URL is non-empty if enabled**
     - FAIL if discord.enabled = true but webhook_url is empty or placeholder
 
-47. **Notification payload fields verified**
+50. **Notification payload fields verified**
     - Bot startup notification includes ET time (not UTC)
     - Market open notification includes SPX opening price field
     - EOD summary includes SPX close, session range, pulse bar count in no-trade reason
     - Hourly update method (send_hourly_update) exists in notifications.py
     - Circuit breaker notification specifies which breaker (daily/weekly/monthly)
 
-48. **Trade entry/exit notifications enabled**
+51. **Trade entry/exit notifications enabled**
     - send_trade_entered() and send_trade_closed() calls exist in strategy entry/exit paths
 
-49. **EOD summary notification enabled**
+52. **EOD summary notification enabled**
     - send_eod_summary() call exists in end-of-day logic
 
-**Operator note:** Notifications are strongly recommended but not a hard block. FAIL on #45 is a NO-GO recommendation that operator can acknowledge.
+53. **Discord DB failure alerts deduplicated**
+    - DB failure notifications send one alert per cooldown period (not one per failure)
+    - Verify dedup logic prevents notification spam during extended DB issues
+
+**Operator note:** Notifications are strongly recommended but not a hard block. FAIL on #48 is a NO-GO recommendation that operator can acknowledge.
 
 ---
 
 ### Section 7: Price Feed Readiness
 
-50. **`src/data/price_feed.py` exists**
+54. **`src/data/price_feed.py` exists**
     - Contains PriceFeed ABC + YahooPriceFeed + EtradePriceFeed + SchwabPriceFeed + IBKRPriceFeed + create_price_feed()
 
-51. **Factory returns correct feed for live mode**
+55. **Factory returns correct feed for live mode**
     - Schwab broker → SchwabPriceFeed
     - E*TRADE broker → EtradePriceFeed
     - IBKR broker → IBKRPriceFeed (ib_insync snapshot)
     - Dry-run → YahooPriceFeed
 
-52. **Stale cache fallback implemented**
+56. **Stale cache fallback implemented**
     - On fetch failure: returns cached price with warning log (not None/crash)
 
-53. **Health monitoring dict correct**
+57. **Health monitoring dict correct**
     - get_health_status() returns: source, healthy, last_update_secs_ago, consecutive_failures
 
 ---
@@ -242,14 +260,17 @@ Read `src/core/portfolio_manager.py` and `src/main.py`:
 
 Conservative settings required for session 1:
 
-54. `max_contracts = 10` — verify matches config
-55. `daily_contracts = 7` and `swing_contracts = 2` — verify matches config
-56. Only Daily Income active — TNT, ORB, B&B all disabled
-57. `di_morning_bias_filter = true`
-58. `spread_width = 5`
-59. `min_credit = 1.00`
-60. `profit_target_pct = 80`
-61. Config confirms live mode intent (broker not `dry_run`)
+58. `max_contracts = 10` — verify matches config
+59. `daily_contracts = 7` and `swing_contracts = 2` — verify matches config
+60. Only Daily Income active — TNT, ORB, B&B all disabled
+61. `di_morning_bias_filter = true`
+62. `spread_width = 5`
+63. `min_credit = 1.00`
+64. `profit_target_pct = 80`
+65. Config confirms live mode intent (broker not `dry_run`)
+66. `developer_mode` setting acknowledged — found in Account > Trading Settings > EXPERIMENTAL
+    - When off: hides Backtest and Logs tabs and Analytics backtest source dropdown
+    - Operator should confirm this is set as desired before going live
 
 **After session 1:** TNT can be re-enabled. Max contracts can scale up as account grows. When TNT is re-enabled, verify `tnt.weekend_hold_prevention.enabled = true` and threshold is set.
 
@@ -259,25 +280,41 @@ Conservative settings required for session 1:
 
 Before going live, confirm these dashboard indicators show correct live data:
 
-62. **Risk Status bars**
+67. **Risk Status bars**
     - Daily bar reads from portfolio_state.json (resets each morning)
     - Weekly bar reads from drawdown_state.json (resets each Monday)
     - Monthly bar reads from drawdown_state.json (resets each 1st)
     - All three bars show $0 fill on clean days (no losses)
     - Limits shown match what the engine enforces (same YAML source)
 
-63. **W/L Streak**
+68. **W/L Streak**
     - Streak count matches Trade Journal closed trade history
     - Scratch trades ($0 P&L) do not break active streaks
 
-64. **TNT LED**
+69. **TNT LED**
     - Shows ACTIVE (green) if open TNT position exists in DB
     - Correct even when bot is stopped or market is closed
 
-65. **Strategy LEDs**
+70. **Strategy LEDs**
     - DI: IDLE when no position and market closed; WATCHING during setup window
     - TNT: ACTIVE when position open (from DB); IDLE otherwise
     - B&B and ORB: IDLE (disabled by default for first session)
+    - Dashboard has 5 tabs: Overview, Trade Journal, Analytics, Backtest, Logs
+    - Backtest and Logs tabs hidden when Developer Mode is off
+
+71. **Net P&L consistency across dashboard views**
+    - All views display net P&L (gross - commissions), not gross P&L
+    - Verify consistency across: Overview, Trade Journal cards, calendar day cells, history panel, all-time stats
+    - Figures should match for the same trade/period across all views
+
+72. **Economic calendar merged into Trade Journal**
+    - No standalone Calendar tab — economic events appear as badges on Trade Journal calendar day cells
+    - Today's economic events still display in Overview left panel
+    - Verify badges render on calendar days with scheduled events
+
+73. **Trade History & Performance panel syncs with Trade Journal view**
+    - Panel title updates dynamically to match current Trade Journal view (calendar month or list period)
+    - Panel is not on periodic refresh — updates when Trade Journal view changes
 
 ---
 
@@ -285,13 +322,14 @@ Before going live, confirm these dashboard indicators show correct live data:
 
 | # | Limitation | Status |
 |---|-----------|--------|
-| 66 | Backtest uses synthetic Black-Scholes pricing (not real option chain data) | ACK |
-| 67 | Position sizing compounds aggressively at scale — 10 contract cap for first session | ACK |
-| 68 | Price feed uses 10s polling, not WebSocket streaming — acceptable for 30-min bar strategy | ACK |
-| 69 | No margin requirement modeling in backtest — real buying power may differ | ACK |
-| 70 | SPX 0DTE liquidity assumed — real fills at theoretical mid not guaranteed at scale | ACK |
-| 71 | Close order retry is unbounded — no limit-price widening after N failures | ACK |
-| 72 | Orphaned positions (crash between order and DB write) require manual review on restart | ACK |
+| 74 | Backtest uses synthetic Black-Scholes pricing (not real option chain data) | ACK |
+| 75 | Position sizing compounds aggressively at scale — 10 contract cap for first session | ACK |
+| 76 | Price feed uses 10s polling, not WebSocket streaming — acceptable for 30-min bar strategy | ACK |
+| 77 | No margin requirement modeling in backtest — real buying power may differ | ACK |
+| 78 | SPX 0DTE liquidity assumed — real fills at theoretical mid not guaranteed at scale | ACK |
+| 79 | Close order retry is unbounded — no limit-price widening after N failures | ACK |
+| 80 | Orphaned positions (crash between order and DB write) require manual review on restart | ACK |
+| 81 | Singleton lock file (.app.lock) may persist after a crash (e.g., blue screen) — operator must manually delete BASE_DIR/.app.lock to restart the app | ACK |
 
 ---
 
@@ -305,16 +343,17 @@ Produce this summary table:
 | 2. Broker Connectivity | 4 | | | |
 | 3. Circuit Breakers | 6 | | | |
 | 4. Risk Gates | 5 | | | |
-| 5. Database | 4 | | | |
-| 6. Notifications | 5 | | | |
+| 5. Database | 7 | | | |
+| 6. Notifications | 6 | | | |
 | 7. Price Feed | 4 | | | |
-| 8. First Session Params | 8 | | | |
-| 9. Dashboard Visuals | 4 | | | |
-| **TOTAL** | **65** | | | |
+| 8. First Session Params | 9 | | | |
+| 9. Dashboard Visuals | 7 | | | |
+| 10. Known Limitations | 8 | | | |
+| **TOTAL** | **81** | | | |
 
-**GO criteria:** Zero FAILs in Sections 1–5, 7–9. Notification FAILs (Section 6) are strongly recommended to fix but operator may acknowledge and proceed.
+**GO criteria:** Zero FAILs in Sections 1–5, 7–9. Notification FAILs (Section 6) are strongly recommended to fix but operator may acknowledge and proceed. Section 10 (Known Limitations) requires ACK only.
 
-**NO-GO criteria:** Any FAIL in Sections 1, 2, 3, 4, 7, or 8.
+**NO-GO criteria:** Any FAIL in Sections 1, 2, 3, 4, 5, 7, or 8.
 
 **WARN items:** Expected for fresh first-live setup. WARNs are self-resolving after broker auth and first run.
 
@@ -334,7 +373,8 @@ Output one of:
 5. **Set trading mode to live:** Change via Settings page after broker is authenticated
 6. **Configure notification webhook:** Add Discord or Slack webhook URL in strategy_params.yaml
 7. **Verify circuit breaker limits:** Check that daily/weekly/monthly pct values match intended risk tolerance
-8. **Re-run checklist:** After completing action items, re-run to confirm clean GO
+8. **Delete stale .app.lock:** If app won't start due to lock file from a crash, delete `BASE_DIR/.app.lock`
+9. **Re-run checklist:** After completing action items, re-run to confirm clean GO
 
 ---
 
