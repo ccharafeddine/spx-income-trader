@@ -685,6 +685,7 @@ class SchwabBroker(BrokerInterface):
         filled_quantity = int(order_data.get('filledQuantity', 0) or 0)
         leg_fills = []
         order_fees = 0.0
+        fill_time = None
 
         # Determine if this is a multi-leg (spread) order
         order_legs = order_data.get('orderLegCollection', [])
@@ -726,6 +727,10 @@ class SchwabBroker(BrokerInterface):
                             'quantity': qty,
                             'fees': round(leg_fee, 4),
                         })
+
+                        leg_time = exec_leg.get('time')
+                        if leg_time:
+                            fill_time = leg_time  # Use latest execution leg time
 
                         if 'SELL' in instruction:
                             sell_value += price * qty
@@ -775,6 +780,10 @@ class SchwabBroker(BrokerInterface):
                     prices = [leg.get('price', 0) for leg in legs if leg.get('price')]
                     if prices:
                         fill_price = sum(prices) / len(prices)
+                        # Capture execution timestamp
+                        for leg in legs:
+                            if leg.get('time'):
+                                fill_time = leg['time']
                         break
 
         # Fallback: use the order price if no fill data found
@@ -786,6 +795,8 @@ class SchwabBroker(BrokerInterface):
             'fill_price': float(fill_price),
             'filled_quantity': filled_quantity,
         }
+        if fill_time:
+            result['fill_time'] = fill_time
         if leg_fills:
             result['leg_fills'] = leg_fills
             result['order_fees'] = round(order_fees, 2)

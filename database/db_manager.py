@@ -391,6 +391,35 @@ class DatabaseManager:
             conn.commit()
             logger.debug(f"Trade {trade_id} commissions updated: ${commissions:.2f}")
 
+    def update_trade_settlement_pnl(self, trade_id: str, pnl: float):
+        """Update P&L for an expired trade after Schwab settlement reconciliation.
+
+        Used when post-settlement transaction data reveals a discrepancy
+        between the bot's calculated P&L and Schwab's actual settlement amount.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # Get current credit_received for pnl_percent calculation
+            row = cursor.execute(
+                "SELECT credit_received, quantity FROM trades WHERE id = ?",
+                (trade_id,)
+            ).fetchone()
+            pnl_percent = None
+            if row:
+                credit = row[0] or 0
+                qty = row[1] or 1
+                max_profit = credit * 100 * qty
+                if max_profit > 0:
+                    pnl_percent = round(pnl / max_profit * 100, 2)
+            cursor.execute(
+                "UPDATE trades SET pnl = ?, pnl_percent = ? WHERE id = ?",
+                (round(pnl, 2), pnl_percent, trade_id),
+            )
+            conn.commit()
+            logger.debug(
+                f"Trade {trade_id} settlement P&L updated: ${pnl:.2f}"
+            )
+
     def get_open_trades(self) -> List[Dict]:
         """Get all open trades"""
         with self._get_connection() as conn:

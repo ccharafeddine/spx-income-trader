@@ -1936,6 +1936,58 @@ class TradingBot:
             if backfilled:
                 logger.info(f"Post-settlement fee backfill: {backfilled} trade(s) updated")
 
+            # Reconcile settlement P&L for expired trades using Schwab's
+            # transaction netAmount (authoritative for tax reporting)
+            expired_trades = [
+                t for t in trades
+                if 'expir' in (t.get('exit_reason') or '').lower()
+                and t.get('pnl') is not None
+            ]
+            if expired_trades:
+                # Build order_id -> net_amount map from transactions
+                order_amounts = {}
+                for txn in txns:
+                    oid = txn.get('order_id', '')
+                    if oid:
+                        if oid not in order_amounts:
+                            order_amounts[oid] = 0.0
+                        order_amounts[oid] += txn.get('net_amount', 0)
+
+                reconciled = 0
+                for trade in expired_trades:
+                    entry_oid = str(trade.get('entry_order_id', ''))
+                    if not entry_oid or entry_oid not in order_amounts:
+                        continue
+                    schwab_net = order_amounts[entry_oid]
+                    # Schwab netAmount for credit spread entry is the credit
+                    # received (positive). For settlement/expiration, the
+                    # net amount reflects the actual settlement value.
+                    # We only update if there's a meaningful discrepancy.
+                    db_pnl = trade.get('pnl', 0) or 0
+                    # Aggregate all transaction amounts for this trade
+                    # (entry credit + any settlement debit)
+                    total_net = schwab_net
+                    exit_oid = str(trade.get('exit_order_id', ''))
+                    if exit_oid and exit_oid in order_amounts:
+                        total_net += order_amounts[exit_oid]
+                    # total_net is the net cash flow: positive = profit
+                    # Convert to P&L in same units as db_pnl (dollars)
+                    schwab_pnl = round(total_net, 2)
+                    if abs(schwab_pnl - db_pnl) > 0.01:
+                        logger.info(
+                            f"Settlement P&L reconciliation for {trade['id'][:8]}: "
+                            f"DB=${db_pnl:.2f} -> Schwab=${schwab_pnl:.2f} "
+                            f"(delta=${schwab_pnl - db_pnl:+.2f})"
+                        )
+                        self.db.update_trade_settlement_pnl(
+                            trade['id'], schwab_pnl
+                        )
+                        reconciled += 1
+                if reconciled:
+                    logger.info(
+                        f"Settlement P&L reconciled: {reconciled} expired trade(s) updated"
+                    )
+
         except Exception as e:
             logger.warning(f"Post-settlement fee backfill failed: {e}")
 

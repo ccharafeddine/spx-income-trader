@@ -305,7 +305,7 @@ class PositionManager:
                 status=TradeStatus.ACTIVE,
                 setup_bar=setup_bar,
                 entry_price=actual_fill,
-                entry_time=datetime.now(self.tz),
+                entry_time=self._parse_fill_time(order_status.get('fill_time')) or datetime.now(self.tz),
                 entry_order_id=order_id,
                 quantity=actual_quantity
             )
@@ -639,7 +639,7 @@ class PositionManager:
 
                 trade.close(
                     exit_price=exit_price,
-                    exit_time=datetime.now(self.tz),
+                    exit_time=self._parse_fill_time(order_status.get('fill_time')) or datetime.now(self.tz),
                     reason=reason
                 )
                 trade.exit_order_id = order_id
@@ -760,6 +760,23 @@ class PositionManager:
         except Exception as e:
             logger.error(f"Failed to exit trade: {e}", exc_info=True)
     
+    def _parse_fill_time(self, fill_time_str):
+        """Parse Schwab execution timestamp into a timezone-aware datetime.
+
+        Schwab returns ISO 8601 timestamps (e.g., '2026-03-12T14:50:23+0000').
+        Returns None if parsing fails so caller can fall back to local clock.
+        """
+        if not fill_time_str:
+            return None
+        try:
+            from dateutil import parser as dt_parser
+            dt = dt_parser.isoparse(fill_time_str)
+            # Convert to our configured timezone
+            return dt.astimezone(self.tz)
+        except Exception as e:
+            logger.warning(f"Could not parse Schwab fill time '{fill_time_str}': {e}")
+            return None
+
     def _capture_trade_fees(self, trade):
         """Capture commissions/fees from broker for entry and exit orders.
 
