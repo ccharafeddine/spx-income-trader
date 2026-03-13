@@ -100,34 +100,24 @@ class PositionManager:
         return True
 
     def _send_db_failure_alert(self, trade, error):
-        """Send a critical Discord notification when a DB write fails for a live trade.
+        """Log a critical DB write failure (log-only, no Discord notification).
 
-        Only sends one alert per cooldown period to avoid spamming the channel.
+        Discord alerts for DB failures and watchdog restarts are disabled to
+        avoid notification spam.  The error is always logged at CRITICAL level.
         """
         if self._db_alert_sent:
             logger.warning(
-                f"DB failure alert suppressed (already sent this cooldown): {error}"
+                f"DB failure alert suppressed (already logged this cooldown): {error}"
             )
             return
         self._db_alert_sent = True
-        try:
-            from src.utils.notifications import NotificationManager, DISCORD_RED
-            notifier = NotificationManager()
-            notifier._send_rich(
-                subject="DATABASE WRITE FAILED - LIVE TRADE UNRECORDED",
-                message=(
-                    f"Trade {trade.id} is LIVE on broker but the database write "
-                    f"failed after all retries.\n"
-                    f"Direction: {trade.spread.direction.value}\n"
-                    f"Strikes: {trade.spread.short_leg.strike}/{trade.spread.long_leg.strike}\n"
-                    f"Error: {error}\n\n"
-                    f"**Action required:** Check DB locks and restart bot."
-                ),
-                level='critical',
-                color=DISCORD_RED,
-            )
-        except Exception as alert_err:
-            logger.error(f"Failed to send DB failure alert: {alert_err}")
+        logger.critical(
+            f"DATABASE WRITE FAILED - Trade {trade.id} is LIVE on broker but "
+            f"the database write failed after all retries. "
+            f"Direction: {trade.spread.direction.value}, "
+            f"Strikes: {trade.spread.short_leg.strike}/{trade.spread.long_leg.strike}, "
+            f"Error: {error}"
+        )
 
     def _get_vix_price(self) -> Optional[float]:
         """Best-effort VIX price fetch. Returns None on failure."""
