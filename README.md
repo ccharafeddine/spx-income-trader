@@ -708,11 +708,11 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ## Live Validation Log
 
-Live testing began **March 10, 2026** on a Schwab account with 1-contract maximum sizing.
+Live testing began **March 10, 2026** on a Schwab account.
 
 ### Day 1 — March 10, 2026 (Initial Session)
 
-First live session. Exposed critical issues in position valuation, order response parsing, and database reliability. All issues fixed before Day 2.
+First live session with conservative 1-contract sizing. Exposed critical issues in position valuation, order response parsing, and database reliability. All issues fixed before Day 2.
 
 **Order execution and valuation fixes:**
 - **Spread fill price parsing**: Schwab multi-leg order responses now use the order-level net credit/debit (`price` field) instead of averaging individual leg execution prices, which inflated the apparent entry price
@@ -725,7 +725,7 @@ First live session. Exposed critical issues in position valuation, order respons
 
 ### Day 2 — March 11, 2026 (CPI Day)
 
-**Trade:** Bullish put credit spread 6795/6790, entered 11:01 ET on a bullish pulse bar at 10:30 with 94.3% close position
+**Trade:** Bullish put credit spread 6795/6790 (1 contract), entered 11:01 ET on a bullish pulse bar at 10:30 with 94.3% close position
 **VIX:** 25.25 (HIGH regime), SPX opened at 6,790.09
 **Result:** Loss — SPX sold off to 6,775.80 (-1.36%), position expired at max loss
 **Schwab account impact:** -$337.44
@@ -750,7 +750,7 @@ First live session. Exposed critical issues in position valuation, order respons
 
 ### Day 3 — March 12, 2026
 
-**Trade:** Bearish call credit spread 6690/6695, entered on bearish pulse bar
+**Trade:** Bearish call credit spread 6690/6695 (1 contract), entered on bearish pulse bar
 **Result:** Win — profit target reached at 79% of max profit, closed at 2:50 PM ET after 5h 19m
 **Schwab account impact:** +$220.30 (net of fees)
 **All infrastructure fixes from Day 2 confirmed working:** trade recorded to database, Discord footer shows "live", no DB lock errors, no crash loops
@@ -765,8 +765,6 @@ First live session. Exposed critical issues in position valuation, order respons
 - **Lock conflict Discord notification:** When `BotAlreadyRunningError` is caught in desktop mode, a "Instance Lock Conflict" notification is sent to Discord so the user knows another instance was detected.
 - **DB trade records corrected:** Updated March 11 and March 12 trades with actual Schwab fill data (commissions, actual credit received, slippage).
 
-**Test suite:** 1,247 → 1,406+ tests across the two-day session (+159 new tests)
-
 ![Day 3 Dashboard — March 12, 2026](screenshots/DailyMelt_Day3_03122026.png)
 
-The system is configured for conservative 1-contract trading as it continues live validation.
+**Test suite:** 1,247 → 1,406+ tests across the two-day session (+159 new tests)
