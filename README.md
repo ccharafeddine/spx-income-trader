@@ -698,7 +698,15 @@ Recordings are saved to `database/demo_recordings/` and can be browsed from the 
 
 ## Live Validation Log
 
-Live testing began **March 10, 2026** on a Schwab account.
+Live testing began **March 10, 2026** on a Schwab account after dry-run testing for 5 weeks and growing the paper account 20% (from $50,000 to $60,000).
+
+### Requirements for Live Trading
+
+- **Schwab brokerage account** with options spreads enabled (spread trading approval required)
+- **Schwab developer account** for API access — provides the App Key and App Secret needed for OAuth2 authentication ([developer.schwab.com](https://developer.schwab.com))
+- **FRED API key** (free) for the economic calendar — register at [fred.stlouisfed.org](https://fred.stlouisfed.org) to get a key
+- **Discord webhook** (optional) for trade notifications, EOD summaries, and alerts — create a webhook in your Discord server's channel settings
+- **Account balance over $25,000 recommended** to avoid Pattern Day Trader (PDT) restrictions. Accounts under $25k are limited to 3 day trades per rolling 5-business-day window; the bot includes PDT protection logic but this constrains trading frequency
 
 ### Day 1 — March 10, 2026 (Initial Session)
 
@@ -771,6 +779,8 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 - **Calendar bug fix:** Journal calendar was showing today's closed trades as open because it queried raw DB status without resolving expired trades. Added `_resolve_expired_trade()` call in the calendar endpoint, matching the list view's `classify_trades()` logic.
 - **Window closed LED fix:** "WINDOW CLOSED" strategy state was rendering with a red LED (falling through to `idle` state). Added explicit `window_closed` CSS state with grey LED gradient and updated JS to use `setLightState('window_closed', 'Window Closed')`.
 - **Live data directory discovery:** Diagnosed that the compiled exe writes to `AppData\Local\SPXIncomeTrader\` (via platformdirs) while the project root `database/trades_live.db` is a stale copy. All 3 live trades (Mar 11-13) were correctly recorded in the platformdirs DB. Backfilled `gross_pnl` column and reconciled all trade records with broker net P&L.
+
+![Day 4 Dashboard — March 13, 2026](screenshots/DailyMelt_Day4_03132026.png)
 
 **Test suite:** 1,467+ → 1,502+ tests (+35 new tests covering broker P&L reconciliation, calendar resolution, LED states)
 
