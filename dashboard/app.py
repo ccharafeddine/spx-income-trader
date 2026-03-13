@@ -2498,14 +2498,46 @@ def api_shadow():
 def api_history():
     """Historical: daily_stats, aggregate metrics, trade history with running total.
 
-    Scoped to month-to-date (MTD) by default.
+    Supports optional query params:
+      ?start=YYYY-MM-DD  — include trades on or after this date
+      ?end=YYYY-MM-DD    — include trades on or before this date
+      ?days=N            — shorthand: last N days (ignored if start/end provided)
+    Defaults to month-to-date (MTD) if no params given.
     """
     if getattr(app, '_demo_mode', False) and app._replay_engine:
         return jsonify(app._replay_engine.get_history())
 
-    # MTD scope: first day of current month in ET
     today_et = datetime.now(ET).date()
-    mtd_cutoff = f"{today_et.year:04d}-{today_et.month:02d}-01"
+
+    # Determine date range from query params
+    start_param = request.args.get('start')
+    end_param = request.args.get('end')
+    days_param = request.args.get('days')
+
+    if start_param:
+        cutoff_start = start_param
+    elif days_param and days_param != '0':
+        try:
+            from datetime import timedelta
+            cutoff_start = (today_et - timedelta(days=int(days_param))).isoformat()
+        except (ValueError, TypeError):
+            cutoff_start = f"{today_et.year:04d}-{today_et.month:02d}-01"
+    else:
+        # Default: MTD
+        cutoff_start = f"{today_et.year:04d}-{today_et.month:02d}-01"
+
+    # end_param is inclusive (trades up through end of that day)
+    cutoff_end = end_param  # None means no upper bound
+
+    # Build scope label for the frontend
+    if start_param or end_param:
+        scope = 'CUSTOM'
+    elif days_param == '0':
+        scope = 'ALL'
+    elif days_param:
+        scope = f'LAST_{days_param}D'
+    else:
+        scope = 'MTD'
 
     daily_stats = []
     trades = []
@@ -2519,11 +2551,21 @@ def api_history():
     try:
         conn = get_db_connection()
 
-        # Daily stats from table (MTD)
-        rows = conn.execute(
-            "SELECT * FROM daily_stats WHERE date >= ? ORDER BY date DESC",
-            (mtd_cutoff,)
-        ).fetchall()
+        # Daily stats from table
+        if scope == 'ALL' or (days_param == '0' and not start_param):
+            rows = conn.execute(
+                "SELECT * FROM daily_stats ORDER BY date DESC"
+            ).fetchall()
+        elif cutoff_end:
+            rows = conn.execute(
+                "SELECT * FROM daily_stats WHERE date >= ? AND date <= ? ORDER BY date DESC",
+                (cutoff_start, cutoff_end)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM daily_stats WHERE date >= ? ORDER BY date DESC",
+                (cutoff_start,)
+            ).fetchall()
         for r in rows:
             daily_stats.append(dict(r))
 
@@ -2532,11 +2574,15 @@ def api_history():
         spx_price = spx.get('price')
         _, all_closed = classify_trades(conn, spx_price)
 
-        # Filter to MTD by entry_time
-        closed = [
-            t for t in all_closed
-            if (t.get('entry_time', '') or '') >= mtd_cutoff
-        ]
+        # Filter by date range
+        if scope == 'ALL' or (days_param == '0' and not start_param):
+            closed = list(all_closed)
+        else:
+            closed = [
+                t for t in all_closed
+                if (t.get('entry_time', '') or '') >= cutoff_start
+                and (not cutoff_end or (t.get('entry_time', '') or '')[:10] <= cutoff_end)
+            ]
 
         # Compute aggregate from trade-level data (more accurate than daily_stats)
         # Use net P&L (gross - commissions) so dashboard matches Schwab account
@@ -2580,8 +2626,9 @@ def api_history():
         'daily_stats': daily_stats,
         'aggregate': aggregate,
         'trades': trades,
-        'scope': 'MTD',
-        'mtd_start': mtd_cutoff,
+        'scope': scope,
+        'range_start': cutoff_start if scope != 'ALL' else None,
+        'range_end': cutoff_end,
     })
 
 
@@ -3132,7 +3179,7 @@ def api_journal_calendar():
 
         # Get trades for the month by entry date
         rows = conn.execute(
-            """SELECT entry_time, exit_time, pnl, strategy_type, status,
+            """SELECT entry_time, exit_time, pnl, commissions, strategy_type, status,
                       direction, credit_received, quantity,
                       SUBSTR(entry_time, 1, 10) as trade_date
                FROM trades
@@ -3165,7 +3212,9 @@ def api_journal_calendar():
             is_open = row['status'] in ('open', 'active')
             if not is_flagged and is_closed:
                 d['trades'] += 1
-                pnl = row['pnl'] or 0
+                gross_pnl = row['pnl'] or 0
+                comm = row['commissions'] or 0
+                pnl = round(gross_pnl - comm, 2)
                 d['pnl'] += pnl
                 if pnl > 0:
                     d['wins'] += 1
@@ -3322,11 +3371,29 @@ def api_journal_calendar():
         'avg_capture': round(sum(month_cap_vals) / len(month_cap_vals), 1) if month_cap_vals else None,
     }
 
+    # Fetch economic events for the month and group by date
+    econ_by_date = {}
+    try:
+        from src.data.fred_calendar import get_calendar_events
+        econ_result = get_calendar_events(from_date=first_day, to_date=last_day)
+        for ev in econ_result.get('events', []):
+            ev_date = ev.get('date', '')
+            if ev_date:
+                econ_by_date.setdefault(ev_date, []).append({
+                    'event': ev.get('event', ''),
+                    'event_full': ev.get('event_full', ''),
+                    'time': ev.get('time', ''),
+                    'impact': ev.get('impact', 'medium'),
+                })
+    except Exception as e:
+        logger.debug(f"Failed to fetch econ events for calendar: {e}")
+
     return jsonify({
         'year': year,
         'month': month,
         'days': result_days,
         'summary': summary,
+        'econ_events': econ_by_date,
     })
 
 
@@ -3554,8 +3621,15 @@ def _reconstruct_entry_reasons(trade, signal, strat, timing, risk, portfolio):
 
 
 def _compute_exit_analysis(trade):
-    """Compute exit analysis fields for a trade."""
-    pnl = trade.get('pnl')
+    """Compute exit analysis fields for a trade.
+
+    Uses net P&L (gross - commissions) so journal matches the Overview tab
+    and Schwab account statements.
+    """
+    gross_pnl = trade.get('pnl')
+    commissions = trade.get('commissions') or 0
+    # Net P&L: subtract commissions from gross
+    pnl = round(gross_pnl - commissions, 2) if gross_pnl is not None else None
     exit_reason = trade.get('exit_reason')
     entry_time = trade.get('entry_time', '')
     exit_time = trade.get('exit_time', '')
@@ -3578,15 +3652,15 @@ def _compute_exit_analysis(trade):
         except (ValueError, TypeError):
             pass
 
-    # % of max profit captured
+    # % of max profit captured (use gross for this since max_profit is gross)
     pct_of_max_profit = None
     credit = trade.get('credit_received', 0)
     qty = trade.get('quantity', 1)
     max_profit = credit * 100 * qty
-    if pnl is not None and max_profit > 0:
-        pct_of_max_profit = round(pnl / max_profit * 100, 1)
+    if gross_pnl is not None and max_profit > 0:
+        pct_of_max_profit = round(gross_pnl / max_profit * 100, 1)
 
-    # Outcome
+    # Outcome (based on net P&L)
     if status == 'active':
         outcome = 'open'
     elif pnl is not None:
@@ -3604,6 +3678,8 @@ def _compute_exit_analysis(trade):
         'duration_display': duration_display,
         'duration_hours': duration_hours,
         'pnl': pnl,
+        'gross_pnl': gross_pnl,
+        'commissions': commissions,
         'pct_of_max_profit': pct_of_max_profit,
         'outcome': outcome,
     }
@@ -5950,6 +6026,7 @@ ALLOWED_SETTINGS_PATHS = {
     'notifications.webhook.url',
     'notifications.webhook.min_level',
     'broker.shadow.enabled',
+    'developer_mode',
 }
 
 
