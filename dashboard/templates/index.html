@@ -4831,23 +4831,27 @@ async function updateChart() {
     if (barsData.bb) allChartBB[chartTimeframe] = barsData.bb;
   }
   // Load historical trades once
-  if (!histTradesLoaded) _loadHistoricalTrades();
+  try { if (!histTradesLoaded) _loadHistoricalTrades(); } catch(e) { /* non-fatal */ }
 
   // Stats (in chart footer)
-  document.getElementById('footer-signals').textContent = (d.signals || []).length;
-  document.getElementById('footer-trades').textContent = (d.trades || []).length;
-  const pnlEl = document.getElementById('footer-pnl');
-  pnlEl.textContent = fmt$(d.today_pnl);
-  pnlEl.className = 'stat-value ' + (d.today_pnl >= 0 ? 'pnl-pos' : 'pnl-neg');
+  try {
+    document.getElementById('footer-signals').textContent = (d.signals || []).length;
+    document.getElementById('footer-trades').textContent = (d.trades || []).length;
+    const pnlEl = document.getElementById('footer-pnl');
+    pnlEl.textContent = fmt$(d.today_pnl);
+    pnlEl.className = 'stat-value ' + (d.today_pnl >= 0 ? 'pnl-pos' : 'pnl-neg');
+  } catch(e) { /* non-fatal */ }
 
   // Building bar
-  const buildingEl = document.getElementById('footer-building');
-  if (d.building_bar) {
-    buildingEl.style.display = 'flex';
-    buildingEl.querySelector('.stat-value').textContent = d.building_bar.ticks + ' ticks';
-  } else {
-    buildingEl.style.display = 'none';
-  }
+  try {
+    const buildingEl = document.getElementById('footer-building');
+    if (d.building_bar) {
+      buildingEl.style.display = 'flex';
+      buildingEl.querySelector('.stat-value').textContent = d.building_bar.ticks + ' ticks';
+    } else {
+      buildingEl.style.display = 'none';
+    }
+  } catch(e) { /* non-fatal */ }
 
   // Sound: bar complete & pulse detected
   // Bar priority: bot memory (real-time) > Yahoo Finance > log file parsing
@@ -4856,24 +4860,29 @@ async function updateChart() {
              : d.log_bars;
 
   // OHLC metrics (if available from bars)
-  if (bars && bars.length > 0) {
-    const dayOpen = bars[0].open;
-    const dayHigh = Math.max(...bars.map(b => b.high));
-    const dayLow = Math.min(...bars.map(b => b.low));
-    document.getElementById('footer-open').textContent = dayOpen?.toFixed(2) || '--';
-    document.getElementById('footer-high').textContent = dayHigh?.toFixed(2) || '--';
-    document.getElementById('footer-low').textContent = dayLow?.toFixed(2) || '--';
-  }
-  // Prev close from API if available
-  if (d.prev_close) {
-    document.getElementById('footer-prev-close').textContent = d.prev_close?.toFixed(2) || '--';
-  }
+  try {
+    if (bars && bars.length > 0) {
+      const dayOpen = bars[0].open;
+      const dayHigh = Math.max(...bars.map(b => b.high));
+      const dayLow = Math.min(...bars.map(b => b.low));
+      document.getElementById('footer-open').textContent = dayOpen?.toFixed(2) || '--';
+      document.getElementById('footer-high').textContent = dayHigh?.toFixed(2) || '--';
+      document.getElementById('footer-low').textContent = dayLow?.toFixed(2) || '--';
+    }
+    // Prev close from API if available
+    if (d.prev_close) {
+      document.getElementById('footer-prev-close').textContent = d.prev_close?.toFixed(2) || '--';
+    }
+  } catch(e) { /* non-fatal */ }
+
   const barCount = bars ? bars.length : 0;
   const pulseCount = (d.pulse_times || []).length;
-  if (!initialLoad) {
-    if (barCount > prevBarCount && prevBarCount > 0) soundMgr.play('bar-complete');
-    if (pulseCount > prevPulseCount && prevPulseCount > 0) soundMgr.play('pulse-detected');
-  }
+  try {
+    if (!initialLoad) {
+      if (barCount > prevBarCount && prevBarCount > 0) soundMgr.play('bar-complete');
+      if (pulseCount > prevPulseCount && prevPulseCount > 0) soundMgr.play('pulse-detected');
+    }
+  } catch(e) { /* non-fatal */ }
   prevBarCount = barCount;
   prevPulseCount = pulseCount;
 
@@ -7855,7 +7864,7 @@ async function loadDevMode() {
 checkDesktopMode();
 loadDevMode();
 refreshAll().then(() => { initialLoad = false; });
-updateChart();                        // first chart paint immediately
+updateChart();                        // first chart paint
 setInterval(() => { updateChart(); }, 10000);   // 10-second independent chart poll
 checkForUpdates();
 
