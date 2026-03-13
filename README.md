@@ -695,17 +695,6 @@ Recordings are saved to `database/demo_recordings/` and can be browsed from the 
 
 ---
 
-## Disclaimer
-
-This is a personal project. It is not financial advice.
-
-- Options trading involves significant risk of loss, including the possibility of losing more than the initial investment
-- Past performance, whether simulated or live, does not guarantee future results
-- This software is provided as-is with no warranty
-- Always validate thoroughly in dry-run mode before risking real capital
-
----
-
 ## Live Validation Log
 
 Live testing began **March 10, 2026** on a Schwab account.
@@ -768,6 +757,17 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 ![Day 3 Dashboard — March 12, 2026](screenshots/DailyMelt_Day3_03122026.png)
 
 **Test suite:** 1,247 → 1,467+ tests across the three-day session (+220 new tests)
+
+---
+
+## Disclaimer
+
+This is a personal project. It is not financial advice.
+
+- Options trading involves significant risk of loss, including the possibility of losing more than the initial investment
+- Past performance, whether simulated or live, does not guarantee future results
+- This software is provided as-is with no warranty
+- Always validate thoroughly in dry-run mode before risking real capital
 
 ---
 
