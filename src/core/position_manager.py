@@ -55,6 +55,7 @@ class PositionManager:
         # after a write failure.  Replaces the old permanent _db_write_failed flag
         # so the bot can recover automatically without a restart.
         self._db_failure_cooldown_until: Optional[datetime] = None
+        self._db_alert_sent: bool = False  # dedup Discord DB failure alerts
 
         if pdt_tracker:
             logger.info("PositionManager initialized with PDT protection")
@@ -94,11 +95,21 @@ class PositionManager:
             logger.info("DB failure cooldown expired -- new entries allowed")
             self._db_failure_cooldown_until = None
             self._db_write_failed = False
+            self._db_alert_sent = False
             return False
         return True
 
     def _send_db_failure_alert(self, trade, error):
-        """Send a critical Discord notification when a DB write fails for a live trade."""
+        """Send a critical Discord notification when a DB write fails for a live trade.
+
+        Only sends one alert per cooldown period to avoid spamming the channel.
+        """
+        if self._db_alert_sent:
+            logger.warning(
+                f"DB failure alert suppressed (already sent this cooldown): {error}"
+            )
+            return
+        self._db_alert_sent = True
         try:
             from src.utils.notifications import NotificationManager, DISCORD_RED
             notifier = NotificationManager()
