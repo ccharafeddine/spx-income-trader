@@ -73,10 +73,10 @@ class TestLogsTab:
 
 class TestChartCSS:
     def test_chart_panel_min_height(self):
-        assert "min-height: 560px" in TEMPLATE
+        assert "min-height: 380px" in TEMPLATE
 
     def test_chart_container_min_height(self):
-        assert "min-height: 500px" in TEMPLATE
+        assert "min-height: 340px" in TEMPLATE
 
 
 class TestUniqueIDs:
