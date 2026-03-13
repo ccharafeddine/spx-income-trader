@@ -747,6 +747,9 @@ class PositionManager:
             # Capture commissions/fees from broker for this trade
             self._capture_trade_fees(trade)
 
+            # Reconcile P&L from Schwab transaction history (background thread)
+            self._reconcile_broker_pnl(trade)
+
             # Record day trade for PDT tracking (if same-day active close)
             if self.pdt_tracker and trade.entry_time and trade.exit_time:
                 entry_date = trade.entry_time.date()
@@ -798,6 +801,99 @@ class PositionManager:
                 logger.info(f"Commissions captured for {trade.id[:8]}: ${total_fees:.2f}")
         except Exception as e:
             logger.warning(f"Failed to capture fees for trade {trade.id[:8]}: {e}")
+
+    def _reconcile_broker_pnl(self, trade):
+        """Spawn background thread to reconcile P&L from Schwab transactions.
+
+        After a short delay (to let Schwab settle), fetches today's transactions,
+        matches the 4 legs by order ID, and overwrites the price-based P&L with
+        the summed netAmount (which includes all fees).  Falls back to the
+        price-based value if matching fails.
+        """
+        if not hasattr(self.broker, 'get_transactions_for_date'):
+            return
+        import threading
+        thread = threading.Thread(
+            target=self._reconcile_broker_pnl_worker,
+            args=(
+                trade.id,
+                trade.entry_order_id,
+                trade.exit_order_id,
+                trade.pnl,
+            ),
+            daemon=True,
+        )
+        thread.start()
+
+    def _reconcile_broker_pnl_worker(self, trade_id, entry_order_id, exit_order_id, gross_pnl):
+        """Worker: fetch Schwab transactions, compute broker P&L, update DB."""
+        import time as _t
+        _t.sleep(8)  # wait for Schwab to settle transactions
+
+        today = datetime.now(self.tz).date()
+        order_ids = set()
+        if entry_order_id:
+            order_ids.add(str(entry_order_id))
+        if exit_order_id:
+            order_ids.add(str(exit_order_id))
+
+        if not order_ids:
+            logger.warning(
+                f"Broker P&L skip for {trade_id[:8]}: no order IDs available"
+            )
+            return
+
+        matched = []
+        for attempt in range(2):
+            try:
+                transactions = self.broker.get_transactions_for_date(today)
+            except Exception as e:
+                logger.warning(f"Broker P&L fetch failed for {trade_id[:8]}: {e}")
+                transactions = []
+
+            matched = [t for t in transactions if t['order_id'] in order_ids]
+
+            if len(matched) >= 4:
+                break
+
+            if attempt == 0:
+                logger.warning(
+                    f"Broker P&L for {trade_id[:8]}: found {len(matched)}/4 legs, "
+                    f"retrying in 15s..."
+                )
+                _t.sleep(15)
+
+        if len(matched) < 4:
+            logger.warning(
+                f"Broker P&L reconciliation failed for {trade_id[:8]}: "
+                f"only {len(matched)} of 4 expected legs matched. "
+                f"Keeping price-based P&L (${gross_pnl:.2f})"
+            )
+            # Still store gross_pnl for reference even on failure
+            try:
+                self.db.update_trade_broker_pnl(
+                    trade_id, gross_pnl, gross_pnl, 0.0
+                )
+            except Exception:
+                pass
+            return
+
+        broker_pnl = round(sum(t['net_amount'] for t in matched), 2)
+        commissions = round((gross_pnl or 0) - broker_pnl, 2)
+
+        try:
+            self.db.update_trade_broker_pnl(
+                trade_id, broker_pnl, gross_pnl, commissions
+            )
+            logger.info(
+                f"Broker P&L reconciled for {trade_id[:8]}: "
+                f"${broker_pnl:.2f} (gross ${gross_pnl:.2f}, "
+                f"fees ${commissions:.2f})"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to write broker P&L for {trade_id[:8]}: {e}"
+            )
 
     def has_open_position(self) -> bool:
         """Check if there are any open positions"""

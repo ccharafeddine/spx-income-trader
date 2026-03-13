@@ -689,6 +689,19 @@ def _resolve_expired_trade(trade, spx_price):
         trade['spx_at_exit'] = round(spx_price, 2)
 
 
+def _trade_net_pnl(trade):
+    """Return the canonical net P&L for a trade.
+
+    Reconciled trades (gross_pnl populated) have pnl already set to the
+    broker net amount.  Legacy trades still use the old pattern where pnl
+    is gross and commissions must be subtracted.
+    """
+    pnl = trade.get('pnl') or 0
+    if trade.get('gross_pnl') is not None:
+        return pnl  # already broker net
+    return pnl - (trade.get('commissions') or 0)
+
+
 def _annotate_trade(trade):
     """Add flags/notes to a trade for display purposes."""
     credit = trade.get('credit_received', 0)
@@ -789,7 +802,7 @@ def compute_account(conn, spx_price, starting_capital=None):
 
     # Realized P&L from valid closed/expired trades (exclude flagged)
     valid_closed = [t for t in closed_trades if not t.get('flag')]
-    realized_pnl = sum((t.get('pnl') or 0) - (t.get('commissions') or 0) for t in valid_closed)
+    realized_pnl = sum(_trade_net_pnl(t) for t in valid_closed)
 
     # Today's realized P&L (also exclude flagged), net of commissions
     today_str = datetime.now(ET).date().isoformat()
@@ -798,7 +811,7 @@ def compute_account(conn, spx_price, starting_capital=None):
         exit_t = t.get('exit_time', '') or ''
         entry_t = t.get('entry_time', '') or ''
         if exit_t.startswith(today_str) or entry_t.startswith(today_str):
-            daily_realized += (t.get('pnl') or 0) - (t.get('commissions') or 0)
+            daily_realized += _trade_net_pnl(t)
 
     # Open positions and unrealized P&L
     unrealized_pnl = 0.0
@@ -1645,11 +1658,14 @@ def api_status():
         ]
         flagged = [t for t in today_closed if t.get('flag') == 'LOW_CREDIT']
         valid = [t for t in today_closed if t.get('flag') != 'LOW_CREDIT']
-        total_pnl = sum(t.get('pnl') or 0 for t in valid)
-        total_commissions = sum(t.get('commissions') or 0 for t in valid)
-        net_pnl = round(total_pnl - total_commissions, 2)
-        wins = sum(1 for t in valid if (t.get('pnl') or 0) > 0)
-        losses = sum(1 for t in valid if (t.get('pnl') or 0) < 0)
+        total_net_pnl = round(sum(_trade_net_pnl(t) for t in valid), 2)
+        total_gross_pnl = round(sum(
+            (t.get('gross_pnl') if t.get('gross_pnl') is not None else t.get('pnl')) or 0
+            for t in valid
+        ), 2)
+        total_commissions = round(sum(t.get('commissions') or 0 for t in valid), 2)
+        wins = sum(1 for t in valid if _trade_net_pnl(t) > 0)
+        losses = sum(1 for t in valid if _trade_net_pnl(t) < 0)
 
         today_summary = {
             'bars_built': len(log_data['bars']),
@@ -1664,10 +1680,10 @@ def api_status():
             'flagged_trades': len(flagged),
             'wins': wins,
             'losses': losses,
-            'total_pnl': round(total_pnl, 2),
-            'commissions': round(total_commissions, 2),
-            'net_pnl': net_pnl if total_commissions > 0 else None,
-            'result': 'WIN' if total_pnl > 0 else ('LOSS' if total_pnl < 0 else 'FLAT'),
+            'total_pnl': total_gross_pnl,
+            'commissions': total_commissions,
+            'net_pnl': total_net_pnl if total_commissions > 0 else None,
+            'result': 'WIN' if total_net_pnl > 0 else ('LOSS' if total_net_pnl < 0 else 'FLAT'),
         }
 
     # Strategy params summary
@@ -2602,9 +2618,7 @@ def api_history():
         if closed:
             valid = [t for t in closed if t.get('flag') != 'LOW_CREDIT']
             for t in valid:
-                t['net_pnl'] = round(
-                    (t.get('pnl') or 0) - (t.get('commissions') or 0), 2
-                )
+                t['net_pnl'] = round(_trade_net_pnl(t), 2)
             aggregate['total_trades'] = len(valid)
             wins_list = [t['net_pnl'] for t in valid if t['net_pnl'] > 0]
             losses_list = [t['net_pnl'] for t in valid if t['net_pnl'] < 0]
@@ -2626,7 +2640,7 @@ def api_history():
         closed_chrono = sorted(closed, key=lambda t: t.get('entry_time', ''))
         running = 0.0
         for t in closed_chrono:
-            net = round((t.get('pnl') or 0) - (t.get('commissions') or 0), 2)
+            net = round(_trade_net_pnl(t), 2)
             running += net
             t['running_total'] = round(running, 2)
         trades = list(reversed(closed_chrono))
@@ -2906,8 +2920,9 @@ def api_journal():
             'day_type': trade.get('day_type'),
             'daily_move_pct': trade.get('daily_move_pct'),
             'commissions': trade.get('commissions') or 0,
-            'net_pnl': round((trade.get('pnl') or 0) - (trade.get('commissions') or 0), 2)
+            'net_pnl': round(_trade_net_pnl(trade), 2)
                        if (trade.get('commissions') or 0) > 0 else None,
+            'gross_pnl': trade.get('gross_pnl'),
             'theoretical_credit': trade.get('theoretical_credit'),
             'actual_credit': trade.get('actual_credit'),
             'slippage': trade.get('slippage'),
@@ -3192,19 +3207,31 @@ def api_journal_calendar():
 
         # Get trades for the month by entry date
         rows = conn.execute(
-            """SELECT entry_time, exit_time, pnl, commissions, strategy_type, status,
-                      direction, credit_received, quantity,
+            """SELECT entry_time, exit_time, pnl, commissions, gross_pnl,
+                      strategy_type, status, direction, credit_received,
+                      quantity, expiration, short_strike, long_strike,
                       SUBSTR(entry_time, 1, 10) as trade_date
                FROM trades
                WHERE SUBSTR(entry_time, 1, 10) >= ? AND SUBSTR(entry_time, 1, 10) < ?""",
             (first_day, last_day)
         ).fetchall()
 
+        # Resolve active trades past expiration (same logic as classify_trades)
+        now = datetime.now(ET)
+        resolved_rows = []
+        for row in rows:
+            r = dict(row)
+            if r['status'] in ('open', 'active'):
+                exp_dt = _parse_expiration(r.get('expiration'))
+                if exp_dt and now > exp_dt:
+                    _resolve_expired_trade(r, None)  # SPX price unknown; max-profit fallback
+            resolved_rows.append(r)
+
         # Group by trade_date (entry date for all strategies)
         days_data = {}
         month_dur_hours = []
         month_cap_vals = []
-        for row in rows:
+        for row in resolved_rows:
             date_str = row['trade_date']
             if not date_str or date_str < first_day or date_str >= last_day:
                 continue
@@ -3225,9 +3252,7 @@ def api_journal_calendar():
             is_open = row['status'] in ('open', 'active')
             if not is_flagged and is_closed:
                 d['trades'] += 1
-                gross_pnl = row['pnl'] or 0
-                comm = row['commissions'] or 0
-                pnl = round(gross_pnl - comm, 2)
+                pnl = round(_trade_net_pnl(row), 2)
                 d['pnl'] += pnl
                 if pnl > 0:
                     d['wins'] += 1
@@ -3639,10 +3664,8 @@ def _compute_exit_analysis(trade):
     Uses net P&L (gross - commissions) so journal matches the Overview tab
     and Schwab account statements.
     """
-    gross_pnl = trade.get('pnl')
-    commissions = trade.get('commissions') or 0
-    # Net P&L: subtract commissions from gross
-    pnl = round(gross_pnl - commissions, 2) if gross_pnl is not None else None
+    # Net P&L: for reconciled trades pnl is already net; for legacy, subtract commissions
+    pnl = round(_trade_net_pnl(trade), 2) if trade.get('pnl') is not None else None
     exit_reason = trade.get('exit_reason')
     entry_time = trade.get('entry_time', '')
     exit_time = trade.get('exit_time', '')
@@ -3667,6 +3690,7 @@ def _compute_exit_analysis(trade):
 
     # % of max profit captured (use gross for this since max_profit is gross)
     pct_of_max_profit = None
+    gross_pnl = trade.get('gross_pnl') if trade.get('gross_pnl') is not None else trade.get('pnl')
     credit = trade.get('credit_received', 0)
     qty = trade.get('quantity', 1)
     max_profit = credit * 100 * qty
@@ -3692,7 +3716,7 @@ def _compute_exit_analysis(trade):
         'duration_hours': duration_hours,
         'pnl': pnl,
         'gross_pnl': gross_pnl,
-        'commissions': commissions,
+        'commissions': trade.get('commissions') or 0,
         'pct_of_max_profit': pct_of_max_profit,
         'outcome': outcome,
     }

@@ -139,6 +139,8 @@ class DatabaseManager:
                 ('bb_agreement', 'INTEGER'),
                 # Commissions/fees
                 ('commissions', 'REAL DEFAULT 0.0'),
+                # Broker P&L (price-based gross for reference)
+                ('gross_pnl', 'REAL'),
             ]
 
             for col_name, col_type in new_columns:
@@ -390,6 +392,40 @@ class DatabaseManager:
             )
             conn.commit()
             logger.debug(f"Trade {trade_id} commissions updated: ${commissions:.2f}")
+
+    def update_trade_broker_pnl(self, trade_id: str, broker_pnl: float,
+                               gross_pnl: float, commissions: float):
+        """Update P&L from Schwab transaction amounts (net of all fees).
+
+        Overwrites the price-based pnl with the broker's actual net amount,
+        stores the original price-based value in gross_pnl, and derives
+        commissions as the difference.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # Recalculate pnl_percent from broker_pnl
+            row = cursor.execute(
+                "SELECT credit_received, quantity FROM trades WHERE id = ?",
+                (trade_id,)
+            ).fetchone()
+            pnl_percent = None
+            if row:
+                credit = row[0] or 0
+                qty = row[1] or 1
+                max_profit = credit * 100 * qty
+                if max_profit > 0:
+                    pnl_percent = round(broker_pnl / max_profit * 100, 2)
+            cursor.execute(
+                "UPDATE trades SET pnl = ?, gross_pnl = ?, commissions = ?, "
+                "pnl_percent = ? WHERE id = ?",
+                (round(broker_pnl, 2), round(gross_pnl, 2),
+                 round(commissions, 2), pnl_percent, trade_id),
+            )
+            conn.commit()
+            logger.info(
+                f"Trade {trade_id[:8]} broker P&L: ${broker_pnl:.2f} "
+                f"(gross ${gross_pnl:.2f}, fees ${commissions:.2f})"
+            )
 
     def update_trade_settlement_pnl(self, trade_id: str, pnl: float):
         """Update P&L for an expired trade after Schwab settlement reconciliation.
