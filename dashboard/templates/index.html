@@ -499,8 +499,8 @@ header::after {
 }
 
 /* Chart panel */
-.chart-panel { position: relative; min-height: 300px; box-shadow: inset 0 0 30px rgba(6, 182, 212, 0.03); overflow: hidden; flex: 1 1 auto; display: flex; flex-direction: column; }
-.chart-container { position: relative; width: 100%; flex: 1 1 auto; min-height: 200px; overflow: hidden; }
+.chart-panel { position: relative; min-height: 560px; box-shadow: inset 0 0 30px rgba(6, 182, 212, 0.03); overflow: hidden; flex: 1 1 auto; display: flex; flex-direction: column; }
+.chart-container { position: relative; width: 100%; flex: 1 1 auto; min-height: 500px; overflow: hidden; }
 
 /* Chart watermark (SPX behind candlesticks) */
 .chart-watermark {
@@ -2169,8 +2169,8 @@ header::after {
   .main-content { height: auto; overflow: visible; }
   .dashboard { grid-template-columns: 1fr; grid-template-rows: auto; height: auto; }
   .left-column, .middle-column, .right-column { overflow: visible; }
-  .chart-panel { min-height: 400px; }
-  .chart-container { min-height: 350px; }
+  .chart-panel { min-height: 560px; }
+  .chart-container { min-height: 500px; }
   .middle-column > .signal-log-panel { max-height: none; }
   .right-column .equity-chart { height: 200px; }
   .account-bar { flex-wrap: wrap; gap: 16px; }
@@ -2740,16 +2740,6 @@ header::after {
             <span class="econ-no-events">Loading...</span>
           </div>
         </div>
-        <div class="risk-status-panel" id="recon-panel">
-          <div style="display:flex; align-items:center; justify-content:space-between;">
-            <div class="risk-section-title" style="margin-bottom:0;">Reconciliation</div>
-            <button id="recon-run-btn" onclick="runReconciliation()"
-              style="padding:2px 8px; background:transparent; border:1px solid var(--border); border-radius:3px; color:var(--text-dim); font-family:var(--font-ui); font-size:10px; cursor:pointer; transition:all 0.15s;"
-              onmouseover="this.style.borderColor='var(--text-dim)';this.style.color='var(--text)'"
-              onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-dim)'">Run Now</button>
-          </div>
-          <div id="recon-body" style="margin-top:6px;"><span class="econ-no-events">Loading...</span></div>
-        </div>
         <div class="risk-status-panel" id="shadow-panel" style="display:none">
           <div class="risk-section-title" style="display:flex; align-items:center; gap:6px;">
             <span class="risk-led dim" id="shadow-led"></span>
@@ -2837,7 +2827,7 @@ header::after {
         </div>
       </div>
 
-      <!-- POSITION TRACKER -->
+      <!-- OPEN POSITIONS — full width -->
       <div class="panel positions-panel" id="positions-panel-wrap" data-cpanel-id="ov-positions">
         <div class="panel-title cpanel-toggle">Open Positions</div>
         <div class="cpanel-body"><div>
@@ -2882,30 +2872,8 @@ header::after {
         </div></div>
       </div>
 
-      <!-- SIGNAL LOG -->
-      <div class="panel signal-log-panel" data-cpanel-id="ov-signals">
-        <div class="panel-title cpanel-toggle">Signal Log</div>
-        <div class="cpanel-body"><div>
-          <div class="table-scroll" id="signal-log-body">
-            <div class="empty">No signals yet</div>
-          </div>
-        </div></div>
-      </div>
     </div>
 
-    <!-- RIGHT COLUMN: Trade History + Performance -->
-    <div class="right-column">
-      <div class="panel" data-cpanel-id="ov-history">
-        <div class="panel-title cpanel-toggle">Trade History & Performance <span style="font-size:10px;color:var(--text-dim);font-weight:normal;margin-left:6px">MTD</span></div>
-        <div class="cpanel-body"><div>
-          <div class="agg-stats" id="agg-stats"></div>
-          <div class="equity-chart" id="equity-chart"></div>
-          <div class="table-scroll" id="history-table-body">
-            <div class="empty">No closed trades yet</div>
-          </div>
-        </div></div>
-      </div>
-    </div>
 
   </div>
 
@@ -3061,6 +3029,17 @@ header::after {
       <div class="empty">Loading journal...</div>
     </div>
 
+    <div class="panel" data-cpanel-id="ov-history" style="margin-top: 16px;">
+      <div class="panel-title cpanel-toggle">Trade History & Performance — MTD</div>
+      <div class="cpanel-body"><div>
+        <div class="agg-stats" id="agg-stats"></div>
+        <div class="equity-chart" id="equity-chart"></div>
+        <div class="table-scroll" id="history-table-body">
+          <div class="empty">No closed trades yet</div>
+        </div>
+      </div></div>
+    </div>
+
   </div><!-- /tab-journal -->
 
   <!-- TAB: LOGS -->
@@ -3088,6 +3067,14 @@ header::after {
     </div>
     <div class="log-viewer" id="log-viewer">
       <div class="empty">Loading logs...</div>
+    </div>
+    <div class="panel signal-log-panel" data-cpanel-id="ov-signals" style="margin-top: 16px;">
+      <div class="panel-title cpanel-toggle">Signal Log</div>
+      <div class="cpanel-body"><div>
+        <div class="table-scroll" id="signal-log-body">
+          <div class="empty">No signals yet</div>
+        </div>
+      </div></div>
     </div>
   </div><!-- /tab-logs -->
 
@@ -7596,7 +7583,6 @@ async function runReconciliation() {
   setTimeout(function() { btn.disabled = false; btn.textContent = 'Run Now'; }, 3000);
 }
 
-updateReconciliation();
 
 // ---------------------------------------------------------------
 // Shadow Mode
@@ -7676,7 +7662,7 @@ async function refreshAll() {
   const cdEl = document.getElementById('refresh-countdown');
   cdEl.style.opacity = '0.4';
   cdEl.textContent = '...';
-  const tasks = [updateStatus(), updateToday(), updateSignals(), updateHistory(), updateRiskStatus(), updateGreeks(), updateReconciliation(), updateShadowPanel()];
+  const tasks = [updateStatus(), updateToday(), updateSignals(), updateHistory(), updateRiskStatus(), updateGreeks(), updateShadowPanel()];
   if (activeTab === 'journal') tasks.push(updateJournal());
   await Promise.all(tasks);
   countdown = 30;
