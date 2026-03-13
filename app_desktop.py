@@ -725,17 +725,8 @@ class DesktopApp:
                 self._bot_crashed = True
                 self._bot_crash_error = str(e)
                 self._bot_crash_time = datetime.now()
-            # Send Discord notification about the lock conflict
-            try:
-                from src.utils.notifications import NotificationManager
-                nm = NotificationManager()
-                nm._send_rich(
-                    "Instance Lock Conflict",
-                    str(e),
-                    level='critical',
-                )
-            except Exception as notify_err:
-                logger.warning(f"Failed to send lock conflict notification: {notify_err}")
+            # Lock conflict logged above; Discord notification disabled to
+            # avoid spam.  Visible in the trading log.
             return
         except Exception as e:
             logger.error(f"Bot thread error: {e}", exc_info=True)
@@ -867,17 +858,8 @@ class DesktopApp:
                 else:
                     logger.error(f"WATCHDOG: auto-restart failed: {err_start}")
 
-                # Send rich auto-restart notification
-                try:
-                    from src.utils.notifications import NotificationManager
-                    notifier = NotificationManager()
-                    notifier.send_auto_restart({
-                        'crash_reason': err_msg,
-                        'restart_count': len(self._auto_restart_times),
-                        'mode': restart_mode,
-                    })
-                except Exception as notify_err:
-                    logger.warning(f"Watchdog failed to send notification: {notify_err}")
+                # Auto-restart logged above; Discord notification disabled to
+                # avoid spam.  The restart is visible in the trading log.
                 break  # start_bot launches a new watchdog
 
             if not bot_thread.is_alive():

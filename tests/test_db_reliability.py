@@ -304,10 +304,10 @@ class TestNotifierModeInDesktopApp:
 # ---------------------------------------------------------------------------
 
 class TestDBFailureAlert:
-    """When save_trade_with_retry fails, a critical Discord alert must fire."""
+    """When save_trade_with_retry fails, a critical log entry must be written."""
 
-    def test_critical_alert_sent_on_db_failure(self):
-        """PositionManager._send_db_failure_alert sends a critical notification."""
+    def test_critical_log_on_db_failure(self):
+        """PositionManager._send_db_failure_alert logs at CRITICAL level."""
         from src.core.position_manager import PositionManager
 
         trade = _make_trade()
@@ -317,19 +317,12 @@ class TestDBFailureAlert:
 
         pm = PositionManager(broker, strategy, db)
 
-        with patch('src.utils.notifications.NotificationManager') as MockNotifier:
-            mock_instance = MagicMock()
-            MockNotifier.return_value = mock_instance
-
+        with patch('src.core.position_manager.logger') as mock_logger:
             pm._send_db_failure_alert(trade, Exception("database is locked"))
-
-            mock_instance._send_rich.assert_called_once()
-            call_kwargs = mock_instance._send_rich.call_args
-            assert call_kwargs[1].get('level') == 'critical' or \
-                   (len(call_kwargs[0]) >= 3 and call_kwargs[0][2] == 'critical')
+            mock_logger.critical.assert_called_once()
 
     def test_alert_contains_trade_details(self):
-        """The alert message must include trade ID and strikes."""
+        """The log message must include trade ID and strikes."""
         from src.core.position_manager import PositionManager
 
         trade = _make_trade()
@@ -339,16 +332,12 @@ class TestDBFailureAlert:
 
         pm = PositionManager(broker, strategy, db)
 
-        with patch('src.utils.notifications.NotificationManager') as MockNotifier:
-            mock_instance = MagicMock()
-            MockNotifier.return_value = mock_instance
-
+        with patch('src.core.position_manager.logger') as mock_logger:
             pm._send_db_failure_alert(trade, Exception("database is locked"))
 
-            call_args = mock_instance._send_rich.call_args
-            all_args = str(call_args)
-            assert '6795' in all_args
-            assert '6790' in all_args
+            log_msg = str(mock_logger.critical.call_args)
+            assert '6795' in log_msg
+            assert '6790' in log_msg
 
 
 # ---------------------------------------------------------------------------
