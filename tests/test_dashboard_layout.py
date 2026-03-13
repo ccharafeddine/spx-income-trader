@@ -60,8 +60,8 @@ class TestJournalTab:
     def test_history_table_body_present(self):
         assert 'id="history-table-body"' in self.journal
 
-    def test_title_includes_mtd(self):
-        assert "MTD" in self.journal
+    def test_history_panel_title_present(self):
+        assert 'Trade History' in self.journal
 
 
 class TestLogsTab:
