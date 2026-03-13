@@ -1510,6 +1510,15 @@ header {
         </label>
       </div>
       <div class="ts-note">These strategies are under development and disabled by default.</div>
+      <div style="margin-top:16px; padding-top:12px; border-top:1px solid var(--border);">
+        <div class="ts-row">
+          <label class="ts-experimental-label">Developer Mode <span class="ts-info-icon" data-tooltip="Enables Logs tab, Backtest tab, and backtest data source in Analytics. When off, the dashboard shows only live trading features.">?</span></label>
+          <label class="ts-switch">
+            <input type="checkbox" id="set-dev-mode" onchange="updateSetting('developer_mode', this.checked)">
+            <span class="ts-slider-toggle"></span>
+          </label>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -2671,6 +2680,7 @@ async function loadCurrentSettings() {
   document.getElementById('set-bnb').checked = data.bnb?.enabled ?? false;
   document.getElementById('set-orb').checked = data.orb?.enabled ?? false;
   document.getElementById('set-shadow').checked = data.broker?.shadow?.enabled ?? false;
+  document.getElementById('set-dev-mode').checked = data.developer_mode ?? false;
 
   // Shadow row visibility (dry-run only)
   const activeBrokerVal = data.broker?.active || 'dry_run';
