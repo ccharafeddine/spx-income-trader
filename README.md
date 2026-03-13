@@ -66,7 +66,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - VIX regime awareness (low / normal / elevated / high / extreme)
 - Win/loss streak tracking with frozen previous-streak display
 - Max-profit cap: unrealized P&L is capped at the theoretical maximum (credit received x 100 x quantity), preventing inflated profit calculations from triggering premature exits
-- DB write failure cooldown: if the database save fails after a broker order fills, new entries are blocked for 5 minutes (auto-expiring) to prevent untracked positions. Exit path retries 3 times with backoff before activating cooldown. Replaces permanent session halt.
+- DB write failure cooldown: if the database save fails after a broker order fills, new entries are blocked for 5 minutes (auto-expiring) to prevent untracked positions. Entry path retries 5 times with exponential backoff; exit path retries 3 times before activating cooldown. Discord alert deduplicated to one per cooldown period.
 - SPX 5-cent rounding: all spread order prices are rounded to the nearest $0.05 increment per exchange rules
 
 ### Broker Integration
@@ -96,13 +96,15 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Schema auto-created on first access for new mode (schema.sql bundled in PyInstaller builds)
 
 ### Database Reliability
-- WAL mode with `busy_timeout=5000` on all connections to handle concurrent read/write contention
+- WAL mode with `busy_timeout=10000` on bot connections, shorter timeout on dashboard writes to minimize lock hold time
 - Pending trade record written before broker order to prevent orphaned trades on crash
-- `save_trade_with_retry()` with 3-attempt exponential backoff on all critical writes
+- `save_trade_with_retry()` with 5-attempt exponential backoff (0.2s–4s delays) on all critical writes
 - Exit path (`update_trade_close`) retries 3 times with backoff before activating cooldown
+- Dashboard expire-trade writes use separate short-lived connections to avoid blocking the bot
 - `update_daily_stats` failure is non-fatal (logged at WARNING, does not block exit)
 - Per-request connection caching in dashboard (Flask `g` + teardown)
-- Critical Discord alert when all save retries are exhausted
+- Critical Discord alert when all save retries are exhausted (deduplicated: one alert per cooldown period)
+- Singleton instance guard prevents multiple app instances from competing for the same database
 
 ### Chart & Visualization
 - Real-time SPX candlestick chart with four timeframe toggles: 4h, 1h, 30m, 5m
@@ -126,13 +128,14 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - DB-backed strategy status LEDs for all four strategies (persists across page refreshes). Disabled strategies show a dark "Off" LED instead of red.
 - Signal log showing every detected setup with strikes, credit, risk, and SPX price
 - Shadow mode panel (dry-run only): summary stats, recent comparison rows with timestamps, price/credit divergence, and decision-would-differ LED indicators
-- Six tabs: Overview, Calendar, Trade Journal, Analytics, Backtest, Logs
-- Account page with 2-column full-viewport layout: trading mode, broker credentials, Schwab OAuth status, PDT rule protection, FRED API key, notifications, and trading settings (strategies, position sizing, risk controls, experimental toggles)
-- Calendar tab with live FRED API economic calendar feed (Federal Reserve Bank of St. Louis, free, 4-hour cache) and automatic static JSON fallback. Today's events with past/current/upcoming status, this week grouped by day, and upcoming 30 days. Impact badges (high/medium/low), actual/forecast/previous data columns, and live vs. static source indicator.
+- Five tabs: Overview, Trade Journal, Analytics, Backtest, Logs (Backtest and Logs hidden when Developer Mode is off)
+- Account page with 2-column full-viewport layout: trading mode, broker credentials, Schwab OAuth status, PDT rule protection, FRED API key, notifications, and trading settings (strategies, position sizing, risk controls, experimental toggles including Developer Mode)
+- Developer Mode toggle (Account > Trading Settings > EXPERIMENTAL): hides Backtest tab, Logs tab, and Analytics backtest data source dropdown when off, showing only live trading features
+- Economic calendar events displayed as color-coded badges on Trade Journal calendar day cells (FOMC, CPI, NFP, GDP, PCE) via live FRED API feed (4-hour cache) with automatic static JSON fallback. Today's upcoming events also shown in the Overview left panel.
 
 ### Trade Journal
 - Two views: monthly calendar and filterable list, toggled with Calendar/List buttons
-- Calendar view shows per-day P&L, trade count, strategy tags, no-trade reasons
+- Calendar view shows per-day P&L, trade count, strategy tags, economic event badges (FOMC, CPI, NFP, GDP, PCE), and no-trade reasons
 - List view shows per-strategy summary cards (trades, win rate, P&L) and expandable trade rows
 - Entry analysis with pulse bar checklist, strike rationale, market context
 - Exit review with post-trade notes and performance rating
@@ -142,7 +145,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - CSV export for offline analysis
 
 ### Analytics
-- Data source selector: view analytics for live trades or any historical backtest run
+- Data source selector: view analytics for live trades or any historical backtest run (backtest source hidden when Developer Mode is off)
 - Collapsible panels with Expand All / Collapse All toolbar (state persisted in localStorage)
 - Disclaimer banners for simulated (backtest) and dry-run data sources
 - Sharpe ratio, Sortino ratio, max drawdown, profit factor, expectancy
@@ -227,6 +230,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Dev mode (`--dev`) opens in system browser
 - Bot start/stop controls from the dashboard and system tray context menu
 - Bot crash detection with watchdog thread and notification
+- Singleton instance lock: only one app instance can run at a time. Live mode takes priority — a new live instance evicts any running dry-run instance. Lock auto-releases on crash (Windows file lock).
 
 ### Discord Notifications
 - Bot startup: mode, equity, open positions, ET time
@@ -244,7 +248,7 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Mode-aware footer on all Discord embeds (DRY RUN / LIVE / DEMO)
 
 ### Data & Storage
-- SQLite database with WAL mode and `busy_timeout=5000` for concurrent read/write access
+- SQLite database with WAL mode and `busy_timeout` for concurrent read/write access
 - Separate databases for dry-run and live trading modes
 - OS keychain credential storage (Windows Credential Manager / macOS Keychain / Linux Secret Service)
 - Automatic database migrations on startup (column additions, index creation)
@@ -347,7 +351,7 @@ Broker Interface
 Position Manager (P&L tracking, exit management, partial fill tracking, PDT-conditional 1pm, DB-failure cooldown)
     |
     +---> SQLite Database (mode-specific: dry-run / live, WAL + busy_timeout, retry-on-lock)
-    +---> Flask Dashboard (Overview, Calendar, Journal, Analytics, Backtest, Logs)
+    +---> Flask Dashboard (Overview, Journal, Analytics, Backtest, Logs)
     +---> Notification Manager (Slack, Discord, email, SMS, webhooks)
     +---> Prometheus Metrics (/metrics)
     +---> Event Recorder (session recording, demo JSONL capture)
@@ -355,7 +359,7 @@ Position Manager (P&L tracking, exit management, partial fill tracking, PDT-cond
     +---> Shadow Comparator (dry-run vs. live Schwab price/credit comparison)
 ```
 
-**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1,406+ tests), GitHub Actions CI
+**Tech stack:** Python 3.13, Flask, SQLite (WAL), Yahoo Finance, E\*TRADE API, schwab-py, ib_insync, pywebview, PyInstaller/py2app, Prometheus | **Notifications:** Discord webhooks, Slack webhooks, generic webhooks, email, SMS | **Testing:** pytest (1,467+ tests), GitHub Actions CI
 
 ---
 
@@ -533,7 +537,7 @@ src/
 dashboard/
     app.py                   # Flask REST API and dashboard server (70+ routes)
     templates/
-        index.html           # Main dashboard (6 tabs)
+        index.html           # Main dashboard (5 tabs)
         settings.html        # Configuration UI
         setup.html           # Initial setup wizard
     static/                  # Icons and static assets
@@ -559,14 +563,14 @@ build/
     build_windows.py         # PyInstaller build script (Windows)
     build_macos.py           # py2app build script (macOS)
 
-app_desktop.py               # Desktop app entry point (pywebview + Flask + session recording)
+app_desktop.py               # Desktop app entry point (pywebview + Flask + singleton lock)
 ```
 
 ---
 
 ## Testing
 
-1,406+ tests covering:
+1,467+ tests covering:
 - Strategy logic (pulse detection, breakout confirmation, setup windows, range filters, confirmation delays, morning bias filter, TNT weekend hold prevention)
 - Multi-strategy backtest engine (DI, TNT, ORB, B&B parallel execution)
 - Position management (sizing, P&L calculation, exit triggers, partial fill tracking)
@@ -576,6 +580,7 @@ app_desktop.py               # Desktop app entry point (pywebview + Flask + sess
 - Bar building and market state management
 - Consecutive loss tracking and streak counters
 - Dashboard win/loss streak counters (end-to-end DB-to-API proof tests)
+- Dashboard layout validation (tab structure, panel IDs, history panel title)
 - VIX data provider multi-source fallback chains
 - Price feed health monitoring and stale detection
 - Daily journal persistence and API endpoints
@@ -701,12 +706,6 @@ This is a personal project. It is not financial advice.
 
 ---
 
-## License
-
-MIT License - See [LICENSE](LICENSE) for details.
-
----
-
 ## Live Validation Log
 
 Live testing began **March 10, 2026** on a Schwab account.
@@ -768,4 +767,10 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ![Day 3 Dashboard — March 12, 2026](screenshots/DailyMelt_Day3_03122026.png)
 
-**Test suite:** 1,247 → 1,406+ tests across the two-day session (+159 new tests)
+**Test suite:** 1,247 → 1,467+ tests across the three-day session (+220 new tests)
+
+---
+
+## License
+
+MIT License - See [LICENSE](LICENSE) for details.
