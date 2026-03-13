@@ -195,13 +195,12 @@ Uses the first 30-minute bar of the day to define the opening range. Strong sign
 - Privacy scrub removes account IDs, tokens, and API keys from recordings
 
 ### Session Recording
-- Start and stop recording from the dashboard Overview tab while the bot is running
+- Record live trading sessions as JSONL event streams via the backend API
 - Recordings saved as JSONL files in `demo_recordings/` with timestamped filenames
 - Browse recent recordings with event count and duration metadata
 - Load any recording as a demo file for replay
-- Recording panel auto-hides in standalone mode and demo mode
-- UI restores recording state on page refresh (pulsing indicator, elapsed timer, event count)
 - Recording auto-closes when the bot stops
+- **Note:** The dashboard recording UI (floating button on the Overview tab) is currently disabled. The recording backend and API routes remain fully functional and can be triggered programmatically or re-enabled by uncommenting the `rec-float` div in `index.html`.
 
 ### Reconciliation
 - Compares database trades against broker order fills
@@ -669,7 +668,9 @@ Three pre-built scenarios:
 
 ### Session Recording from the Dashboard
 
-In desktop mode, you can record live bot sessions directly from the Overview tab:
+> **Note:** The dashboard recording button is currently disabled. The recording backend remains fully functional — to re-enable the UI, uncomment the `rec-float` div in `dashboard/templates/index.html`.
+
+When enabled, in desktop mode you can record live bot sessions directly from the Overview tab:
 
 1. Start the bot in dry-run or live mode
 2. Click **Record** in the Session Recording panel
