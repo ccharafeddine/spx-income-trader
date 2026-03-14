@@ -1708,7 +1708,15 @@ def api_status():
     }
 
     # Daily Income status (derived from DB, no JSON state file)
-    di_status = {'enabled': True, 'state': 'IDLE'}
+    # Compute trading window using proper ET timezone (handles DST correctly)
+    timing = STRATEGY_PARAMS.get('timing', {})
+    _morning_start = timing.get('morning_start', '09:30')
+    _morning_end = timing.get('morning_end', '11:30')
+    _now_et = datetime.now(ET)
+    _now_hhmm = _now_et.strftime('%H:%M')
+    _in_morning_window = _morning_start <= _now_hhmm <= _morning_end
+
+    di_status = {'enabled': True, 'state': 'IDLE', 'in_window': _in_morning_window}
     try:
         import sqlite3 as _di_sql
         _di_db = Path(DATABASE_PATH)
@@ -1839,6 +1847,7 @@ def api_status():
                     'opening_range': orb_data.get('opening_range'),
                     'triggered_today': orb_data.get('triggered_today', False),
                     'position_open': orb_position_open,
+                    'pre_orb': '09:30' <= _now_hhmm < '10:00',
                 }
         except Exception:
             pass
