@@ -779,6 +779,7 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 - **Calendar bug fix:** Journal calendar was showing today's closed trades as open because it queried raw DB status without resolving expired trades. Added `_resolve_expired_trade()` call in the calendar endpoint, matching the list view's `classify_trades()` logic.
 - **Strategy state DST fix:** "WINDOW CLOSED" was showing during the active trading window because the frontend computed ET time with a hardcoded EST (UTC-5) offset, ignoring daylight saving time (EDT = UTC-4 since March 8). Moved the trading window check to the backend using Python's timezone-aware `datetime.now(ET)` which handles DST correctly. Also fixed the same bug for ORB's pre-market window.
 - **Live data directory discovery:** Diagnosed that the compiled exe writes to `AppData\Local\SPXIncomeTrader\` (via platformdirs) while the project root `database/trades_live.db` is a stale copy. All 3 live trades (Mar 11-13) were correctly recorded in the platformdirs DB. Backfilled `gross_pnl` column and reconciled all trade records with broker net P&L.
+- **Dashboard layout overhaul:** Reorganized the Overview tab so all critical data is immediately visible without scrolling. Risk Status, live price data, and open positions are now front and center. Today's Summary panel was condensed, and the Parameters section in the left panel was optimized for space.
 
 ![Day 4 Dashboard — March 13, 2026](screenshots/DailyMelt_Day4_03132026.png)
 
