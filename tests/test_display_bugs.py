@@ -128,37 +128,22 @@ class TestCalendarClosedTrades:
 # ---------------------------------------------------------------------------
 
 class TestWindowClosedLED:
-    """window_closed strategy state must render with grey LED, not red."""
+    """window_closed strategy state must render with red LED (same as idle)."""
 
     def test_window_closed_css_exists(self):
         """CSS must have explicit window_closed LED styling."""
         assert 'data-state="window_closed"' in TEMPLATE, \
             "Expected explicit CSS rule for window_closed state"
 
-    def test_window_closed_led_is_not_red(self):
-        """window_closed LED must not use red gradient colors."""
-        # Extract the window_closed CSS block
+    def test_window_closed_led_uses_red(self):
+        """window_closed LED should use red gradient colors."""
         m = re.search(
             r'\.status-light\[data-state="window_closed"\]\s*\.led\s*\{([^}]+)\}',
             TEMPLATE
         )
         assert m, "Could not find window_closed LED CSS rule"
         css_block = m.group(1)
-        # Should NOT contain red colors (#dc2626, #f87171)
-        assert '#dc2626' not in css_block, "window_closed should not use red"
-        assert '#f87171' not in css_block, "window_closed should not use red"
-
-    def test_window_closed_led_uses_grey(self):
-        """window_closed LED should use grey tones."""
-        m = re.search(
-            r'\.status-light\[data-state="window_closed"\]\s*\.led\s*\{([^}]+)\}',
-            TEMPLATE
-        )
-        assert m, "Could not find window_closed LED CSS rule"
-        css_block = m.group(1)
-        # Should contain grey colors (#6b7280 or #4b5563)
-        assert '#6b7280' in css_block or '#4b5563' in css_block, \
-            "window_closed LED should use grey gradient"
+        assert '#dc2626' in css_block, "window_closed should use red"
 
     def test_js_uses_window_closed_state_not_idle(self):
         """When market open but window passed, JS should set window_closed not idle."""
@@ -179,6 +164,6 @@ class TestWindowClosedLED:
         assert '#dc2626' in m.group(1), "idle should still use red"
 
     def test_window_closed_strat_state_class(self):
-        """strat-state.window_closed should have grey styling like idle."""
+        """strat-state.window_closed should have styling."""
         assert '.strat-state.window_closed' in TEMPLATE, \
             "Expected .strat-state.window_closed CSS class"
