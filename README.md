@@ -787,6 +787,22 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ---
 
+### Day 5 — March 17, 2026 (Non-trading day)
+
+No trades — market closed (weekend). Focused on dashboard improvements and infrastructure hardening.
+
+**Updates deployed:**
+- **Schwab real-time price feed:** Dashboard now pulls SPX price directly from Schwab (5-second cache) instead of Yahoo Finance (which was 15-min delayed). Yahoo remains as a fallback if Schwab is unavailable.
+- **Faster dashboard updates:** Full refresh interval reduced from 30s to 15s. Added a dedicated price ticker that polls every 5 seconds with flash animation on price changes.
+- **Live mark-to-market P&L:** Open positions now show real-time P&L calculated from the Schwab option chain using ask-side pricing (same conservative method the bot uses). Labeled "P&L (Live)" when using real prices vs "Est P&L" when falling back to intrinsic math.
+- **Manual close button:** Added a "Close Position" button on open position cards. Places a close order at mid-price through Schwab with full post-close processing — exit context (SPX/VIX at exit, time in trade, profit captured %), fee capture, background P&L reconciliation, daily stats update, and Discord notification. Matches the bot's own `_exit_trade()` flow.
+- **External close detection:** Bot now syncs with dashboard-initiated closes. Each monitoring cycle checks if any in-memory open trade was closed externally (via DB status), and removes it from active monitoring to prevent duplicate close attempts.
+- **Broker P&L reconciliation for expirations:** Fixed reconciliation worker to handle expired trades that have no exit order. Detects expirations (no `exit_order_id`), uses only 2 entry legs + deterministic SPX cash settlement to compute broker P&L and commissions.
+
+![Day 5 Dashboard — March 17, 2026](screenshots/DailyMelt_Day5_03172026.png)
+
+---
+
 ## Disclaimer
 
 This is a personal project. It is not financial advice.
