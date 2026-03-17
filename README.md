@@ -787,11 +787,15 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ---
 
-### Day 5 — March 17, 2026 (Non-trading day)
+### Day 5 — March 16, 2026
 
-No trades — market closed (weekend). Focused on dashboard improvements and infrastructure hardening.
+**Trade:** Bullish put credit spread 6720/6715 (4 contracts), entered 10:03 ET on bullish pulse bar at 9:30
+**VIX:** 24.10 (ELEVATED regime), SPX opened at 6,674.37 (-1.79% gap down), rallied to 6,717.99 at entry
+**Result:** Loss — expired at max loss. SPX fell back through both strikes, closing at 6,699.38. Trade was underwater most of the day with no recovery opportunity.
+**Schwab account impact:** -$1,180.00
+**First 4-contract trade:** Budget-based sizing scaled up from 2 to 4 contracts based on account equity and daily loss budget
 
-**Updates deployed:**
+**Fixes deployed:**
 - **Schwab real-time price feed:** Dashboard now pulls SPX price directly from Schwab (5-second cache) instead of Yahoo Finance (which was 15-min delayed). Yahoo remains as a fallback if Schwab is unavailable.
 - **Faster dashboard updates:** Full refresh interval reduced from 30s to 15s. Added a dedicated price ticker that polls every 5 seconds with flash animation on price changes.
 - **Live mark-to-market P&L:** Open positions now show real-time P&L calculated from the Schwab option chain using ask-side pricing (same conservative method the bot uses). Labeled "P&L (Live)" when using real prices vs "Est P&L" when falling back to intrinsic math.
@@ -799,7 +803,7 @@ No trades — market closed (weekend). Focused on dashboard improvements and inf
 - **External close detection:** Bot now syncs with dashboard-initiated closes. Each monitoring cycle checks if any in-memory open trade was closed externally (via DB status), and removes it from active monitoring to prevent duplicate close attempts.
 - **Broker P&L reconciliation for expirations:** Fixed reconciliation worker to handle expired trades that have no exit order. Detects expirations (no `exit_order_id`), uses only 2 entry legs + deterministic SPX cash settlement to compute broker P&L and commissions.
 
-![Day 5 Dashboard — March 17, 2026](screenshots/DailyMelt_Day5_03172026.png)
+![Day 5 Dashboard — March 16, 2026](screenshots/DailyMelt_Day5_03162026.png)
 
 ---
 
