@@ -301,6 +301,62 @@ class TestReconcileBrokerPnlWorker:
         assert trade['pnl'] == 420.0
         assert trade['gross_pnl'] == 420.0
 
+    def test_expiration_reconciliation(self, tmp_path):
+        """Worker should reconcile expirations using only entry legs + settlement."""
+        from src.core.position_manager import PositionManager
+        from database.db_manager import DatabaseManager
+
+        db = DatabaseManager(str(tmp_path / 'test.db'))
+
+        # Insert a bullish put credit spread that expired max loss
+        # SPX at 6699.38, short 6720P/long 6715P, 4 contracts, credit $2.05
+        conn = sqlite3.connect(db.db_path)
+        conn.execute(
+            "INSERT INTO trades (id, entry_time, direction, status, short_strike, "
+            "long_strike, spread_width, credit_received, entry_price, quantity, "
+            "expiration, pnl, commissions, entry_order_id, exit_order_id, "
+            "gross_pnl, spx_at_exit) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ('t-exp', '2026-03-16 10:03:00', 'bullish', 'closed',
+             6720.0, 6715.0, 5.0, 2.05, 2.05, 4, '2026-03-16',
+             -1180.0, 0.0, '300', None, -1180.0, 6699.38),
+        )
+        conn.commit()
+        conn.close()
+
+        # Entry legs only (no exit order for expirations)
+        entry_legs = [
+            {'order_id': '300', 'net_amount': 7255.11,
+             'transaction_id': '10', 'type': 'TRADE',
+             'description': 'Sell to Open'},
+            {'order_id': '300', 'net_amount': -6444.89,
+             'transaction_id': '11', 'type': 'TRADE',
+             'description': 'Buy to Open'},
+        ]
+
+        broker = MagicMock()
+        broker.get_transactions_for_date.return_value = entry_legs
+
+        pm = MagicMock()
+        pm.broker = broker
+        pm.db = db
+        pm.tz = ET
+        pm._profit_at_price = PositionManager._profit_at_price
+
+        with patch('time.sleep'):
+            PositionManager._reconcile_broker_pnl_worker(
+                pm, 't-exp', '300', None, -1180.0
+            )
+
+        trade = _read_trade(db.db_path, 't-exp')
+        # Broker entry credit = 7255.11 - 6444.89 = 810.22
+        # Settlement (max loss): both legs ITM, spread = $5 → -$2000
+        # Broker P&L = 810.22 - 2000 = -1189.78
+        assert trade['pnl'] == -1189.78
+        assert trade['gross_pnl'] == -1180.0
+        # Entry commissions = price-based credit ($820) - broker credit ($810.22)
+        assert trade['commissions'] == 9.78
+
 
 # ---------------------------------------------------------------------------
 # Test: downstream _trade_net_pnl helper

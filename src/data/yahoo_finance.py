@@ -54,9 +54,9 @@ class YahooFinanceProvider:
     def __init__(self):
         self.tz = pytz.timezone('US/Eastern')
         self._cache: Dict[str, Tuple[datetime, dict]] = {}
-        self._cache_duration = timedelta(seconds=60)  # Cache for 60 seconds to avoid rate limits
+        self._cache_duration = timedelta(seconds=30)  # Cache Yahoo data (fallback source)
         self._last_request_time = 0
-        self._min_request_interval = 5  # Minimum 5 seconds between requests
+        self._min_request_interval = 5  # Minimum 5 seconds between Yahoo requests
 
         # Last-known-good cache: persists across failed fetches so callers
         # always get a value even during extended Yahoo outages.
