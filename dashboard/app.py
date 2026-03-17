@@ -817,6 +817,25 @@ def compute_account(conn, spx_price, starting_capital=None):
     unrealized_pnl = 0.0
     position_details = []
 
+    # Try to get live option prices from Schwab for accurate mark-to-market
+    live_chain = None
+    mode = detect_trading_mode()
+    if mode == 'LIVE' and open_positions:
+        try:
+            broker = _get_cached_broker()
+            if hasattr(broker, 'get_options_chain'):
+                # Use today's expiration (0DTE)
+                exp_date = datetime.now(ET).strftime('%Y-%m-%d')
+                # Check if positions have a specific expiration
+                first_exp = open_positions[0].get('expiration', '')
+                if first_exp:
+                    exp_str = str(first_exp).split(' ')[0][:10]
+                    if len(exp_str) == 10:
+                        exp_date = exp_str
+                live_chain = broker.get_options_chain('SPX', exp_date)
+        except Exception as e:
+            logger.debug(f"Live option chain fetch failed, using intrinsic: {e}")
+
     for pos in open_positions:
         detail = dict(pos)
         short_strike = pos['short_strike']
@@ -826,15 +845,39 @@ def compute_account(conn, spx_price, starting_capital=None):
         quantity = pos['quantity']
 
         if spx_price and short_strike:
-            if direction == 'bullish':
-                intrinsic = max(0, short_strike - spx_price)
-            else:
-                intrinsic = max(0, spx_price - short_strike)
+            # Try live option pricing first (mark-to-market from Schwab)
+            live_value = None
+            if live_chain and short_strike in live_chain and long_strike in live_chain:
+                try:
+                    if direction == 'bullish':
+                        # Put spread: buy back short put at ASK, sell long put at BID
+                        short_ask = live_chain[short_strike].get('put_ask', 0)
+                        long_bid = live_chain[long_strike].get('put_bid', 0)
+                    else:
+                        # Call spread: buy back short call at ASK, sell long call at BID
+                        short_ask = live_chain[short_strike].get('call_ask', 0)
+                        long_bid = live_chain[long_strike].get('call_bid', 0)
+                    if short_ask > 0:
+                        live_value = max(0.0, short_ask - long_bid)
+                except Exception:
+                    pass
 
-            spread_width = abs(long_strike - short_strike)
-            intrinsic = min(intrinsic, spread_width)
-            est_close_price = intrinsic
-            est_pnl = (credit - est_close_price) * 100 * quantity
+            if live_value is not None:
+                est_close_price = live_value
+                est_pnl = (credit - est_close_price) * 100 * quantity
+                detail['pnl_source'] = 'live'
+            else:
+                # Fallback: intrinsic value math
+                if direction == 'bullish':
+                    intrinsic = max(0, short_strike - spx_price)
+                else:
+                    intrinsic = max(0, spx_price - short_strike)
+                spread_width = abs(long_strike - short_strike)
+                intrinsic = min(intrinsic, spread_width)
+                est_close_price = intrinsic
+                est_pnl = (credit - est_close_price) * 100 * quantity
+                detail['pnl_source'] = 'intrinsic'
+
             unrealized_pnl += est_pnl
 
             distance = spx_price - short_strike
@@ -851,10 +894,12 @@ def compute_account(conn, spx_price, starting_capital=None):
                 status = 'DANGER'
 
             detail['est_pnl'] = round(est_pnl, 2)
+            detail['est_close_price'] = round(est_close_price, 4)
             detail['distance_to_short'] = round(distance, 2)
             detail['position_status'] = status
         else:
             detail['est_pnl'] = 0
+            detail['est_close_price'] = 0
             detail['distance_to_short'] = 0
             detail['position_status'] = 'UNKNOWN'
 
@@ -1601,6 +1646,325 @@ def index():
     return render_template('index.html')
 
 
+_schwab_price_cache = {'data': None, 'ts': 0}
+_SCHWAB_PRICE_CACHE_TTL = 5  # seconds
+
+
+@app.route('/api/price')
+def api_price():
+    """Lightweight SPX price endpoint for fast polling (no DB queries).
+
+    Uses Schwab API for real-time SPX price with Yahoo as fallback.
+    """
+    import time as _time
+    now = _time.time()
+    spx = None
+
+    # Try Schwab first (real-time, cached 5s)
+    if now - _schwab_price_cache['ts'] < _SCHWAB_PRICE_CACHE_TTL and _schwab_price_cache['data']:
+        spx = _schwab_price_cache['data']
+    else:
+        try:
+            broker = _get_cached_broker()
+            if hasattr(broker, 'get_current_price'):
+                price = broker.get_current_price('SPX')
+                if price and price > 0:
+                    # Build quote dict compatible with Yahoo format
+                    prev = yahoo.get_spx_quote() or {}
+                    prev_close = prev.get('previous_close') or prev.get('price') or price
+                    change = round(price - prev_close, 2)
+                    change_pct = round((change / prev_close) * 100, 2) if prev_close else 0
+                    spx = {
+                        'price': round(price, 2),
+                        'change': change,
+                        'change_pct': change_pct,
+                        'previous_close': prev_close,
+                        'source': 'schwab',
+                    }
+                    _schwab_price_cache['data'] = spx
+                    _schwab_price_cache['ts'] = now
+        except Exception:
+            pass
+
+    # Fallback to Yahoo
+    if not spx:
+        spx = yahoo.get_spx_quote() or {}
+
+    vix = yahoo.get_vix_quote() or {}
+    return jsonify({
+        'spx': spx,
+        'vix': {
+            'level': round(vix.get('price', 0), 2) if vix.get('price') else None,
+        },
+    })
+
+
+@app.route('/api/close-position', methods=['POST'])
+def api_close_position():
+    """Manually close an open position via Schwab.
+
+    Expects JSON: { "trade_id": "..." }
+    Fetches live option prices, places a close order at mid-price,
+    then performs the same post-close processing as the bot:
+    exit context, fee capture, P&L reconciliation, Discord notification.
+    """
+    data = request.get_json() or {}
+    trade_id = data.get('trade_id', '').strip()
+    if not trade_id:
+        return jsonify({'success': False, 'error': 'trade_id required'}), 400
+
+    mode = detect_trading_mode()
+    if mode != 'LIVE':
+        return jsonify({'success': False, 'error': 'Manual close only available in LIVE mode'}), 400
+
+    try:
+        conn = get_db_connection()
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT id, direction, short_strike, long_strike, spread_width, "
+            "credit_received, quantity, expiration, entry_order_id, entry_time, "
+            "entry_price "
+            "FROM trades WHERE id = ? AND LOWER(status) IN ('active', 'open', 'pending')",
+            (trade_id,)
+        ).fetchone()
+        conn.close()
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'DB error: {e}'}), 500
+
+    if not row:
+        return jsonify({'success': False, 'error': 'Trade not found or already closed'}), 404
+
+    direction = row['direction']
+    short_strike = row['short_strike']
+    long_strike = row['long_strike']
+    quantity = row['quantity']
+    credit = row['credit_received']
+    spread_width = row['spread_width'] or 5.0
+    entry_order_id = row['entry_order_id']
+    entry_time_str = row['entry_time']
+
+    try:
+        broker = _get_cached_broker()
+
+        # Get live option prices
+        exp_str = str(row['expiration']).split(' ')[0][:10]
+        chain = broker.get_options_chain('SPX', exp_str)
+
+        if short_strike not in chain or long_strike not in chain:
+            return jsonify({'success': False, 'error': 'Strikes not found in option chain'}), 400
+
+        # Calculate mid-price for close order
+        if direction == 'bullish':
+            short_bid = chain[short_strike].get('put_bid', 0)
+            short_ask = chain[short_strike].get('put_ask', 0)
+            long_bid = chain[long_strike].get('put_bid', 0)
+            long_ask = chain[long_strike].get('put_ask', 0)
+        else:
+            short_bid = chain[short_strike].get('call_bid', 0)
+            short_ask = chain[short_strike].get('call_ask', 0)
+            long_bid = chain[long_strike].get('call_bid', 0)
+            long_ask = chain[long_strike].get('call_ask', 0)
+
+        # Cost to close at mid: (short_mid - long_mid)
+        short_mid = (short_bid + short_ask) / 2
+        long_mid = (long_bid + long_ask) / 2
+        close_price = max(0.05, round(round((short_mid - long_mid) / 0.05) * 0.05, 2))
+
+        # Build spread object for broker.close_spread()
+        from src.models.spread import CreditSpread, OptionLeg, TradeDirection
+        spread_dir = TradeDirection.BULLISH if direction == 'bullish' else TradeDirection.BEARISH
+        opt_type = 'put' if direction == 'bullish' else 'call'
+        spread = CreditSpread(
+            short_leg=OptionLeg(strike=short_strike, option_type=opt_type, action='sell', price=0),
+            long_leg=OptionLeg(strike=long_strike, option_type=opt_type, action='buy', price=0),
+            direction=spread_dir,
+            credit_received=credit,
+            entry_time=datetime.now(ET),
+            expiration=datetime.strptime(exp_str, '%Y-%m-%d'),
+        )
+
+        order_id = broker.close_spread(spread, quantity, limit_price=close_price)
+        if not order_id:
+            return jsonify({'success': False, 'error': 'Order placement failed'}), 500
+
+        # Wait for fill (same as bot)
+        time.sleep(2)
+        order_status = broker.get_order_status(order_id)
+        if order_status['status'] == 'filled':
+            exit_price = order_status['fill_price']
+        else:
+            # Use our limit price as estimate if not yet filled
+            exit_price = close_price
+
+        now = datetime.now(ET)
+        est_pnl = round((credit - exit_price) * 100 * quantity, 2)
+        max_profit = credit * 100 * quantity
+        pnl_percent = round(est_pnl / max_profit * 100, 2) if max_profit > 0 else 0
+
+        # -----------------------------------------------------------
+        # 1. Update core trade fields (matches db_manager.update_trade_close)
+        # -----------------------------------------------------------
+        conn = get_db_connection()
+        conn.execute(
+            "UPDATE trades SET status = 'closed', exit_time = ?, exit_price = ?, "
+            "exit_order_id = ?, exit_reason = ?, pnl = ?, pnl_percent = ? "
+            "WHERE id = ?",
+            (now.isoformat(), exit_price, order_id, 'Manual close (dashboard)',
+             est_pnl, pnl_percent, trade_id)
+        )
+        conn.commit()
+        conn.close()
+
+        logger.info(
+            f"Manual close: trade {trade_id[:8]}, {direction} "
+            f"{short_strike}/{long_strike} x{quantity} @${exit_price:.2f}, "
+            f"P&L=${est_pnl:+.2f}, order={order_id}"
+        )
+
+        # -----------------------------------------------------------
+        # 2. Save exit context (spx, vix, profit %, time in trade)
+        # -----------------------------------------------------------
+        try:
+            from database.db_manager import DatabaseManager
+            db = DatabaseManager(DATABASE_PATH)
+
+            exit_context = {}
+            spx_at_exit = broker.get_current_price("SPX")
+            exit_context['spx_at_exit'] = round(spx_at_exit, 2)
+
+            try:
+                vix_quote = YahooFinanceProvider().get_vix_quote()
+                if vix_quote:
+                    exit_context['vix_at_exit'] = round(vix_quote['price'], 2)
+            except Exception:
+                pass
+
+            if max_profit > 0:
+                exit_context['profit_captured_pct'] = round(
+                    (est_pnl / max_profit) * 100, 2
+                )
+
+            if entry_time_str:
+                try:
+                    entry_dt = datetime.fromisoformat(str(entry_time_str))
+                    if entry_dt.tzinfo is None:
+                        entry_dt = ET.localize(entry_dt)
+                    exit_context['time_in_trade_minutes'] = int(
+                        (now - entry_dt).total_seconds() / 60
+                    )
+                except Exception:
+                    pass
+
+            db.update_trade_exit_context(trade_id, exit_context)
+            logger.debug(f"Manual close exit context saved: {exit_context}")
+        except Exception as e:
+            logger.warning(f"Manual close: failed to save exit context: {e}")
+
+        # -----------------------------------------------------------
+        # 3. Update daily stats
+        # -----------------------------------------------------------
+        try:
+            if 'db' not in dir():
+                from database.db_manager import DatabaseManager
+                db = DatabaseManager(DATABASE_PATH)
+            db.update_daily_stats(now.date())
+        except Exception as e:
+            logger.warning(f"Manual close: update_daily_stats failed: {e}")
+
+        # -----------------------------------------------------------
+        # 4. Fee capture from broker
+        # -----------------------------------------------------------
+        try:
+            if hasattr(broker, 'get_order_fees'):
+                total_fees = 0.0
+                if entry_order_id:
+                    total_fees += broker.get_order_fees(entry_order_id)
+                total_fees += broker.get_order_fees(order_id)
+                if total_fees > 0:
+                    if 'db' not in dir():
+                        from database.db_manager import DatabaseManager
+                        db = DatabaseManager(DATABASE_PATH)
+                    db.update_trade_commissions(trade_id, total_fees)
+                    logger.info(f"Manual close fees captured: ${total_fees:.2f}")
+        except Exception as e:
+            logger.warning(f"Manual close: fee capture failed: {e}")
+
+        # -----------------------------------------------------------
+        # 5. P&L reconciliation (background thread, same as bot)
+        # -----------------------------------------------------------
+        def _reconcile_manual_close():
+            try:
+                time.sleep(8)  # Let Schwab settle
+                from src.core.position_manager import PositionManager
+                from database.db_manager import DatabaseManager
+
+                _db = DatabaseManager(DATABASE_PATH)
+                _pm = type('PM', (), {
+                    'broker': broker,
+                    'db': _db,
+                    'tz': ET,
+                })()
+
+                PositionManager._reconcile_broker_pnl_worker(
+                    _pm, trade_id, entry_order_id, order_id, est_pnl
+                )
+            except Exception as e:
+                logger.warning(f"Manual close: P&L reconciliation failed: {e}")
+
+        reconcile_thread = threading.Thread(
+            target=_reconcile_manual_close, daemon=True
+        )
+        reconcile_thread.start()
+
+        # -----------------------------------------------------------
+        # 6. Discord notification
+        # -----------------------------------------------------------
+        try:
+            from src.utils.notifications import NotificationManager
+            notifier = NotificationManager()
+
+            duration_str = ''
+            if entry_time_str:
+                try:
+                    entry_dt = datetime.fromisoformat(str(entry_time_str))
+                    if entry_dt.tzinfo is None:
+                        entry_dt = ET.localize(entry_dt)
+                    dur = now - entry_dt
+                    hours, remainder = divmod(int(dur.total_seconds()), 3600)
+                    minutes = remainder // 60
+                    duration_str = f"{hours}h {minutes}m" if hours else f"{minutes}m"
+                except Exception:
+                    pass
+
+            max_risk = spread_width * 100 * quantity
+            pnl_pct_risk = (est_pnl / max_risk * 100) if max_risk else 0
+
+            notifier.send_trade_exit({
+                'strategy': 'Daily Income',
+                'direction': direction,
+                'short_strike': short_strike,
+                'long_strike': long_strike,
+                'pnl': est_pnl,
+                'pnl_pct': pnl_pct_risk,
+                'max_profit_pct': round(est_pnl / max_profit * 100, 2) if max_profit else 0,
+                'hold_duration': duration_str,
+                'exit_reason': 'Manual close (dashboard)',
+            })
+        except Exception as e:
+            logger.warning(f"Manual close: Discord notification failed: {e}")
+
+        return jsonify({
+            'success': True,
+            'order_id': order_id,
+            'close_price': exit_price,
+            'est_pnl': est_pnl,
+        })
+
+    except Exception as e:
+        logger.error(f"Manual close failed for {trade_id[:8]}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/status')
 def api_status():
     """Status panel data: bot state, market, SPX quote, heartbeat, account."""
@@ -1611,8 +1975,34 @@ def api_status():
     log_data = parse_todays_log()
     mode = detect_trading_mode()
 
-    # SPX quote
-    spx = yahoo.get_spx_quote() or {}
+    # SPX quote — prefer Schwab (real-time) with Yahoo fallback
+    spx = None
+    if _schwab_price_cache['data'] and (time.time() - _schwab_price_cache['ts'] < _SCHWAB_PRICE_CACHE_TTL):
+        spx = _schwab_price_cache['data']
+    if not spx:
+        try:
+            broker = _get_cached_broker()
+            if hasattr(broker, 'get_current_price'):
+                _price = broker.get_current_price('SPX')
+                if _price and _price > 0:
+                    _prev = yahoo.get_spx_quote() or {}
+                    _prev_close = _prev.get('previous_close') or _prev.get('price') or _price
+                    spx = {
+                        'price': round(_price, 2),
+                        'change': round(_price - _prev_close, 2),
+                        'change_pct': round((_price - _prev_close) / _prev_close * 100, 2) if _prev_close else 0,
+                        'previous_close': _prev_close,
+                        'open': _prev.get('open'),
+                        'high': _prev.get('high'),
+                        'low': _prev.get('low'),
+                        'source': 'schwab',
+                    }
+                    _schwab_price_cache['data'] = spx
+                    _schwab_price_cache['ts'] = time.time()
+        except Exception:
+            pass
+    if not spx:
+        spx = yahoo.get_spx_quote() or {}
     spx_price = spx.get('price')
 
     # Account data

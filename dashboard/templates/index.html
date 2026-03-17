@@ -2563,7 +2563,7 @@ header::after {
   <div class="header-right">
     <button id="mute-btn" onclick="toggleMute()" title="Toggle sounds" aria-label="Toggle sound notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path class="sound-waves" d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg></button>
     <a href="/settings" class="settings-link">Account</a>
-    <span>Next refresh: <span id="refresh-countdown">30</span>s</span>
+    <span>Next refresh: <span id="refresh-countdown">15</span>s</span>
     <span id="clock">--:--:--</span>
   </div>
 </header>
@@ -4666,6 +4666,9 @@ async function updateStatus() {
           '<span class="tt-line">' + ttLine3 + '</span>' +
         '</span>';
 
+        const pnlLabel = p.pnl_source === 'live' ? 'P&L (Live)' : 'Est P&L';
+        const closePriceHtml = p.est_close_price ? '<span class="pos-metric"><span class="status-label">Close @</span><span class="status-value">$' + p.est_close_price.toFixed(2) + '</span></span>' : '';
+
         html += '<div class="position-card ' + st + '" data-pos-id="' + (p.id || '') + '">' +
           '<div class="pos-header">' +
             '<span class="pos-dir ' + dirCls + '">' + spread + ' ' + p.short_strike + '/' + p.long_strike + '</span>' +
@@ -4676,8 +4679,14 @@ async function updateStatus() {
             '<span class="pos-metric"><span class="status-label">Credit</span><span class="status-value">' + fmt$(p.credit_received * 100 * p.quantity) + '</span></span>' +
             '<span class="pos-metric"><span class="status-label">SPX Dist</span><span class="status-value">' + distAbs + ' pts ' + distLabel + '</span></span>' +
             '<span class="pos-metric"><span class="status-label">Expires</span><span class="status-value">' + fmtTime(p.time_remaining_secs) + '</span></span>' +
-            '<span class="pos-metric"><span class="status-label">Est P&L</span><span class="status-value ' + pnlClass(p.est_pnl) + '">' + fmt$(p.est_pnl) + '</span></span>' +
+            '<span class="pos-metric"><span class="status-label">' + pnlLabel + '</span><span class="status-value ' + pnlClass(p.est_pnl) + '">' + fmt$(p.est_pnl) + '</span></span>' +
+            closePriceHtml +
             '<span class="pos-metric"><span class="status-label">Qty</span><span class="status-value">' + p.quantity + 'x</span></span>' +
+          '</div>' +
+          '<div style="padding:6px 10px; text-align:right;">' +
+            '<button class="btn-close-position" data-trade-id="' + (p.id || '') + '" ' +
+              'style="background:#dc2626; color:#fff; border:none; border-radius:4px; padding:4px 12px; font-size:11px; cursor:pointer; font-weight:600;" ' +
+              'onclick="closePosition(this)">Close Position</button>' +
           '</div>' +
           '<div class="pos-progress" style="width:' + Math.max(0, Math.min(100, (p.time_remaining_secs || 0) / 23400 * 100)) + '%"></div>' +
         '</div>';
@@ -4699,6 +4708,37 @@ async function updateStatus() {
       prevPositionIds = new Set();
     }
   }
+
+// Manual close position
+async function closePosition(btn) {
+  const tradeId = btn.getAttribute('data-trade-id');
+  if (!tradeId) return;
+  if (!confirm('Close this position at market mid-price?')) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Closing...';
+  try {
+    const resp = await fetch('/api/close-position', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Token': API_TOKEN },
+      body: JSON.stringify({ trade_id: tradeId }),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      btn.textContent = 'Closed';
+      btn.style.background = '#16a34a';
+      setTimeout(() => refreshAll(), 2000);
+    } else {
+      alert('Close failed: ' + (data.error || 'Unknown error'));
+      btn.disabled = false;
+      btn.textContent = 'Close Position';
+    }
+  } catch(e) {
+    alert('Close failed: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = 'Close Position';
+  }
+}
 
   // E*TRADE token warning banner (only when etrade is active)
   const tokenBanner = document.getElementById('etrade-token-banner');
@@ -7030,7 +7070,7 @@ async function saveReview(tradeId, idx) {
 // ---------------------------------------------------------------
 // Refresh loop
 // ---------------------------------------------------------------
-let countdown = 30;
+let countdown = 15;
 
 // ---------------------------------------------------------------
 // Bot Controls (desktop mode only)
@@ -7772,7 +7812,7 @@ async function refreshAll() {
   const tasks = [updateStatus(), updateToday(), updateSignals(), updateRiskStatus(), updateGreeks(), updateShadowPanel()];
   if (activeTab === 'journal') tasks.push(updateJournal());
   await Promise.all(tasks);
-  countdown = 30;
+  countdown = 15;
   cdEl.style.opacity = '1';
   cdEl.textContent = countdown;
 }
@@ -7782,6 +7822,48 @@ setInterval(() => {
   document.getElementById('refresh-countdown').textContent = countdown;
   if (countdown <= 0) refreshAll();
 }, 1000);
+
+// Fast price ticker — polls lightweight /api/price every 5 seconds
+// between full refreshes for near-real-time SPX price updates
+async function updatePriceTicker() {
+  try {
+    const d = await fetchJSON('/api/price');
+    if (!d || !d.spx || !d.spx.price) return;
+
+    const newPrice = Number(d.spx.price);
+    const footerPrice = document.getElementById('footer-spx-price');
+    const footerChange = document.getElementById('footer-spx-change');
+
+    if (footerPrice) {
+      footerPrice.textContent = newPrice.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+      // Flash on price change
+      if (prevSpxPrice !== null && newPrice !== prevSpxPrice) {
+        footerPrice.classList.remove('spx-flash-up', 'spx-flash-down');
+        void footerPrice.offsetWidth;
+        footerPrice.classList.add(newPrice > prevSpxPrice ? 'spx-flash-up' : 'spx-flash-down');
+      }
+      prevSpxPrice = newPrice;
+    }
+
+    if (footerChange && d.spx.change !== undefined) {
+      const ch = d.spx.change || 0;
+      const cp = d.spx.change_pct || 0;
+      const arrow = ch >= 0 ? '\u25B2' : '\u25BC';
+      const sign = ch >= 0 ? '+' : '';
+      footerChange.innerHTML = '<span class="change-arrow">' + arrow + '</span>' +
+        '<span class="change-value">' + sign + ch.toFixed(2) + '</span>' +
+        '<span class="change-pct">(' + sign + cp.toFixed(2) + '%)</span>';
+      footerChange.className = 'footer-spx-change ' + (ch >= 0 ? 'positive' : 'negative');
+    }
+
+    // Update VIX if available
+    if (d.vix && d.vix.level) {
+      const vixEl = document.getElementById('footer-vix-value');
+      if (vixEl) vixEl.textContent = d.vix.level.toFixed(2);
+    }
+  } catch(e) { /* non-fatal */ }
+}
+setInterval(updatePriceTicker, 5000);   // 5-second price poll
 
 // Clock — show Eastern Time
 setInterval(() => {

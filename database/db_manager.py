@@ -456,6 +456,17 @@ class DatabaseManager:
                 f"Trade {trade_id} settlement P&L updated: ${pnl:.2f}"
             )
 
+    def get_trade(self, trade_id: str) -> Optional[Dict]:
+        """Get a single trade by ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM trades WHERE id = ?", (trade_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            columns = [desc[0] for desc in cursor.description]
+            return dict(zip(columns, row))
+
     def get_open_trades(self) -> List[Dict]:
         """Get all open trades"""
         with self._get_connection() as conn:

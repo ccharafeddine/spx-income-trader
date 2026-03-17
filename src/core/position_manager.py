@@ -458,6 +458,29 @@ class PositionManager:
                 pass  # logging itself may be broken
             raise  # re-raise so the caller can handle shutdown
 
+    def _sync_external_closes(self):
+        """Remove trades that were closed externally (e.g. dashboard manual close).
+
+        Checks the DB status for each in-memory open trade. If the DB says
+        'closed', the trade was closed outside the bot — remove it from
+        the in-memory list so the bot doesn't try to manage or close it again.
+        """
+        try:
+            for trade in self.open_trades.copy():
+                row = self.db.get_trade(trade.id)
+                if row and row.get('status', '').lower() == 'closed':
+                    logger.info(
+                        f"Trade {trade.id[:8]} was closed externally "
+                        f"(reason: {row.get('exit_reason', 'unknown')}). "
+                        f"Removing from active monitoring."
+                    )
+                    self.open_trades.remove(trade)
+                    # Track for portfolio risk updates
+                    pnl = row.get('pnl', 0) or 0
+                    self.recently_closed.append({'id': trade.id, 'pnl': pnl})
+        except Exception as e:
+            logger.debug(f"External close sync check failed (non-fatal): {e}")
+
     def monitor_positions(self) -> float:
         """Monitor all open positions for exit conditions.
 
@@ -467,11 +490,17 @@ class PositionManager:
         if not self.open_trades:
             return 0.0
 
+        # Detect positions closed externally (e.g. dashboard manual close)
+        self._sync_external_closes()
+
+        if not self.open_trades:
+            return 0.0
+
         logger.debug(f"Monitoring {len(self.open_trades)} open positions")
         realized_pnl = 0.0
-        
+
         current_time = datetime.now(self.tz)
-        
+
         for trade in self.open_trades.copy():
             if trade.status != TradeStatus.ACTIVE:
                 continue
@@ -826,11 +855,21 @@ class PositionManager:
         thread.start()
 
     def _reconcile_broker_pnl_worker(self, trade_id, entry_order_id, exit_order_id, gross_pnl):
-        """Worker: fetch Schwab transactions, compute broker P&L, update DB."""
+        """Worker: fetch Schwab transactions, compute broker P&L, update DB.
+
+        For normal closes (exit_order_id exists): expects 4 legs (2 entry + 2 exit),
+        sums all netAmount fields to get broker P&L.
+
+        For expirations (no exit_order_id): expects 2 entry legs only, computes
+        broker entry credit from those, then derives P&L using the known
+        cash-settlement value (SPX close vs strikes).
+        """
         import time as _t
         _t.sleep(8)  # wait for Schwab to settle transactions
 
         today = datetime.now(self.tz).date()
+        is_expiration = exit_order_id is None
+
         order_ids = set()
         if entry_order_id:
             order_ids.add(str(entry_order_id))
@@ -843,6 +882,9 @@ class PositionManager:
             )
             return
 
+        # For expirations we only need 2 entry legs; for normal closes we need 4
+        expected_legs = 2 if is_expiration else 4
+
         matched = []
         for attempt in range(2):
             try:
@@ -853,20 +895,20 @@ class PositionManager:
 
             matched = [t for t in transactions if t['order_id'] in order_ids]
 
-            if len(matched) >= 4:
+            if len(matched) >= expected_legs:
                 break
 
             if attempt == 0:
                 logger.warning(
-                    f"Broker P&L for {trade_id[:8]}: found {len(matched)}/4 legs, "
+                    f"Broker P&L for {trade_id[:8]}: found {len(matched)}/{expected_legs} legs, "
                     f"retrying in 15s..."
                 )
                 _t.sleep(15)
 
-        if len(matched) < 4:
+        if len(matched) < expected_legs:
             logger.warning(
                 f"Broker P&L reconciliation failed for {trade_id[:8]}: "
-                f"only {len(matched)} of 4 expected legs matched. "
+                f"only {len(matched)} of {expected_legs} expected legs matched. "
                 f"Keeping price-based P&L (${gross_pnl:.2f})"
             )
             # Still store gross_pnl for reference even on failure
@@ -878,8 +920,66 @@ class PositionManager:
                 pass
             return
 
-        broker_pnl = round(sum(t['net_amount'] for t in matched), 2)
-        commissions = round((gross_pnl or 0) - broker_pnl, 2)
+        if is_expiration:
+            # For expirations: entry legs give us the broker net credit.
+            # Settlement is deterministic for cash-settled SPX options.
+            broker_entry_credit = round(sum(t['net_amount'] for t in matched), 2)
+
+            # Read trade details from DB to compute settlement value
+            try:
+                import sqlite3
+                conn = sqlite3.connect(str(self.db.db_path))
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT direction, short_strike, long_strike, quantity, "
+                    "spx_at_exit FROM trades WHERE id = ?",
+                    (trade_id,)
+                ).fetchone()
+                conn.close()
+            except Exception as e:
+                logger.warning(f"Failed to read trade for expiration reconciliation: {e}")
+                self.db.update_trade_broker_pnl(trade_id, gross_pnl, gross_pnl, 0.0)
+                return
+
+            if not row or row['spx_at_exit'] is None:
+                logger.warning(
+                    f"Broker P&L for {trade_id[:8]}: missing trade data for "
+                    f"expiration settlement calc"
+                )
+                self.db.update_trade_broker_pnl(trade_id, gross_pnl, gross_pnl, 0.0)
+                return
+
+            spx_close = row['spx_at_exit']
+            direction = row['direction']
+            short_strike = row['short_strike']
+            long_strike = row['long_strike']
+            quantity = row['quantity']
+
+            # Compute settlement cost (cash-settled, no exit fees for SPX expirations)
+            settlement_per_share = self._profit_at_price(
+                direction, short_strike, long_strike, 0, spx_close
+            )
+            # settlement_per_share is profit with credit=0, so it's the settlement
+            # value relative to zero. Negative means the spread settled ITM (loss).
+            settlement_cost = round(settlement_per_share * quantity, 2)
+
+            # Broker P&L = entry credit (net of fees) + settlement value
+            broker_pnl = round(broker_entry_credit + settlement_cost, 2)
+            # Entry commissions = price-based credit - broker credit
+            # Price-based credit comes from: gross_pnl - settlement_cost
+            price_based_credit = round((gross_pnl or 0) - settlement_cost, 2)
+            commissions = round(price_based_credit - broker_entry_credit, 2)
+
+            logger.info(
+                f"Expiration reconciliation for {trade_id[:8]}: "
+                f"broker entry credit=${broker_entry_credit:.2f}, "
+                f"settlement=${settlement_cost:.2f}, "
+                f"broker P&L=${broker_pnl:.2f} (entry fees=${commissions:.2f})"
+            )
+        else:
+            # Normal close: sum all 4 legs
+            broker_pnl = round(sum(t['net_amount'] for t in matched), 2)
+            commissions = round((gross_pnl or 0) - broker_pnl, 2)
 
         try:
             self.db.update_trade_broker_pnl(
