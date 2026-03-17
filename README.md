@@ -783,8 +783,6 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ![Day 4 Dashboard — March 13, 2026](screenshots/DailyMelt_Day4_03132026.png)
 
-**Test suite:** 1,467+ → 1,502+ tests (+35 new tests covering broker P&L reconciliation, calendar resolution, LED states)
-
 ---
 
 ### Day 5 — March 16, 2026
@@ -804,6 +802,8 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 - **Broker P&L reconciliation for expirations:** Fixed reconciliation worker to handle expired trades that have no exit order. Detects expirations (no `exit_order_id`), uses only 2 entry legs + deterministic SPX cash settlement to compute broker P&L and commissions.
 
 ![Day 5 Dashboard — March 16, 2026](screenshots/DailyMelt_Day5_03162026.png)
+
+**Test suite:** 1,467+ → 1,507+ tests (+40 new tests covering broker P&L reconciliation, expiration settlement, calendar resolution, LED states)
 
 ---
 
