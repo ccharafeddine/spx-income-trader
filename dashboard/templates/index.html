@@ -5505,8 +5505,24 @@ function _rescaleYToVisible(tf) {
   const highs = visSlice.map(b => b.high).filter(v => v != null);
   const lows = visSlice.map(b => b.low).filter(v => v != null);
   if (!highs.length || !lows.length) return;
-  const yMin = Math.min(...lows) - 5;
-  const yMax = Math.max(...highs) + 5;
+  let yMin = Math.min(...lows);
+  let yMax = Math.max(...highs);
+  const candleRange = yMax - yMin;
+  const strikePad = candleRange * 0.5;
+  if (latestTodayData && latestTodayData.open_positions) {
+    latestTodayData.open_positions.forEach(pos => {
+      if (pos.short_strike && pos.short_strike >= yMin - strikePad && pos.short_strike <= yMax + strikePad) {
+        yMin = Math.min(yMin, pos.short_strike);
+        yMax = Math.max(yMax, pos.short_strike);
+      }
+      if (pos.long_strike && pos.long_strike >= yMin - strikePad && pos.long_strike <= yMax + strikePad) {
+        yMin = Math.min(yMin, pos.long_strike);
+        yMax = Math.max(yMax, pos.long_strike);
+      }
+    });
+  }
+  yMin -= 3;
+  yMax += 3;
   isRescaling = true;
   Plotly.relayout('candle-chart', {'yaxis.range': [yMin, yMax]}).then(() => {
     isRescaling = false;
@@ -5535,17 +5551,27 @@ function _fitVisibleOnLoad(tf) {
   let yMin = Math.min(...lows);
   let yMax = Math.max(...highs);
 
-  // Include active strike lines so they don't get clipped
+  // Include active strike lines only if they're near the visible price action.
+  // If strikes are far from candles (e.g. 20+ pts away), don't stretch the axis —
+  // the dashed labels on the right edge still show where they are.
+  const candleRange = yMax - yMin;
+  const strikePadding = candleRange * 0.5;  // include if within 50% of candle range
   if (latestTodayData && latestTodayData.open_positions) {
     latestTodayData.open_positions.forEach(pos => {
-      if (pos.short_strike) { yMin = Math.min(yMin, pos.short_strike); yMax = Math.max(yMax, pos.short_strike); }
-      if (pos.long_strike) { yMin = Math.min(yMin, pos.long_strike); yMax = Math.max(yMax, pos.long_strike); }
+      if (pos.short_strike && pos.short_strike >= yMin - strikePadding && pos.short_strike <= yMax + strikePadding) {
+        yMin = Math.min(yMin, pos.short_strike);
+        yMax = Math.max(yMax, pos.short_strike);
+      }
+      if (pos.long_strike && pos.long_strike >= yMin - strikePadding && pos.long_strike <= yMax + strikePadding) {
+        yMin = Math.min(yMin, pos.long_strike);
+        yMax = Math.max(yMax, pos.long_strike);
+      }
     });
   }
 
   // Padding
-  yMin = yMin * 0.9995;
-  yMax = yMax * 1.0005;
+  yMin -= 3;
+  yMax += 3;
 
   isRescaling = true;
   Plotly.relayout('candle-chart', {
@@ -6673,12 +6699,9 @@ function toggleCardById(cardId) {
 // ---------------------------------------------------------------
 // Trade Journal - All-Time Totals
 // ---------------------------------------------------------------
-let allTimeTotalsLoaded = false;
 async function loadAllTimeTotals() {
-  if (allTimeTotalsLoaded) return;
   const d = await fetchJSON('/api/journal/totals');
   if (!d || d.error) return;
-  allTimeTotalsLoaded = true;
 
   document.getElementById('at-trades').textContent = d.trades || 0;
   const wr = document.getElementById('at-winrate');
