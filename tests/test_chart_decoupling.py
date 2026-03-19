@@ -47,12 +47,12 @@ class TestChartPollingIndependence:
 
 
 class TestFiveMinuteBars:
-    """5m bars use period='1d' to avoid Yahoo Finance date-range limitation."""
+    """5m bars use period='5d' for multi-day history (date-range fails for <1h)."""
 
-    def test_5m_uses_period_1d(self):
-        # The 5m branch should use period='1d'
-        assert re.search(r"if\s+tf\s*==\s*'5m'.*?period='1d'", APP_SRC, re.DOTALL), \
-            "5m bars should use period='1d'"
+    def test_5m_uses_period_5d(self):
+        # The 5m branch should use period='5d' for multi-day history
+        assert re.search(r"if\s+tf\s*==\s*'5m'.*?period='5d'", APP_SRC, re.DOTALL), \
+            "5m bars should use period='5d'"
 
     def test_5m_does_not_use_start_end(self):
         # Extract the 5m-specific download block
