@@ -2695,10 +2695,11 @@ def api_chart_bars():
         start_date = end_date - timedelta(days=days)
 
         yf_interval = '1h' if tf == '4h' else tf
-        # 5m bars require period='1d' (date-range downloads fail for intraday < 1h)
+        # 5m bars: use period='5d' for multi-day history (date-range downloads
+        # fail for intraday < 1h, but period-based works)
         if tf == '5m':
             df = yf.download(
-                '^GSPC', period='1d',
+                '^GSPC', period='5d',
                 interval='5m', progress=False, auto_adjust=True,
             )
         else:

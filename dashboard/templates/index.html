@@ -4993,9 +4993,9 @@ function renderChart(d) {
   const _today = new Date();
   const _isWeekday = _today.getDay() !== 0 && _today.getDay() !== 6;
   if (chartTimeframe === '30m' && _isWeekday) {
-    const liveBars = (d.bot_bars && d.bot_bars.length) ? d.bot_bars
-                   : (d.chart_bars && d.chart_bars.length) ? d.chart_bars
-                   : d.log_bars;
+    // Prefer whichever source has the most bars for today
+    const _candidates = [d.bot_bars, d.chart_bars, d.log_bars].filter(a => a && a.length);
+    const liveBars = _candidates.length ? _candidates.reduce((a, b) => a.length >= b.length ? a : b) : [];
     if (liveBars && liveBars.length) {
       const today = _today;
       const todayPrefix = today.getFullYear() + '-'
