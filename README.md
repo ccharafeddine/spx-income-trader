@@ -803,6 +803,33 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ![Day 5 Dashboard — March 16, 2026](screenshots/DailyMelt_Day5_03162026.png)
 
+---
+
+### Day 6 — March 17, 2026
+
+**Trade:** None — no pulse bars formed during the morning window
+**VIX:** 22.37 (ELEVATED regime), SPX opened at 6,722.35 (-0.96%), ranged 6,711–6,754
+**Result:** Flat day. Bot ran all session (1,398 loops), built 12 bars, detected 1 pulse bar but no confirmation signal triggered.
+
+![Day 6 Dashboard — March 17, 2026](screenshots/DailyMelt_Day6_03172026.png)
+
+---
+
+### Day 7 — March 18, 2026 (FOMC Day)
+
+**Trade:** Bearish call credit spread 6665/6670 (3 contracts), entered 10:43 ET on bearish pulse bar at 10:00
+**VIX:** 23.64 (ELEVATED regime), SPX opened at 6,695.16 (-1.16% gap down), fell to 6,667.01 at entry
+**Result:** Win — profit target reached at 82% of max profit ($615 of $750), closed at 3:19 PM ET after 4h 36m. SPX continued selling off into FOMC, closing at 6,642.29 (-1.97%).
+**Schwab account impact:** +$615.00
+**First 3-contract trade:** Budget-based sizing at 3 contracts. FOMC day — entered before the 2:00 PM rate decision, exited before announcement.
+
+**Fixes deployed:**
+- **Chart y-axis scaling:** Fixed chart stretching when open position strike lines are far from current price. Y-axis now scales to candle price action and only includes strikes if within 50% of the visible range.
+- **All-time stats refresh:** Trade Journal all-time statistics bar was caching the first load and never updating. Now refreshes on every tab view so newly closed trades are immediately reflected.
+- **External close detection:** Bot now checks DB status each monitoring cycle and removes trades closed via the dashboard, preventing duplicate close attempts.
+
+![Day 7 Dashboard — March 18, 2026](screenshots/DailyMelt_Day7_03182026.png)
+
 **Test suite:** 1,467+ → 1,507+ tests (+40 new tests covering broker P&L reconciliation, expiration settlement, calendar resolution, LED states)
 
 ---
