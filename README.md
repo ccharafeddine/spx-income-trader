@@ -830,6 +830,23 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ![Day 7 Dashboard — March 18, 2026](screenshots/DailyMelt_Day7_03182026.png)
 
+---
+
+### Day 8 — March 19, 2026
+
+**Trade:** Bullish put credit spread 6595/6590 (3 contracts), entered 10:00 ET on bullish pulse bar at 9:30
+**VIX:** 26.61 (HIGH regime), SPX opened at 6,583.12 (-1.34% gap down), rallied to 6,595.34 at entry
+**Result:** Win — expired OTM at max profit. SPX closed at 6,607.60, comfortably above the 6595 short strike. Trade was underwater mid-day but recovered as SPX bounced off session lows.
+**Schwab account impact:** +$630.00
+**Back-to-back wins:** 2-trade win streak, bringing the live record to 4W/2L (67% win rate)
+
+**Fixes deployed:**
+- **Chart y-axis normalization:** Removed strike line inclusion from y-axis scaling entirely. Chart now scales purely to candle price action — strike lines still render with labels on the right edge but never compress the candles.
+- **30m chart today bars:** Fixed live bar source selection that was picking the bot's in-memory bars (only 3 after a mid-day restart) over Yahoo's full 13 bars. Now picks whichever source has the most bars for today.
+- **5m chart multi-day history:** Changed from `period='1d'` (today only) to `period='5d'` so the 5-minute chart shows 5 days of history instead of just the current session.
+
+![Day 8 Dashboard — March 19, 2026](screenshots/DailyMelt_Day8_03192026.png)
+
 **Test suite:** 1,467+ → 1,507+ tests (+40 new tests covering broker P&L reconciliation, expiration settlement, calendar resolution, LED states)
 
 ---
