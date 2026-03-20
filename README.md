@@ -847,6 +847,18 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ![Day 8 Dashboard — March 19, 2026](screenshots/DailyMelt_Day8_03192026.png)
 
+---
+
+### Day 9 — March 20, 2026
+
+**Trade:** Bearish call credit spread 6555/6560 (3 contracts), entered 10:00 ET on bearish pulse bar at 9:30
+**VIX:** 24.71 (ELEVATED regime), SPX opened at 6,594.66 (-0.57%), fell to 6,556.00 at entry
+**Result:** Win — profit target reached at 83% of max profit ($570 of $690), closed at 2:23 PM ET after 4h 23m. SPX continued trending down to 6,503.51 (-1.94%) — trade captured the move early.
+**Schwab account impact:** +$570.00
+**3-trade win streak:** Live record now 5W/2L (71% win rate). Total realized P&L turns positive at +$928.28.
+
+![Day 9 Dashboard — March 20, 2026](screenshots/DailyMelt_Day9_03202026.png)
+
 **Test suite:** 1,467+ → 1,507+ tests (+40 new tests covering broker P&L reconciliation, expiration settlement, calendar resolution, LED states)
 
 ---
