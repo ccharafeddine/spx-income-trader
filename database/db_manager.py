@@ -776,3 +776,28 @@ class DatabaseManager:
                     d['market_context'] = {}
                 result[date_str] = d
         return result
+
+    def get_unreconciled_trades(self) -> List[Dict]:
+        """Get closed trades that were never reconciled with broker P&L.
+
+        A trade is unreconciled if:
+        - gross_pnl IS NULL (reconciliation never ran), OR
+        - gross_pnl = pnl AND commissions = 0 (reconciliation ran but failed,
+          storing the price-based value as a fallback)
+
+        Only returns trades with an entry_order_id (needed for matching).
+        """
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT id, entry_order_id, exit_order_id, pnl, exit_time
+                FROM trades
+                WHERE status = 'closed'
+                  AND entry_order_id IS NOT NULL
+                  AND (
+                      gross_pnl IS NULL
+                      OR (gross_pnl = pnl AND (commissions IS NULL OR commissions = 0))
+                  )
+                ORDER BY exit_time ASC
+            """).fetchall()
+            return [dict(r) for r in rows]

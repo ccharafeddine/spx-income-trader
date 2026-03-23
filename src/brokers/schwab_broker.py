@@ -971,7 +971,13 @@ class SchwabBroker(BrokerInterface):
             if asset_type == 'OPTION':
                 unrealized_pnl += float(pos.get('currentDayProfitLoss', 0) or 0)
 
-        cash_available = float(balances.get('cashBalance', 0) or 0)
+        # availableFunds excludes equity held in stocks/ETFs;
+        # cashBalance includes all settled cash (inflated on weekends).
+        cash_available = float(
+            balances.get('availableFunds',
+                         balances.get('cashAvailableForTrading',
+                                      balances.get('cashBalance', 0))) or 0
+        )
 
         return {
             'net_account_value': float(balances.get('liquidationValue', 0) or 0),

@@ -995,6 +995,148 @@ class PositionManager:
                 f"Failed to write broker P&L for {trade_id[:8]}: {e}"
             )
 
+    def reconcile_missed_trades(self):
+        """Catch-up reconciliation for trades that were never broker-reconciled.
+
+        Called on startup (or manually via dashboard) to fix trades where the
+        background reconciliation thread failed (e.g., Schwab token expired).
+        Runs in a background thread so it doesn't block bot startup.
+        """
+        if not hasattr(self.broker, 'get_transactions_for_date'):
+            return
+
+        try:
+            unreconciled = self.db.get_unreconciled_trades()
+        except Exception as e:
+            logger.warning(f"Failed to query unreconciled trades: {e}")
+            return
+
+        if not unreconciled:
+            logger.info("No unreconciled trades found - broker P&L is up to date")
+            return
+
+        logger.info(
+            f"Found {len(unreconciled)} unreconciled trade(s) - "
+            f"starting catch-up reconciliation in background"
+        )
+
+        import threading
+        thread = threading.Thread(
+            target=self._reconcile_missed_worker,
+            args=(unreconciled,),
+            daemon=True,
+        )
+        thread.start()
+
+    def _reconcile_missed_worker(self, trades: List[Dict]):
+        """Worker thread: reconcile each missed trade against Schwab transactions."""
+        import time as _t
+        from datetime import datetime as _dt
+
+        for trade in trades:
+            trade_id = trade['id']
+            entry_order_id = trade.get('entry_order_id')
+            exit_order_id = trade.get('exit_order_id')
+            gross_pnl = trade.get('pnl') or 0
+            exit_time_str = trade.get('exit_time')
+
+            # Parse exit date from the trade's exit_time
+            if not exit_time_str:
+                logger.debug(f"Skip reconciliation for {trade_id[:8]}: no exit_time")
+                continue
+
+            try:
+                exit_date = _dt.fromisoformat(str(exit_time_str)).date()
+            except (ValueError, TypeError):
+                # Try parsing just the date portion
+                try:
+                    exit_date = _dt.strptime(str(exit_time_str)[:10], '%Y-%m-%d').date()
+                except Exception:
+                    logger.debug(f"Skip reconciliation for {trade_id[:8]}: unparseable exit_time")
+                    continue
+
+            is_expiration = exit_order_id is None
+            order_ids = set()
+            if entry_order_id:
+                order_ids.add(str(entry_order_id))
+            if exit_order_id:
+                order_ids.add(str(exit_order_id))
+
+            if not order_ids:
+                continue
+
+            expected_legs = 2 if is_expiration else 4
+
+            logger.info(
+                f"Reconciling trade {trade_id[:8]} (exit {exit_date}, "
+                f"{'expiration' if is_expiration else 'closed'})..."
+            )
+
+            # Fetch transactions for the trade's exit date
+            try:
+                transactions = self.broker.get_transactions_for_date(exit_date)
+            except Exception as e:
+                logger.warning(f"Catch-up reconciliation failed for {trade_id[:8]}: {e}")
+                continue
+
+            matched = [t for t in transactions if t['order_id'] in order_ids]
+
+            if len(matched) < expected_legs:
+                logger.warning(
+                    f"Catch-up for {trade_id[:8]}: found {len(matched)}/{expected_legs} legs "
+                    f"on {exit_date}. Skipping."
+                )
+                continue
+
+            if is_expiration:
+                broker_entry_credit = round(sum(t['net_amount'] for t in matched), 2)
+
+                try:
+                    import sqlite3
+                    conn = sqlite3.connect(str(self.db.db_path))
+                    conn.row_factory = sqlite3.Row
+                    row = conn.execute(
+                        "SELECT direction, short_strike, long_strike, quantity, "
+                        "spx_at_exit FROM trades WHERE id = ?",
+                        (trade_id,)
+                    ).fetchone()
+                    conn.close()
+                except Exception as e:
+                    logger.warning(f"Catch-up read failed for {trade_id[:8]}: {e}")
+                    continue
+
+                if not row or row['spx_at_exit'] is None:
+                    logger.warning(f"Catch-up for {trade_id[:8]}: missing spx_at_exit")
+                    continue
+
+                settlement_per_share = self._profit_at_price(
+                    row['direction'], row['short_strike'], row['long_strike'],
+                    0, row['spx_at_exit']
+                )
+                settlement_cost = round(settlement_per_share * row['quantity'], 2)
+                broker_pnl = round(broker_entry_credit + settlement_cost, 2)
+                price_based_credit = round((gross_pnl or 0) - settlement_cost, 2)
+                commissions = round(price_based_credit - broker_entry_credit, 2)
+            else:
+                broker_pnl = round(sum(t['net_amount'] for t in matched), 2)
+                commissions = round((gross_pnl or 0) - broker_pnl, 2)
+
+            try:
+                self.db.update_trade_broker_pnl(
+                    trade_id, broker_pnl, gross_pnl, commissions
+                )
+                logger.info(
+                    f"Catch-up reconciled {trade_id[:8]}: "
+                    f"${broker_pnl:.2f} (gross ${gross_pnl:.2f}, fees ${commissions:.2f})"
+                )
+            except Exception as e:
+                logger.warning(f"Catch-up DB write failed for {trade_id[:8]}: {e}")
+
+            # Brief pause between API calls to avoid rate limiting
+            _t.sleep(2)
+
+        logger.info("Catch-up reconciliation complete")
+
     def has_open_position(self) -> bool:
         """Check if there are any open positions"""
         return len(self.open_trades) > 0
