@@ -664,6 +664,12 @@ class TradingBot:
         # Reconcile broker positions against DB (live mode only)
         self._reconcile_positions()
 
+        # Catch-up: reconcile P&L for trades where broker reconciliation was missed
+        try:
+            self.position_manager.reconcile_missed_trades()
+        except Exception as e:
+            logger.warning(f"Catch-up P&L reconciliation failed: {e}")
+
         # Seed Bollinger filter with historical data
         if self.bollinger_enabled:
             try:
@@ -953,6 +959,11 @@ class TradingBot:
                     except OSError:
                         pass
                     self._run_pnl_reconciliation()
+                    # Also catch up any trades with missing broker P&L
+                    try:
+                        self.position_manager.reconcile_missed_trades()
+                    except Exception as e:
+                        logger.warning(f"On-demand catch-up reconciliation failed: {e}")
 
                 # Check if market is open -- record market_open/market_close transitions
                 market_open_now = self._is_market_open(current_time)
