@@ -855,11 +855,29 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 **VIX:** 24.71 (ELEVATED regime), SPX opened at 6,594.66 (-0.57%), fell to 6,556.00 at entry
 **Result:** Win — profit target reached at 83% of max profit ($570 of $690), closed at 2:23 PM ET after 4h 23m. SPX continued trending down to 6,503.51 (-1.94%) — trade captured the move early.
 **Schwab account impact:** +$570.00
-**3-trade win streak:** Live record now 5W/2L (71% win rate). Total realized P&L turns positive at +$928.28.
+**3-trade win streak:** Live record now 5W/2L (71% win rate). Total realized P&L turns positive at +$928.28 (pre-reconciliation).
 
 ![Day 9 Dashboard — March 20, 2026](screenshots/DailyMelt_Day9_03202026.png)
 
 **Test suite:** 1,467+ → 1,507+ tests (+40 new tests covering broker P&L reconciliation, expiration settlement, calendar resolution, LED states)
+
+---
+
+### Day 10 — March 23, 2026
+
+**Trade:** Bullish put credit spread 6630/6625 (3 contracts), entered 10:01 ET on bullish pulse bar at 9:30
+**VIX:** 24.75 (ELEVATED regime), SPX opened at 6,599.80 (-1.50% gap down from Friday's 6,699.38), rallied to 6,629.54 at entry
+**Market context:** Pre-market gap down driven by geopolitical noise — Trump posted on Truth Social about Iran negotiations going well, causing a morning rally attempt. Iran denied the claims mid-morning and the market reversed hard, selling off throughout the afternoon.
+**Result:** Loss — bullish spread entered near the session high. SPX reversed and sold off to 6,566.83 low, closing at 6,581.00 (-1.77%). The 6630 short put went deep ITM and expired worthless for a full loss. Held to expiration — no exit signal triggered.
+**Schwab account impact:** -$885.00
+**Running record:** 5W/3L (62.5% win rate). Total realized P&L: +$43.28.
+
+![Day 10 Dashboard — March 23, 2026](screenshots/DailyMelt_Day10_03232026.png)
+
+**Fixes shipped today:**
+- **Cash balance display:** Changed from `cashBalance` (inflated on weekends, includes equity in stocks/ETFs) to `availableFunds` for accurate available cash reporting
+- **P&L reconciliation catch-up:** Added startup mechanism that detects trades with missing broker P&L (where Schwab token was expired at close time) and re-fetches transaction data to replace theoretical values with actual broker amounts
+- **PowerToys Awake:** Installed to keep the trading machine awake during market hours
 
 ---
 
