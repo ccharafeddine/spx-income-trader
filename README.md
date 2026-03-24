@@ -866,9 +866,9 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 ### Day 10 — March 23, 2026
 
 **Trade:** Bullish put credit spread 6630/6625 (3 contracts), entered 10:01 ET on bullish pulse bar at 9:30
-**VIX:** 24.75 (ELEVATED regime), SPX opened at 6,599.80 (-1.50% gap down from Friday's 6,699.38), rallied to 6,629.54 at entry
-**Market context:** Pre-market gap down driven by geopolitical noise — Trump posted on Truth Social about Iran negotiations going well, causing a morning rally attempt. Iran denied the claims mid-morning and the market reversed hard, selling off throughout the afternoon.
-**Result:** Loss — bullish spread entered near the session high. SPX reversed and sold off to 6,566.83 low, closing at 6,581.00 (-1.77%). The 6630 short put went deep ITM and expired worthless for a full loss. Held to expiration — no exit signal triggered.
+**VIX:** 24.75 (ELEVATED regime), SPX gapped up at the open on Trump's Truth Social post claiming Iran negotiations were going well, rallying to 6,629.54 at entry
+**Market context:** The gap-up and morning rally were fueled entirely by the Trump post. Iran denied the claims mid-morning and the market reversed hard, selling off throughout the afternoon.
+**Result:** Loss — bullish spread entered near the session high as the gap-up rally peaked. SPX reversed and sold off to 6,566.83 low, closing at 6,581.00 (-1.77%). The 6630 short put went deep ITM and expired for a full loss. Held to expiration — no exit signal triggered.
 **Schwab account impact:** -$885.00
 **Running record:** 5W/3L (62.5% win rate). Total realized P&L: +$43.28.
 
