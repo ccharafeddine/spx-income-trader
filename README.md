@@ -872,12 +872,12 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 **Schwab account impact:** -$885.00
 **Running record:** 5W/3L (62.5% win rate). Total realized P&L: +$43.28.
 
-![Day 10 Dashboard — March 23, 2026](screenshots/DailyMelt_Day10_03232026.png)
-
-**Fixes shipped today:**
+**Fixes deployed today:**
 - **Cash balance display:** Changed from `cashBalance` (inflated on weekends, includes equity in stocks/ETFs) to `availableFunds` for accurate available cash reporting
 - **P&L reconciliation catch-up:** Added startup mechanism that detects trades with missing broker P&L (where Schwab token was expired at close time) and re-fetches transaction data to replace theoretical values with actual broker amounts
 - **PowerToys Awake:** Installed to keep the trading machine awake during market hours
+
+![Day 10 Dashboard — March 23, 2026](screenshots/DailyMelt_Day10_03232026.png)
 
 ---
 
@@ -902,10 +902,10 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 **Running record:** 5W/4L (55.6% win rate). 2-trade losing streak. Total realized P&L: -$1,006.72.
 **Observation:** Three of the four losses have come during elevated geopolitical uncertainty (Iran/Trump news cycle). The strategy's pulse-bar momentum signal may be less predictive when headline-driven reversals dominate intraday price action, though the sample size remains too small for conclusive analysis.
 
-![Day 12 Dashboard — March 25, 2026](screenshots/DailyMelt_Day12_03252026.png)
-
-**Fixes shipped today:**
+**Fixes deployed today:**
 - **Chart y-axis normalization (final fix):** Removed all remaining code that stretched the y-axis to include strike lines, entry/exit markers, or off-screen bars. Y-axis now always scales purely to visible candle data, keeping the chart fully normalized even with open positions.
+
+![Day 12 Dashboard — March 25, 2026](screenshots/DailyMelt_Day12_03252026.png)
 
 ---
 
