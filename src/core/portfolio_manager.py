@@ -481,6 +481,7 @@ class PortfolioManager:
         self,
         strategy: StrategyType,
         max_risk_per_contract: float,
+        available_buying_power: Optional[float] = None,
     ) -> int:
         """
         Calculate position size based on strategy type.
@@ -488,9 +489,13 @@ class PortfolioManager:
         DI: budget-driven (daily_loss_budget / max_risk), capped by daily_contracts.
         All others (TNT, BNB, ORB): fixed swing_contracts.
 
+        If available_buying_power is provided, contracts are further capped
+        to what the account can actually afford (margin = max_risk_per_contract).
+
         Args:
             strategy: Strategy requesting position sizing
             max_risk_per_contract: Maximum risk per contract in dollars
+            available_buying_power: Broker buying power (optional cap)
 
         Returns:
             Number of contracts to trade
@@ -508,6 +513,16 @@ class PortfolioManager:
         else:  # TAG_N_TURN, BNB, ORB
             contracts = min(self.swing_contracts, self.max_contracts)
             contracts = max(self.min_contracts, contracts)
+
+        # Cap to what buying power can support
+        if available_buying_power is not None and max_risk_per_contract > 0:
+            bp_contracts = int(math.floor(available_buying_power / max_risk_per_contract))
+            if bp_contracts < contracts:
+                logger.warning(
+                    f"Buying power cap: ${available_buying_power:,.2f} supports "
+                    f"{bp_contracts} contracts (was {contracts})"
+                )
+                contracts = max(0, bp_contracts)
 
         logger.info(
             f"Position sizing: {contracts} contracts for {strategy.value}, "

@@ -4474,10 +4474,16 @@ def api_risk_status():
             import json
             with open(port_path, 'r') as f:
                 port_data = json.load(f)
-            daily['realized_pnl'] = round(
-                port_data.get('daily_realized_pnl', port_data.get('daily_pnl', 0)), 2
-            )
-            daily['breaker_triggered'] = port_data.get('circuit_breaker_triggered', False)
+            # Check if state file is from today (ET) — if stale, reset to 0
+            _today_str = datetime.now(ET).date().isoformat()
+            _state_date = (port_data.get('last_updated') or '')[:10]
+            _is_current = _state_date == _today_str or not _state_date
+            if _is_current:
+                daily['realized_pnl'] = round(
+                    port_data.get('daily_realized_pnl', port_data.get('daily_pnl', 0)), 2
+                )
+                daily['breaker_triggered'] = port_data.get('circuit_breaker_triggered', False)
+            # else: stale state from prior day — keep defaults (0 pnl, no breaker)
     except Exception:
         pass
 
