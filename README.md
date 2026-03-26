@@ -892,6 +892,23 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ---
 
+### Day 12 — March 25, 2026
+
+**Trade:** Bearish call credit spread 6585/6590 (4 contracts), entered 10:00 ET on bearish pulse bar at 9:30
+**VIX:** 25.45 (HIGH regime), SPX opened at 6,620.90 (-0.40% gap down), dropped to 6,583.21 at entry
+**Market context:** Ongoing geopolitical uncertainty around potential Iran conflict continued to weigh on sentiment. SPX traded in a narrow range for most of the session, oscillating around the 6585 short strike. Price hovered between profit and loss territory throughout the afternoon with no clear trend resolution.
+**Result:** Loss — the bearish spread needed SPX to stay below the 6585 short strike, but price drifted back above it into the close. SPX finished at 6,591.92 (-0.49%), just 7 points above the short strike. Held to expiration with no exit signal triggered. A flat, indecisive day where early momentum failed to predict the final direction.
+**Schwab account impact:** -$1,050.00
+**Running record:** 5W/4L (55.6% win rate). 2-trade losing streak. Total realized P&L: -$1,006.72.
+**Observation:** Three of the four losses have come during elevated geopolitical uncertainty (Iran/Trump news cycle). The strategy's pulse-bar momentum signal may be less predictive when headline-driven reversals dominate intraday price action, though the sample size remains too small for conclusive analysis.
+
+![Day 12 Dashboard — March 25, 2026](screenshots/DailyMelt_Day12_03252026.png)
+
+**Fixes shipped today:**
+- **Chart y-axis normalization (final fix):** Removed all remaining code that stretched the y-axis to include strike lines, entry/exit markers, or off-screen bars. Y-axis now always scales purely to visible candle data, keeping the chart fully normalized even with open positions.
+
+---
+
 ## Disclaimer
 
 This is a personal project. It is not financial advice.

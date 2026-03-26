@@ -5163,7 +5163,6 @@ function renderChart(d) {
     }
 
     // Trade zone visualization for open positions
-    // Track whether y-axis needs expanding to include strike levels
     let yRangeMin = null, yRangeMax = null;
     const validLows = sortedLows.filter(v => v != null);
     const validHighs = sortedHighs.filter(v => v != null);
@@ -5246,12 +5245,9 @@ function renderChart(d) {
         }
       }
 
-      // Ensure y-axis range includes strikes and entry price
-      const extraPts = [shortStrike, longStrike];
-      if (pos.underlying_price_at_entry) extraPts.push(pos.underlying_price_at_entry);
-      const allY = [...validLows, ...validHighs, ...extraPts];
-      yRangeMin = Math.min(...allY) - 3;
-      yRangeMax = Math.max(...allY) + 3;
+      // Y-axis range is computed from visible bars only (below).
+      // Strike lines and entry markers render as overlays — never stretch
+      // the y-axis to include them.
     });
 
     // Render closed trades (entry circle + exit X + connecting line)
@@ -5319,17 +5315,6 @@ function renderChart(d) {
           _direction: isBullishTrade ? 'bullish' : 'bearish',
         });
 
-        // Include exit price in y-range
-        if (yRangeMin != null) {
-          yRangeMin = Math.min(yRangeMin, exitPrice - 3);
-          yRangeMax = Math.max(yRangeMax, exitPrice + 3);
-        }
-      }
-
-      // Include entry price in y-range
-      if (yRangeMin != null) {
-        yRangeMin = Math.min(yRangeMin, entryPrice - 3);
-        yRangeMax = Math.max(yRangeMax, entryPrice + 3);
       }
     });
 
@@ -5366,8 +5351,9 @@ function renderChart(d) {
     const xRange = savedXRange[chartTimeframe] || defaultRange;
     if (!savedXRange[chartTimeframe]) savedXRange[chartTimeframe] = defaultRange;
 
-    // Auto y-range from visible bars (when no open position overrides it)
-    if (yRangeMin == null) {
+    // Always compute y-range from visible candle data only — never stretch
+    // to include strike lines, entry/exit markers, or off-screen bars.
+    {
       const visStart = Math.max(0, Math.floor(xRange[0]));
       const visEnd = Math.min(totalBars - 1, Math.ceil(xRange[1]));
       const visHighs = sortedHighs.slice(visStart, visEnd + 1).filter(v => v != null);
