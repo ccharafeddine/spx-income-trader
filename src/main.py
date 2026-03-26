@@ -2683,12 +2683,19 @@ class TradingBot:
                 logger.warning(f"{strategy_name}: Failed to construct spread")
                 return False
 
-            # 3. Position sizing
+            # 3. Position sizing (capped by buying power)
             max_risk_per_contract = spread.max_risk
+            buying_power = self._get_buying_power()
             quantity = self.portfolio.calculate_position_size(
                 strategy=strategy_type,
                 max_risk_per_contract=max_risk_per_contract,
+                available_buying_power=buying_power,
             )
+            if quantity <= 0:
+                logger.warning(f"{strategy_name}: Insufficient buying power")
+                self._record_rejection(strategy_name, 'insufficient_buying_power',
+                                       f'BP=${buying_power:,.2f}' if buying_power else 'unknown')
+                return False
 
             # 4. Portfolio risk gate
             allowed, deny_reason = self.portfolio.can_enter_position(
@@ -3081,10 +3088,17 @@ class TradingBot:
             # Calculate position size based on configured method
             # max_risk per contract = (spread_width - credit) * 100
             max_risk_per_contract = spread.max_risk
+            buying_power = self._get_buying_power()
             quantity = self.portfolio.calculate_position_size(
                 strategy=StrategyType.DAILY_INCOME,
                 max_risk_per_contract=max_risk_per_contract,
+                available_buying_power=buying_power,
             )
+            if quantity <= 0:
+                logger.warning("Insufficient buying power for even 1 contract")
+                self._record_rejection('daily_income', 'insufficient_buying_power',
+                                       f'BP=${buying_power:,.2f}' if buying_power else 'unknown')
+                return
 
             # Check portfolio risk limits before entry
             allowed, deny_reason = self.portfolio.can_enter_position(
@@ -3219,6 +3233,20 @@ class TradingBot:
         except Exception as e:
             logger.error(f"Error executing setup: {e}", exc_info=True)
     
+    def _get_buying_power(self) -> float | None:
+        """Fetch available buying power from broker. Returns None on failure."""
+        if self.dry_run:
+            return None
+        try:
+            balance = self.broker.get_account_balance()
+            bp = balance.get('buying_power')
+            if bp is not None and bp > 0:
+                logger.info(f"Buying power: ${bp:,.2f}")
+                return float(bp)
+        except Exception as e:
+            logger.debug(f"Failed to fetch buying power: {e}")
+        return None
+
     def _confirm_trade(self, spread) -> bool:
         """Prompt user to confirm trade (in interactive mode)"""
         # Always show trade details
