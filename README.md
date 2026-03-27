@@ -909,6 +909,21 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ---
 
+### Day 13 — March 26, 2026
+
+**Trade:** No trade — 1 pulse bar detected at 11:00 ET (bearish), but the trigger price of $6,542.24 was never hit before the 11:30 window close. Setup expired.
+**VIX:** 27.44 (HIGH regime), SPX opened at 6,539.58 and sold off heavily, dropping -1.96% to close at 6,477.16. Session high 6,573.03, low 6,474.36.
+**Market context:** GDP Third Estimate (Q4 2025) released at 08:30 ET. Another strong down day with VIX elevated above 27. The pulse bar formed on the last bar of the morning window — by the time it completed, there wasn't enough time for the trigger to fire before the entry window closed at 11:30.
+**Running record:** 5W/4L (55.6% win rate). Total realized P&L: -$1,006.72 (unchanged).
+
+**Fixes deployed today:**
+- **Daily risk bar reset:** Fixed stale `portfolio_state.json` from the prior day bleeding into the risk status display — daily risk now resets to $0 at midnight ET
+- **Buying power cap:** Position sizing now fetches available buying power from Schwab and caps contracts to what the account can afford, preventing order rejections when cash is low
+
+![Day 13 Dashboard — March 26, 2026](screenshots/DailyMelt_Day13_03262026.png)
+
+---
+
 ## Disclaimer
 
 This is a personal project. It is not financial advice.
