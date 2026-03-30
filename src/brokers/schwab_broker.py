@@ -255,6 +255,17 @@ class SchwabBroker(BrokerInterface):
         except SchwabAPIError:
             raise
         except Exception as e:
+            err_str = str(e)
+            # If refresh token is invalid, reset cached client so the next
+            # call picks up a freshly-written token file (after re-auth).
+            if 'refresh_token' in err_str and retry_count == 0:
+                logger.warning(
+                    f"Refresh token error ({context}) - resetting client "
+                    f"to pick up new token file on next call"
+                )
+                self.auth._client = None
+                self._account_hash = None
+
             if retry_count < self.MAX_ORDER_RETRIES:
                 delay = self.RETRY_BASE_DELAY * (2 ** retry_count)
                 logger.warning(f"Request error ({context}): {e}, "
