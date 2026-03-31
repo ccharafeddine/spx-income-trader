@@ -2932,19 +2932,19 @@ class TradingBot:
                     result=direction.value if direction else None)
 
             if direction:
-                # Morning bias filter: block bearish DI on Up/Strong Up days
-                if self.strategy.di_morning_bias_filter and direction.value == 'bearish':
+                # Morning bias filter: block counter-trend DI entries
+                if self.strategy.di_morning_bias_filter:
                     day_open = getattr(self.position_manager, '_day_open', None)
                     allowed, regime, move_pct = SPXIncomeStrategy.check_morning_bias_filter(
                         direction, day_open, current_price
                     )
                     if not allowed:
                         logger.info(
-                            f"DI bearish setup skipped — morning bias is {regime} "
+                            f"DI {direction.value} setup skipped - morning bias is {regime} "
                             f"(SPX {'+' if move_pct >= 0 else ''}{move_pct:.2f}%)"
                         )
                         self._record_rejection('daily_income', 'morning_bias_filter',
-                            f"Bearish pulse at {bar.timestamp.strftime('%H:%M')}, "
+                            f"{direction.value.title()} pulse at {bar.timestamp.strftime('%H:%M')}, "
                             f"bias {regime} (SPX {'+' if move_pct >= 0 else ''}{move_pct:.2f}%)")
                         return
 

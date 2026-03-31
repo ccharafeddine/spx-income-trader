@@ -508,8 +508,9 @@ class SPXIncomeStrategy:
         """Check if DI setup direction is allowed given morning bias.
 
         Returns (allowed: bool, regime: str, move_pct: float).
-        Only blocks bearish entries on Up/Strong Up days.
-        Bullish entries always pass.
+        Blocks counter-trend entries symmetrically:
+          - Bearish blocked on Up / Strong Up days
+          - Bullish blocked on Down / Strong Down days
         """
         from src.analytics.regime_analysis import _classify_direction_regime
 
@@ -520,6 +521,9 @@ class SPXIncomeStrategy:
         regime = _classify_direction_regime(move_pct) or 'Unknown'
 
         if direction == TradeDirection.BEARISH and regime in ('Up', 'Strong Up'):
+            return False, regime, move_pct
+
+        if direction == TradeDirection.BULLISH and regime in ('Down', 'Strong Down'):
             return False, regime, move_pct
 
         return True, regime, move_pct
