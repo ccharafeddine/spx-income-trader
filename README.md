@@ -924,6 +924,39 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ---
 
+### Day 14 — March 27, 2026
+
+**Trade:** No trade — 0 pulse bars detected during the 9:30–11:30 ET setup window.
+**VIX:** 31.39 (EXTREME regime), SPX opened at 6,453.89 and sold off steadily, closing at 6,368.85 (-2.12%). Session low 6,356.08.
+**Market context:** Markets continued their decline amid ongoing geopolitical uncertainty. VIX pushed above 31, well into extreme territory. No 30-minute bar during the morning window met the 10% pulse threshold — price action was a steady grind lower without the sharp directional bars the strategy looks for. Weekly risk was also nearly filled at $1,935/$2,326.
+**Running record:** 5W/4L (55.6% win rate). Total realized P&L: -$1,006.72 (unchanged).
+
+**Fixes deployed today:**
+- **Schwab token auto-reload:** When the refresh token expires (400 error, not 401), the cached client is now reset so a fresh token file is picked up on the next API call without requiring a restart
+- **P&L reconciliation catch-up:** Added startup mechanism to detect and re-reconcile trades that were missed during token outages (Mar 16–20 had only theoretical P&L)
+
+![Day 14 Dashboard — March 27, 2026](screenshots/DailyMelt_Day14_03272026.png)
+
+---
+
+### Day 15 — March 30, 2026
+
+**Trade:** Bullish put credit spread 6400/6395 (3 contracts), entered 11:00 ET on bullish pulse bar at 10:00
+**VIX:** 30.20 (EXTREME regime), SPX opened at 6,403.37 (-2.70% gap down from Friday's close of 6,581.04). Closed at 6,343.72 (-3.61%).
+**Market context:** SPX gapped down hard at the open, then the first 30-minute bar (9:30) registered as a bearish pulse bar — price opened high at 6,427 and dropped to close near the low at 6,373. However, the 10:00 bar reversed sharply, closing at its high of 6,398.82, replacing the pending bearish setup with a new bullish one. The bullish breakout triggered entry at 6,401.09. Price then spent the rest of the day declining steadily, filling the gap and continuing lower. The bullish spread needed SPX above the 6,400 short strike, but it finished at 6,343.72, well below.
+**Why the first bar didn't trigger:** The 9:30 bar *was* detected as a bearish pulse bar (H=$6,427.09, L=$6,371.47, C=$6,373.28 — close in the bottom 10%). The entry trigger was set to price below $6,371.47, but before that trigger fired, the 10:00 bar formed a stronger bullish pulse (C=$6,398.82 = H, close at the absolute top of the range), which replaced the pending bearish setup per the strategy's "latest pulse wins" logic.
+**Result:** Loss — held to expiration, SPX finished 57 points below the short strike. The morning bounce that created the bullish pulse reversed completely as selling pressure resumed.
+**Schwab account impact:** -$855.00
+**Running record:** 5W/5L (50.0% win rate). 3-trade losing streak. Total realized P&L: -$1,861.72.
+**Observation:** All three consecutive losses share a pattern: morning momentum bars forming during geopolitical uncertainty, then price reversing for the rest of the day. The strategy detects genuine intraday momentum (the pulse bars are real), but in a headline-driven market, that early momentum doesn't carry through to the close. VIX has been in EXTREME territory (30+) for consecutive sessions. This may be a regime where the pulse bar's predictive value is diminished — early moves get faded as traders react to evolving news. Still too early to draw structural conclusions at 10 trades, but the pattern warrants monitoring.
+
+**Fixes deployed today:**
+- **Symmetric morning bias filter:** The morning bias filter previously only blocked bearish entries on Up/Strong Up days but allowed bullish entries on Down/Strong Down days unchecked. Now blocks counter-trend entries in both directions — bullish setups are rejected when SPX is trading below the open by 0.25%+ (Down) or 1.0%+ (Strong Down), mirroring the existing bearish-side logic. Note: today's trade at 10:00 ET had SPX only -0.07% from the open (Flat), so it would not have been caught by this filter at the time — the full -3.61% move developed later in the day.
+
+![Day 15 Dashboard — March 30, 2026](screenshots/DailyMelt_Day15_03302026.png)
+
+---
+
 ## Disclaimer
 
 This is a personal project. It is not financial advice.

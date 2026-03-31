@@ -4,7 +4,8 @@ Tests for morning bias filter.
 Covers:
 - Bearish DI blocked on Up and Strong Up market days
 - Bearish DI allowed on Flat, Down, and Strong Down days
-- Bullish DI always allowed regardless of morning bias
+- Bullish DI blocked on Down and Strong Down market days
+- Bullish DI allowed on Flat, Up, and Strong Up days
 - Edge cases: None/zero SPX open
 - Config flag disables the filter
 """
@@ -75,15 +76,57 @@ class TestMorningBiasFilter:
         assert allowed
         assert regime == 'Strong Down'
 
-    def test_bullish_always_allowed_on_up_day(self):
-        """Bullish DI setup passes regardless of morning bias (Up day)."""
+    def test_bullish_blocked_on_down_day(self):
+        """Bullish DI setup blocked when SPX is down 0.5% (Down regime)."""
         spx_open = 5900.0
-        current = 5929.5  # +0.5% Up day
+        current = 5870.5  # -0.5%
+        allowed, regime, move = SPXIncomeStrategy.check_morning_bias_filter(
+            TradeDirection.BULLISH, spx_open, current
+        )
+        assert not allowed
+        assert regime == 'Down'
+        assert move == pytest.approx(-0.5, abs=0.01)
+
+    def test_bullish_blocked_on_strong_down_day(self):
+        """Bullish DI setup blocked when SPX is down 1.5% (Strong Down regime)."""
+        spx_open = 5900.0
+        current = 5811.5  # -1.5%
+        allowed, regime, move = SPXIncomeStrategy.check_morning_bias_filter(
+            TradeDirection.BULLISH, spx_open, current
+        )
+        assert not allowed
+        assert regime == 'Strong Down'
+        assert move == pytest.approx(-1.5, abs=0.01)
+
+    def test_bullish_allowed_on_flat_day(self):
+        """Bullish DI setup allowed when SPX is flat (within +/-0.25%)."""
+        spx_open = 5900.0
+        current = 5894.0  # -0.10%
+        allowed, regime, move = SPXIncomeStrategy.check_morning_bias_filter(
+            TradeDirection.BULLISH, spx_open, current
+        )
+        assert allowed
+        assert regime == 'Flat'
+
+    def test_bullish_allowed_on_up_day(self):
+        """Bullish DI setup allowed when SPX is up 0.5% (Up regime)."""
+        spx_open = 5900.0
+        current = 5929.5  # +0.5%
         allowed, regime, move = SPXIncomeStrategy.check_morning_bias_filter(
             TradeDirection.BULLISH, spx_open, current
         )
         assert allowed
         assert regime == 'Up'
+
+    def test_bullish_allowed_on_strong_up_day(self):
+        """Bullish DI setup allowed when SPX is up 1.5% (Strong Up regime)."""
+        spx_open = 5900.0
+        current = 5988.5  # +1.5%
+        allowed, regime, move = SPXIncomeStrategy.check_morning_bias_filter(
+            TradeDirection.BULLISH, spx_open, current
+        )
+        assert allowed
+        assert regime == 'Strong Up'
 
     def test_none_spx_open_allows_entry(self):
         """When SPX open is None (not yet set), filter allows entry."""
@@ -198,10 +241,50 @@ class TestMorningBiasFilterBacktest:
         assert engine._direction_filter_skips == 1
 
     def test_bullish_proceeds_on_up_day(self):
-        """Bullish DI pulse proceeds even when full-day return is Up."""
+        """Bullish DI pulse proceeds when full-day return is Up."""
         engine = _make_engine(di_morning_bias_filter=True)
         engine._spx_open = 5000.0
         engine._spx_close = 5020.0  # +0.4% full-day return (Up)
+
+        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
+        bar = _make_bullish_pulse_bar(bar_dt)
+        engine._check_for_setup(bar, bar_dt, vix=15.0)
+
+        assert engine._pending_setup is not None
+        assert engine._pending_setup['direction'] == TradeDirection.BULLISH
+        assert engine._direction_filter_skips == 0
+
+    def test_bullish_skipped_on_down_day(self):
+        """Bullish DI pulse skipped when full-day return is Down (<-0.25%)."""
+        engine = _make_engine(di_morning_bias_filter=True)
+        engine._spx_open = 5000.0
+        engine._spx_close = 4975.0  # -0.5% full-day return (Down)
+
+        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
+        bar = _make_bullish_pulse_bar(bar_dt)
+        engine._check_for_setup(bar, bar_dt, vix=15.0)
+
+        assert engine._pending_setup is None
+        assert engine._direction_filter_skips == 1
+
+    def test_bullish_skipped_on_strong_down_day(self):
+        """Bullish DI pulse skipped on Strong Down (<-1%) full-day return."""
+        engine = _make_engine(di_morning_bias_filter=True)
+        engine._spx_open = 5000.0
+        engine._spx_close = 4925.0  # -1.5% full-day return (Strong Down)
+
+        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
+        bar = _make_bullish_pulse_bar(bar_dt)
+        engine._check_for_setup(bar, bar_dt, vix=15.0)
+
+        assert engine._pending_setup is None
+        assert engine._direction_filter_skips == 1
+
+    def test_bullish_allowed_on_flat_day_backtest(self):
+        """Bullish DI pulse proceeds when full-day return is Flat."""
+        engine = _make_engine(di_morning_bias_filter=True)
+        engine._spx_open = 5000.0
+        engine._spx_close = 4995.0  # -0.1% full-day return (Flat)
 
         bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
         bar = _make_bullish_pulse_bar(bar_dt)

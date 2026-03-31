@@ -36,10 +36,11 @@ Identify all strategy classes in the codebase. For The Daily Melt, expect:
 - **Daily Income (DI):** 0DTE pulse bar breakout credit spreads (src/core/strategy.py)
   - "30-min bars, NO-Indicators" — no technical indicator filtering on entries
   - Bollinger Band data tracked for analytics only (bb_agreement field), never gates entries
-  - Morning bias filter (di_morning_bias_filter): blocks bearish entries on Up/Strong Up days
-    - Based on gap/open direction at bar formation time — NOT a technical indicator
+  - Morning bias filter (di_morning_bias_filter): blocks counter-trend entries symmetrically
+    - Bearish blocked on Up/Strong Up days; Bullish blocked on Down/Strong Down days
+    - Based on intraday move (current price vs session open) at bar formation time — NOT a technical indicator
     - Configurable boolean in strategy config, defaults to True
-    - Logs skip reason when blocked; tracked in analytics as "Direction Filter (Up Day)"
+    - Logs skip reason when blocked; tracked in analytics as "Direction Filter"
   - Two-phase entry: pulse detection → breakout confirmation
 - **Tag 'n Turn (TNT):** Bollinger Band mean reversion, 3-7 DTE (src/core/tag_n_turn.py)
   - BB IS core to TNT (mean reversion requires BB tags)
@@ -154,12 +155,14 @@ grep -n "bollinger\|bb_bias\|bb_direction" src/core/strategy.py
 
 ### 1H. Morning Bias Filter Verification
 
-**Critical:** Bearish DI entries must be blocked on Up/Strong Up market days.
+**Critical:** Counter-trend DI entries must be blocked symmetrically:
+- Bearish blocked on Up / Strong Up days
+- Bullish blocked on Down / Strong Down days
 
 Verify:
-- Live path (src/main.py) blocks bearish DI on Up/Strong Up days
-- Backtest engine (src/backtest/engine.py) applies the same filter
-- Canary test: run 2019-2025 backtest, Direction Drill-Down shows near-zero Up Day Bearish trades
+- Live path (src/main.py) applies filter to BOTH directions (no `direction == 'bearish'` guard)
+- Backtest engine (src/backtest/engine.py) applies the same symmetric filter
+- Canary test: run 2019-2025 backtest, Direction Drill-Down shows near-zero Up Day Bearish and Down Day Bullish trades
 
 ### 1I. TNT Weekend Hold Prevention
 
