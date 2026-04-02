@@ -957,6 +957,35 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ---
 
+### Day 16 — March 31, 2026 (Month End)
+
+**Trade:** No trade — 1 pulse bar detected, 0 signals generated. Monthly risk nearly filled at $4,387/$4,652 (94.3%), which likely prevented any new entries from passing the portfolio risk gate.
+**VIX:** 25.25 (HIGH regime), SPX opened at 6,413.69 and closed at 6,528.52 (-0.42%). A recovery day — SPX rallied from the prior week's selloff, gaining back ground from the 6,300s into the 6,500s.
+**Market context:** After five consecutive sessions of heavy selling driven by geopolitical uncertainty (Iran/Trump news cycle), the market found a floor and bounced. VIX pulled back from EXTREME (30+) to HIGH (25). The bot detected a pulse bar but the monthly risk budget was nearly exhausted, so no trade was entered.
+**Running record:** 5W/5L (50.0% win rate). Total realized P&L: -$1,861.72 (unchanged).
+
+**March 2026 Summary:** 10 trades over 16 trading sessions (bot offline Mar 2–10). 5 wins, 5 losses (50% win rate). Total P&L: -$1,861.72. Average trade duration: 5.3 hours. Average profit capture: -27.3%. The five wins were all bearish trades on trending-down days; the five losses were a mix of bullish and bearish trades on choppy or reversing days. The second half of the month was dominated by geopolitical headline risk (Iran/Trump), which created morning momentum bars that reversed later in the session — a pattern that worked against the pulse bar strategy. Reducing contract size to 2 for April to limit drawdown while the strategy continues to be evaluated.
+
+![Day 16 Dashboard — March 31, 2026](screenshots/DailyMelt_Day16_03312026.png)
+
+![March 2026 Trade Journal Results](screenshots/DailyMelt_March2026_Results.png)
+
+---
+
+### Day 17 — April 1, 2026
+
+**Trade:** Bullish put credit spread 6595/6590 (2 contracts), entered 11:02 ET on bullish pulse bar at 10:30
+**VIX:** 24.37 (ELEVATED regime), SPX opened at 6,556.56 (-0.54% gap down). Rallied to 6,609 by mid-morning before fading.
+**Market context:** SPX gapped down modestly, then rallied sharply through the morning — the 10:30 bar formed a bullish pulse. Entry triggered at 6,592.57 with SPX +0.55% from the open. Price briefly held above the 6,595 short strike but spent the afternoon drifting lower, closing at 6,575.32 — 20 points below the strike. Another choppy day where morning momentum failed to hold.
+**Result:** Loss — held to expiration, SPX finished below the short strike. The intraday rally that created the bullish signal reversed in the second half of the session.
+**Schwab account impact:** -$570.00
+**Running record:** 5W/6L (45.5% win rate). 4-trade losing streak. Total realized P&L: -$2,431.72.
+**Observation:** Four consecutive losses, all following the same pattern: pulse bar detects real morning momentum, but price reverses by the close. Contract size reduced from 2 to 1 for the rest of April to limit further drawdown while evaluating whether this losing streak is a regime-specific issue (elevated VIX, headline-driven markets) or a structural problem with the strategy.
+
+![Day 17 Dashboard — April 1, 2026](screenshots/DailyMelt_Day17_04012026.png)
+
+---
+
 ## Disclaimer
 
 This is a personal project. It is not financial advice.
