@@ -51,6 +51,10 @@ class PositionManager:
         self._day_open: Optional[float] = None
         self._prev_close: Optional[float] = None
 
+        # Snapshot throttle: trade_id -> last snapshot datetime
+        self._last_snapshot: Dict[str, datetime] = {}
+        self._snapshot_interval = timedelta(minutes=5)
+
         # DB failure cooldown — blocks new entries for DB_FAILURE_COOLDOWN_SECONDS
         # after a write failure.  Replaces the old permanent _db_write_failed flag
         # so the bot can recover automatically without a restart.
@@ -526,6 +530,27 @@ class PositionManager:
                 logger.debug(f"Trade {trade.id[:8]}: Current value=${current_value:.2f}, "
                            f"P&L=${trade.pnl:.2f} ({trade.pnl_percent:.1f}%)")
 
+                # Intraday P&L snapshot (throttled to every 5 minutes)
+                try:
+                    last = self._last_snapshot.get(trade.id)
+                    if last is None or (current_time - last) >= self._snapshot_interval:
+                        self._last_snapshot[trade.id] = current_time
+                        spx_now = getattr(trade, '_current_spx_price', 0) or 0
+                        entry_px = getattr(trade, 'entry_price', 0) or 0
+                        captured = ((entry_px - current_value) / entry_px * 100
+                                    if entry_px > 0 else 0)
+                        self.db.save_position_snapshot(
+                            trade_id=trade.id,
+                            timestamp=current_time,
+                            spread_value=current_value,
+                            pnl=trade.pnl or 0,
+                            pnl_percent=trade.pnl_percent or 0,
+                            spx_price=spx_now,
+                            profit_captured_pct=round(captured, 2),
+                        )
+                except Exception:
+                    pass  # Non-fatal — don't disrupt position monitoring
+
                 # Check exit conditions
                 should_exit, reason = self.strategy.should_exit(
                     trade,
@@ -681,6 +706,7 @@ class PositionManager:
             
             # Remove from open trades
             self.open_trades.remove(trade)
+            self._last_snapshot.pop(trade.id, None)
 
             # Track for portfolio risk updates
             self.recently_closed.append({'id': trade.id, 'pnl': trade.pnl or 0.0})

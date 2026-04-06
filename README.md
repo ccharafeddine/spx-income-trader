@@ -986,6 +986,29 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ---
 
+### Day 18 — April 2, 2026
+
+**Trade:** Bullish put credit spread 6520/6515 (1 contract), entered 10:01 ET on bullish pulse bar at 9:30
+**VIX:** 27.07 (HIGH regime), SPX opened at 6,512.61 (+0.55% gap up from prior close). Closed at 6,582.69 (+1.08%).
+**Market context:** Strong gap up at the open followed by a sustained morning rally. The 9:30 bar closed near its high, forming a bullish pulse. Entry triggered at 6,520.59, just above the 6,520 short strike. SPX rallied through the morning, pushing the trade comfortably into profit territory. Profit target hit at 13:14 ET with 81% profit capture — exit at 6,566.44.
+**Result:** Win — profit target reached in the afternoon. The trend-following morning momentum held through the session, unlike the prior four losing trades where momentum reversed.
+**Schwab account impact:** +$175.00
+**Running record:** 6W/6L (50.0% win rate). Losing streak broken at 4. Total realized P&L: -$2,256.72.
+**Observation:** First win in over a week. VIX still elevated but starting to compress. The reduced 1-contract size limited upside on this winner (would have been +$350 at 2 contracts), but the primary goal remains capital preservation until a consistent pattern reemerges.
+
+![Day 18 Dashboard — April 2, 2026](screenshots/DailyMelt_Day18_04022026.png)
+
+---
+
+### Day 19 — April 3, 2026 (Good Friday — Market Closed)
+
+**Trade:** No trade — US equity markets closed for Good Friday observance.
+**Running record:** 6W/6L (50.0% win rate). Total realized P&L: -$2,256.72 (unchanged).
+
+![Day 19 Dashboard — April 3, 2026](screenshots/DailyMelt_Day19_04032026.png)
+
+---
+
 ## Disclaimer
 
 This is a personal project. It is not financial advice.
