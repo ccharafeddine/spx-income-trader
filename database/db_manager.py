@@ -197,6 +197,22 @@ class DatabaseManager:
                 );
             """)
 
+            # Position P&L snapshots for intraday analysis
+            cursor.executescript("""
+                CREATE TABLE IF NOT EXISTS position_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trade_id TEXT NOT NULL,
+                    timestamp TIMESTAMP NOT NULL,
+                    spread_value REAL NOT NULL,
+                    pnl REAL NOT NULL,
+                    pnl_percent REAL,
+                    spx_price REAL,
+                    profit_captured_pct REAL
+                );
+                CREATE INDEX IF NOT EXISTS idx_snapshots_trade_id
+                    ON position_snapshots(trade_id);
+            """)
+
             # Create indexes if not exist
             try:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_strategy_type ON trades(strategy_type)")
@@ -565,6 +581,24 @@ class DatabaseManager:
             conn.commit()
             logger.debug(f"Daily stats updated for {trade_date}")
     
+    def save_position_snapshot(self, trade_id: str, timestamp,
+                               spread_value: float, pnl: float,
+                               pnl_percent: float, spx_price: float,
+                               profit_captured_pct: float):
+        """Save an intraday P&L snapshot for an open position."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute("""
+                    INSERT INTO position_snapshots
+                        (trade_id, timestamp, spread_value, pnl,
+                         pnl_percent, spx_price, profit_captured_pct)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (trade_id, timestamp, spread_value, pnl,
+                      pnl_percent, spx_price, profit_captured_pct))
+                conn.commit()
+        except Exception as e:
+            logger.debug(f"Snapshot write failed (non-fatal): {e}")
+
     def log_event(self, event_type: str, message: str, details: Optional[Dict] = None):
         """Log system event"""
         with self._get_connection() as conn:
