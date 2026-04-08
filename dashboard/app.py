@@ -126,7 +126,23 @@ def _get_schwab_balance():
         _cached_balance_ts = time.time()
         return balance
     except Exception as e:
-        logger.warning(f"Schwab balance fetch failed, using DB fallback: {e}")
+        logger.warning(f"Schwab balance fetch failed, trying cached balance: {e}")
+        # Fall back to post-settlement balance snapshot (saved after each trading day)
+        try:
+            _psb_path = DATA_DIR / 'database' / 'post_settlement_balance.json'
+            if _psb_path.exists():
+                with open(_psb_path) as f:
+                    cached = json.load(f)
+                if cached.get('net_account_value'):
+                    logger.info(f"Using cached balance from {cached.get('date', 'unknown')}")
+                    return {
+                        'net_account_value': cached['net_account_value'],
+                        'cash_available': cached.get('cash_available', 0),
+                        'buying_power': cached.get('buying_power', 0),
+                        'unrealized_pnl': 0,
+                    }
+        except Exception:
+            pass
         return None
 
 # Per-session API token for CSRF protection.
