@@ -1009,6 +1009,33 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ---
 
+### Day 20 — April 6, 2026
+
+**Trade:** No trade — 0 pulse bars detected, 0 signals generated. The Schwab API token had expired over the weekend, so the bot built 0 bars for the entire session despite the market being open.
+**VIX:** 24.25 (ELEVATED regime), SPX opened at 6,587.66 and closed at 6,611.83 (+3.82% from prior close). A strong gap-up recovery day following the prior week's selloff.
+**Market context:** Markets reopened after Good Friday with a strong gap up. SPX traded in a narrow range (6,587–6,612) after gapping higher. VIX continued to compress from the 30+ levels seen in late March. With the Schwab token expired, no market data was ingested — the bot logged 0 bars built. No screenshot available (token expiration prevented data collection).
+**Running record:** 6W/6L (50.0% win rate). Total realized P&L: -$2,256.72 (unchanged).
+
+**Fixes deployed:**
+- **Intraday P&L snapshot logging:** New `position_snapshots` table records spread value, P&L, SPX price, and profit capture % every 5 minutes while a position is open. Enables post-trade analysis of how positions evolve intraday.
+- **Dashboard balance fallback:** When Schwab token expires, dashboard now falls back to cached `post_settlement_balance.json` instead of computing balance from starting capital + realized P&L (which incorrectly showed cash = equity because it doesn't account for non-options holdings).
+
+---
+
+### Day 21 — April 7, 2026
+
+**Trade:** Bearish call credit spread 6560/6565 (1 contract), entered 10:00 ET on bearish pulse bar at 9:30. Credit received: $2.45.
+**VIX:** 26.0 at entry → 26.7 at exit (HIGH regime). SPX opened at 6,601.93 (+4.07% gap up from prior close of 6,343.72).
+**Market context:** Massive gap up at the open as markets continued recovering from the prior week's selloff. SPX dropped from the 6,602 open to 6,534 (session low) by mid-morning, triggering a bearish pulse bar at 9:30. Entry at 10:00 with SPX at 6,560.30 (-0.63% from open). However, the selling didn't persist — SPX reversed and rallied steadily through the afternoon, closing at 6,616.85 near the session high. The intraday chart shows a classic V-shaped reversal: sharp morning dip followed by a grind higher for the rest of the day.
+**Result:** Loss — held to expiration, SPX closed at 6,616.85, well above the 6,560 short strike. Profit captured: -104.08%. Three additional pulse bars were detected at 10:30, 11:00, and 11:30 but all rejected due to position limit (already in a trade).
+**Schwab account impact:** -$255.00
+**Running record:** 6W/7L (46.2% win rate). Total realized P&L: -$2,511.72. Total return: -5.40%.
+**Observation:** Another morning momentum reversal — the pattern that has plagued the strategy since late March. The bearish signal was legitimate (SPX was -0.63% from the open at entry), but the selling exhausted itself at the 6,534 low and the rest of the day was a steady recovery. Day classified as "choppy" with only +0.23% open-to-close move despite the massive +4.07% gap from prior close. With 13 trades now in the live record, the strategy is running at 46.2% win rate vs the backtested 74%. The elevated VIX / headline-driven environment continues to produce morning momentum that fails to carry through.
+
+![Day 21 Dashboard — April 7, 2026](screenshots/DailyMelt_Day21_04072026.png)
+
+---
+
 ## Disclaimer
 
 This is a personal project. It is not financial advice.
