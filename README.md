@@ -1036,6 +1036,195 @@ First live session with conservative 1-contract sizing. Exposed critical issues 
 
 ---
 
+### Day 22 — April 8, 2026
+
+**Trade:** Bearish call credit spread (1 contract), entered on bearish pulse bar during the morning window. Credit received: $2.60.
+**VIX:** 21.04 (ELEVATED regime), SPX closed at 6,792.81 (+2.66% from prior close of 6,616.85). A massive gap-up continuation day.
+**Market context:** SPX gapped up sharply from the prior close and continued rallying throughout the session. The intraday chart shows a steady uptrend with no meaningful pullbacks — candles trended from the low 6,760s to close near 6,793. A bearish pulse bar formed during the morning window, but the selling pressure never materialized. VIX dropped from 26.0 to 21.04, crossing below the HIGH threshold into ELEVATED territory for the first time since mid-March.
+**Result:** Loss — held to expiration, SPX closed well above the short call strike. The bearish signal was overwhelmed by the strong continuation rally. This marks the 5th loss in the last 6 trades.
+**Schwab account impact:** -$240.00
+**Running record:** 6W/8L (42.9% win rate). 3-trade losing streak. Total realized P&L: -$2,751.72. Total return: -5.91%.
+**Observation:** VIX compression from HIGH to ELEVATED signals the market may be transitioning out of the headline-driven reversal environment that plagued the strategy in late March/early April. The continued pattern of bearish morning signals failing on strong rally days suggests the strategy's pulse bar signals remain poorly calibrated for this recovery phase.
+
+![Day 22 Dashboard — April 8, 2026](screenshots/DailyMelt_Day22_04082026.png)
+
+---
+
+### Day 23 — April 9, 2026
+
+**Trade:** Bearish call credit spread (1 contract), entered on bearish pulse bar during the morning window. Credit received: $2.50.
+**VIX:** 19.50 (NORMAL regime), SPX closed at 6,824.66 (+0.47% from prior close of 6,792.81). Another grinding up day.
+**Market context:** SPX continued its multi-day rally, opening near the prior close and grinding higher throughout the session. The intraday chart shows a steady uptrend similar to the prior day. VIX dropped below 20 for the first time since mid-March, entering NORMAL regime. A bearish pulse bar formed in the morning but the broader trend remained firmly bullish.
+**Result:** Loss — held to expiration, SPX closed above the short call strike. The bearish setup failed again as the recovery rally persisted. Fourth consecutive loss.
+**Schwab account impact:** -$250.00
+**Running record:** 6W/9L (40.0% win rate). 4-trade losing streak. Total realized P&L: -$3,001.72. Total return: -6.45%.
+**Observation:** Win rate has dropped to 40%, well below the backtested 74%. VIX returning to NORMAL regime suggests the volatility storm is passing, but the strategy continues generating bearish signals during what has been a sustained multi-day rally. The -$3,001.72 total P&L crosses the psychological -$3k threshold.
+
+![Day 23 Dashboard — April 9, 2026](screenshots/DailyMelt_Day23_04092026.png)
+
+---
+
+### Day 24 — April 10, 2026
+
+**Trade:** Bullish put credit spread (1 contract), entered on bullish pulse bar during the morning window. Credit received: $2.00.
+**VIX:** 19.23 (NORMAL regime), SPX closed at 6,816.89 (-0.11% from prior close of 6,824.66). A choppy, range-bound session that drifted lower into the close.
+**Market context:** After three strong rally days, SPX opened near the prior close and traded in a choppy range. The morning saw a brief push higher into the 6,840s before reversing and grinding lower through the afternoon, ultimately closing just below the prior day's level. A bullish pulse bar formed during the morning rally, but the momentum faded.
+**Result:** Loss — held to expiration, SPX closed below the short put strike. The bullish setup triggered at the morning high, and the subsequent reversal lower pushed the trade to max loss. Fifth consecutive loss — the longest losing streak in the live record.
+**Schwab account impact:** -$300.00
+**Running record:** 6W/10L (37.5% win rate). 5-trade losing streak. Total realized P&L: -$3,301.72. Total return: -7.18%.
+**Observation:** The worst stretch of the live validation period. Five straight losses have pushed the win rate to 37.5%, roughly half the backtested rate. The strategy has now lost on both bearish and bullish signals in the same week — bearish signals fail on rally days, and the one bullish signal caught a reversal. The common thread remains morning momentum failing to carry through the session.
+
+![Day 24 Dashboard — April 10, 2026](screenshots/DailyMelt_Day24_04102026.png)
+
+---
+
+### Day 25 — April 13, 2026
+
+**Trade:** Bullish put credit spread (1 contract), entered on bullish pulse bar during the morning window. Credit received: $1.79.
+**VIX:** 19.12 (NORMAL regime), SPX closed at 6,880.24 (+0.93% from prior close of 6,816.89). A broad rally day with sustained momentum.
+**Market context:** SPX gapped up modestly at the open and continued rallying through the session, closing near the day's high at 6,880. The intraday chart shows a clean uptrend with no significant pullbacks. A bullish pulse bar formed in the morning and the momentum carried through — unlike the prior day's false start. VIX held steady in NORMAL territory around 19.
+**Result:** Win — profit target reached. The bullish momentum held through the session, allowing the put credit spread to decay and hit the profit target. Losing streak broken at 5.
+**Schwab account impact:** +$145.00
+**Running record:** 7W/10L (41.2% win rate). Total realized P&L: -$3,156.72. Total return: -6.79%.
+**Observation:** First win since Day 18 (April 2), snapping a brutal 5-trade losing streak. VIX remaining in NORMAL regime and the cleaner price action (no headline-driven reversals) suggest the strategy may perform better in this calmer environment. The reduced credit ($1.79) limited the upside, but capital preservation remains the priority after the drawdown.
+
+![Day 25 Dashboard — April 13, 2026](screenshots/DailyMelt_Day25_04132026.png)
+
+---
+
+### Day 26 — April 14, 2026
+
+**Trade:** No trade — 0 pulse bars detected during the 9:30–11:30 ET setup window despite 12 bars built.
+**VIX:** 18.42 (NORMAL regime), SPX opened at 6,910.20 and closed at 6,967.38 (+5.30% from prior close). A massive gap-up rally day.
+**Market context:** Markets continued their recovery from the early April selloff with a huge +5.30% move. Despite 12 bars being built and 4 signals evaluated, no pulse bars formed — the rally was a steady grind higher without the sharp directional bars the strategy requires.
+**Running record:** 7W/10L (41.2% win rate). Total realized P&L: -$3,156.72 (unchanged).
+
+---
+
+### Days 27–28 — April 15–16, 2026
+
+**Trade:** No trade — no setups detected on either day. Market data was being ingested but no pulse bars formed.
+**Running record:** 7W/10L (41.2% win rate). Total realized P&L: -$3,156.72 (unchanged).
+
+---
+
+### Days 29–31 — April 17, 20–21, 2026 (Bot Offline)
+
+**Trade:** No trade — bot was offline for three trading days. The Schwab refresh token expired while the app was unable to run (Windows Smart App Control had blocked the unsigned PyInstaller executable). The token's 7-day TTL lapsed during the downtime. The app was unblocked on April 22 by disabling Smart App Control, and stale lock files from the force-killed process were cleared to allow relaunch.
+**Running record:** 7W/10L (41.2% win rate). Total realized P&L: -$3,156.72 (unchanged).
+
+---
+
+### Day 32 — April 22, 2026
+
+**Trade:** Bullish put credit spread 7120/7115 (1 contract), entered 10:00 ET on bullish pulse bar at 9:30. Credit received: $1.95.
+**VIX:** 19.09 at entry (NORMAL regime), SPX opened at 7,102.91 (+1.14% gap up from prior close). Closed at 7,137.90 (+1.64% from prior close).
+**Market context:** First trading day after the bot came back online with a fresh Schwab token. SPX gapped up modestly and continued higher. The 9:30 bar formed a bullish pulse and the trigger fired at 10:00 with SPX at 7,120.81. Price oscillated through the day — the chart shows a choppy session with a dip to 7,115 mid-afternoon before recovering. Profit target hit at 15:40 ET with 82% profit capture.
+**Result:** Win — profit target reached ($160 vs $156 target). SPX at exit: 7,128.48. Day classified as "choppy" with only +0.36% open-to-close.
+**Schwab account impact:** +$160.00
+**Running record:** 8W/10L (44.4% win rate). Total realized P&L: -$2,996.72. Total return: -6.44%.
+**Observation:** Clean win on the first day back. VIX solidly in NORMAL territory for the first time since mid-March. The reduced volatility environment seems more favorable for the strategy's pulse bar signals.
+
+![Day 32 Dashboard — April 22, 2026](screenshots/DailyMelt_Day32_04222026.png)
+
+---
+
+### Day 33 — April 23, 2026
+
+**Trade:** No trade — 0 pulse bars detected. 12 bars built, 4 signals evaluated, but none qualified.
+**VIX:** 19.45 (NORMAL regime), SPX opened at 7,118.80 and closed at 7,108.40 (+0.95% from prior close).
+**Running record:** 8W/10L (44.4% win rate). Total realized P&L: -$2,996.72 (unchanged).
+
+---
+
+### Day 34 — April 24, 2026
+
+**Trade:** No trade — 0 bars built, 0 signals. The Schwab refresh token had expired again (the token refreshed on April 22 only had a 7-day TTL, and the underlying auth may not have fully persisted). With no market data ingested, the bot could not detect any setups. Discord 30-minute status updates also failed for the same reason.
+**VIX:** 18.57 (NORMAL regime), SPX opened at 7,136.48 and closed at 7,165.08 (+0.55% from prior close).
+**Running record:** 8W/10L (44.4% win rate). Total realized P&L: -$2,996.72 (unchanged).
+
+![Day 34 Dashboard — April 24, 2026](screenshots/DailyMelt_Day34_04242026.png)
+
+---
+
+### Day 35 — April 27, 2026
+
+**Trade:** No trade — 1 bullish pulse bar detected at 9:30, but the trigger price of $7,166.77 was never hit before the 11:30 window close. Setup expired.
+**VIX:** 18.16 (NORMAL regime), SPX opened at 7,152.72 and closed at 7,173.91 (+0.91% from prior close).
+**Market context:** 12 bars built. A bullish pulse bar formed on the first bar of the morning, but SPX did not break above the $7,166.77 trigger before the entry window closed at 11:30. Price eventually reached the 7,170s later in the afternoon — too late for the strategy's morning entry window.
+**Running record:** 8W/10L (44.4% win rate). Total realized P&L: -$2,996.72 (unchanged).
+
+![Day 35 Dashboard — April 27, 2026](screenshots/DailyMelt_Day35_04272026.png)
+
+---
+
+### Day 36 — April 28, 2026
+
+**Trade:** No trade — 0 pulse bars detected. 12 bars built, 4 signals evaluated, but none qualified.
+**VIX:** 18.0 (NORMAL regime), SPX opened at 7,133.74 and closed at 7,138.80 (+1.06% from prior close).
+**Running record:** 8W/10L (44.4% win rate). Total realized P&L: -$2,996.72 (unchanged).
+
+---
+
+### Day 37 — April 29, 2026
+
+**Trade:** Bullish put credit spread 7135/7130 (1 contract), entered 10:12 ET on bullish pulse bar at 9:30. Credit received: $2.15.
+**VIX:** 18.07 at entry (NORMAL regime), SPX opened at 7,131.61 (-0.09% gap, essentially flat). Closed at 7,135.95 (+0.06% from prior close).
+**Market context:** SPX opened virtually flat and spent most of the day in a tight range. The 9:30 bar formed a bullish pulse and the trigger fired at 10:12 with SPX at 7,132.95. Price barely moved all day — the chart shows a narrow range session. SPX closed at 7,135.95, just above the 7,135 short strike, allowing the put spread to expire worthless for full credit.
+**Result:** Win — expired at max profit. Profit captured: 100%. SPX at exit: 7,135.95. The flattest day in the live record at just +0.06% open-to-close.
+**Schwab account impact:** +$215.00
+**Running record:** 9W/10L (47.4% win rate). Total realized P&L: -$2,781.72. Total return: -5.98%.
+**Observation:** Best win of the live validation — full credit captured on a flat, range-bound day. This is exactly the environment where 0DTE credit spreads thrive: low volatility, no gap, no trend.
+
+![Day 37 Dashboard — April 29, 2026](screenshots/DailyMelt_Day37_04292026.png)
+
+---
+
+### Day 38 — April 30, 2026
+
+**Trade:** Bearish call credit spread 7130/7135 (1 contract), entered 10:08 ET on bearish pulse bar at 9:30. Credit received: $2.70.
+**VIX:** 18.08 at entry (NORMAL regime), SPX opened at 7,161.75 (+0.75% gap up). Closed at 7,209.01 (+1.42% from prior close).
+**Market context:** GDP and PCE data released pre-market. SPX gapped up +0.75% and the 9:30 bar formed a bearish pulse as the initial gap faded — SPX dropped from the 7,161 open to 7,131 by 10:00, triggering the bearish entry at 7,131.54. However, the selling was short-lived. SPX reversed sharply and rallied throughout the afternoon, closing at 7,209 — nearly 80 points above the entry. The bearish call spread at 7130/7135 was fully in-the-money at expiration.
+**Result:** Loss — held to expiration at max loss. SPX closed 79 points above the 7,130 short strike. Profit captured: -85.19%.
+**Schwab account impact:** -$230.00
+**Running record:** 9W/11L (45.0% win rate). Total realized P&L: -$3,011.72. Total return: -6.47%.
+**Observation:** Classic morning gap-fade trap. The bearish pulse bar was triggered by the initial gap-down from the open, but this was a bull trap reversal — the gap faded briefly before the real trend (up) asserted itself. This pattern of gap-induced false pulse bars has been a recurring source of losses.
+
+![Day 38 Dashboard — April 30, 2026](screenshots/DailyMelt_Day38_04302026.png)
+
+---
+
+### Day 39 — May 1, 2026
+
+**Trade:** Bullish put credit spread 7265/7260 (1 contract), entered 10:00 ET on bullish pulse bar at 9:30. Credit received: $1.85.
+**VIX:** 16.70 at entry (NORMAL regime), SPX opened at 7,234.54 (+0.97% gap up). Closed at 7,230.12 (-0.06% from prior close).
+**Market context:** SPX gapped up nearly 1% at the open and the 9:30 bar formed a bullish pulse with the close near the high. Entry triggered at 10:00 with SPX at 7,265.49 — right at the short strike. However, the gap-up momentum failed immediately. SPX reversed and sold off steadily through the session, dropping from 7,265 at entry to close at 7,230 — 35 points below the short put strike. The intraday chart shows a clear downtrend after a strong open.
+**Result:** Loss — held to expiration at max loss. SPX closed 35 points below the 7,265 short strike. Profit captured: -170.27%.
+**Schwab account impact:** -$315.00
+**Running record:** 9W/12L (42.9% win rate). Total realized P&L: -$3,326.72. Total return: -7.15%.
+**Observation:** Another gap-up reversal loss. The pattern is now clear: large gaps at the open create the appearance of strong momentum (forming pulse bars), but the gap itself often represents the bulk of the move — the intraday session then reverses. This has been the dominant failure mode since early April.
+
+![Day 39 Dashboard — May 1, 2026](screenshots/DailyMelt_Day39_05012026.png)
+
+---
+
+### April 2026 Results Summary
+
+**Trades:** 10 | **Win Rate:** 40% (4W/6L) | **P&L:** -$1,150.00 | **Avg Duration:** 5.2h | **Avg Capture:** -32.2%
+
+April was the strategy's worst month. Of the 10 trades, 6 were losses — with most losses coming from two recurring patterns:
+
+1. **Gap-induced false pulse bars:** Large overnight gaps (especially during the early-April recovery rally with 3–4% gaps) created pulse bars that appeared directional but actually represented exhaustion moves. The intraday session frequently reversed the gap direction, causing the trade to lose.
+2. **Government/geopolitical headline-driven reversals:** The early April period saw extraordinary market manipulation from tariff announcements and reversals, creating whipsaw price action that the strategy's momentum signals could not distinguish from genuine directional moves.
+
+**All-Time Record (21 trades):** 42.9% win rate, -$3,326.72 P&L, -35.6% avg capture.
+
+**Decision:** Live validation is paused pending strategy adjustments. The core issue is that the pulse bar signal — designed to detect morning momentum — is being triggered by opening gaps rather than genuine intraday momentum. Potential adjustments under consideration include gap-size filters (suppressing signals when the overnight gap exceeds a threshold), requiring intraday confirmation after the gap settles, and recalibrating the pulse bar threshold for different VIX regimes.
+
+![April 2026 Results](screenshots/DailyMelt_April2026_Results.png)
+
+---
+
 ## Disclaimer
 
 This is a personal project. It is not financial advice.
