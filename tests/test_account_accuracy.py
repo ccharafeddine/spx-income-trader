@@ -191,4 +191,4 @@ class TestDashboardBalanceFallback:
         source = app_path.read_text()
 
         # Should have warning for Schwab balance fetch failure
-        assert 'logger.warning(f"Schwab balance fetch failed, using DB fallback' in source
+        assert 'logger.warning(f"Schwab balance fetch failed, trying cached balance' in source
