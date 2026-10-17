@@ -120,5 +120,14 @@ notifications:
     url: ""  # or set DISCORD_WEBHOOK_URL in .env
     min_level: info
     enabled: true
+# Dry-run SPXW 0DTE chain recorder (scripts/record_chains.py). Optional.
+# Read-only quotes only: it never places orders. Not started by the bot;
+# run the script yourself. Times are ET, quoted so YAML keeps them as text.
+chain_recorder:
+  interval_seconds: 60
+  start: "11:45"
+  end: "16:00"
+  strike_count: 80
+  db_path: database/chain_snapshots.db
 backtest:
   fill_quality_factor: 1.0
