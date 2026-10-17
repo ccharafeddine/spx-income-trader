@@ -526,6 +526,7 @@ class BacktestEngine:
                 bar_low=bar.low,
                 vix=vix,
                 dt=bar_dt,
+                close_time=close_time,
             )
 
             # ---- Monitor ALL active positions (before circuit breaker gate) ----

@@ -45,6 +45,39 @@ def _bs_price(S: float, K: float, T: float, sigma: float,
 
 import pytz
 
+# ---------------------------------------------------------------------------
+# 0DTE pricing model (see docs/strategy_review.md for calibration)
+# ---------------------------------------------------------------------------
+TRADING_MINUTES_PER_YEAR = 390 * 252
+# ATM 0DTE implied vol as a fraction of VIX. Median VIX1D/VIX at the open
+# (2023-2026) is 0.614 and realised 10:30->close variance implies 0.617.
+VIX_TO_0DTE_IV = 0.62
+# Put-skew smile in standardised moneyness z = ln(K/S) / (sigma_atm * sqrt(T)):
+#   sigma(K) = sigma_atm * (1 - b*z + c*z^2), c = c_put for z < 0 else c_call,
+# with the wings soft-capped at ~1.7x ATM. ATM put spreads price ~$0.25
+# below ATM call spreads, consistent with live fills.
+SKEW_B, SKEW_C_PUT, SKEW_C_CALL = 0.06, 0.08, 0.02
+
+
+def smile_vol(K: float, S: float, sigma_atm: float, T: float,
+              b: float = SKEW_B, c_put: float = SKEW_C_PUT, c_call: float = SKEW_C_CALL) -> float:
+    """Implied vol for strike K under the parametric put-skew smile."""
+    if T <= 0 or sigma_atm <= 0:
+        return sigma_atm
+    z = math.log(K / S) / (sigma_atm * math.sqrt(T))
+    z = max(-4.0, min(4.0, z))
+    c = c_put if z < 0 else c_call
+    m = 1 - b * z + c * z * z
+    m = 1 + 0.7 * math.tanh((m - 1) / 0.7) if m > 1 else max(m, 0.7)
+    return sigma_atm * m
+
+
+def zero_dte_atm_vol(vix: float, vix1d: Optional[float] = None) -> float:
+    """ATM implied vol for a same-day option: VIX1D when known, else 0.62 x VIX."""
+    if vix1d and vix1d > 0:
+        return vix1d / 100.0
+    return VIX_TO_0DTE_IV * vix / 100.0
+
 from src.brokers.base import BrokerInterface
 from src.brokers.dry_run_broker import BidAskModel
 from src.models.spread import CreditSpread, TradeDirection
@@ -84,6 +117,8 @@ class BacktestBroker(BrokerInterface):
         self._current_vix: float = 15.0
         self._current_dt: Optional[datetime] = None
         self._current_dte: float = 0.01
+        self._current_vix1d: Optional[float] = None
+        self._close_hour, self._close_minute = 16, 0  # 13:00 on half days
 
         # Order tracking
         self._order_counter = 0
@@ -101,8 +136,13 @@ class BacktestBroker(BrokerInterface):
         vix: float,
         dt: datetime,
         dte: float = 0.01,
+        vix1d: Optional[float] = None,
+        close_time=None,
     ):
         """Update current market state (called by engine each bar)."""
+        self._current_vix1d = vix1d
+        if close_time is not None:
+            self._close_hour, self._close_minute = close_time.hour, close_time.minute
         self._current_price = price
         self._current_bar_high = bar_high
         self._current_bar_low = bar_low
@@ -143,21 +183,26 @@ class BacktestBroker(BrokerInterface):
         if current_price <= 0:
             return {}
 
-        implied_vol = self._current_vix / 100.0
         dte = self._current_dte
+        zero_dte = dte < 1
 
-        # For 0DTE, use fraction of day remaining
-        if dte < 1:
+        if zero_dte:
+            # Same-day expiry: time in TRADING minutes to the close, ATM vol from
+            # VIX1D (or 0.62 x VIX), and a put-skew smile. Earlier versions used
+            # calendar hours / 24 / 365 with flat VIX vol, which understated the
+            # remaining-session move ~2x and made spreads decay too fast.
+            minutes_left = 0.25
             if self._current_dt:
-                market_close = self._current_dt.replace(hour=16, minute=0, second=0)
-                if self._current_dt < market_close:
-                    hours_left = (market_close - self._current_dt).total_seconds() / 3600
-                    dte = max(hours_left / 24, 0.01)
-                else:
-                    dte = 0.01
-
-        # Convert DTE from days to years for Black-Scholes
-        T = dte / 365.0
+                close = self._current_dt.replace(hour=self._close_hour, minute=self._close_minute,
+                                                 second=0, microsecond=0)
+                if self._current_dt < close:
+                    minutes_left = max(0.25, (close - self._current_dt).total_seconds() / 60.0)
+            T = minutes_left / TRADING_MINUTES_PER_YEAR
+            atm_vol = zero_dte_atm_vol(self._current_vix, self._current_vix1d)
+        else:
+            # Multi-day (swing) options: calendar time, VIX as IV, flat (unchanged)
+            T = dte / 365.0
+            atm_vol = self._current_vix / 100.0
 
         # Generate strikes around ATM
         atm_strike = round(current_price / self.strike_interval) * self.strike_interval
@@ -167,8 +212,9 @@ class BacktestBroker(BrokerInterface):
         half_spread = self.bid_ask_spread / 2
 
         for strike in strikes:
-            call_mid = _bs_price(current_price, strike, T, implied_vol, 'call')
-            put_mid = _bs_price(current_price, strike, T, implied_vol, 'put')
+            vol = smile_vol(strike, current_price, atm_vol, T) if zero_dte else atm_vol
+            call_mid = _bs_price(current_price, strike, T, vol, 'call')
+            put_mid = _bs_price(current_price, strike, T, vol, 'put')
 
             chain[strike] = {
                 'call_bid': max(0.05, call_mid - half_spread),
