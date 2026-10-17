@@ -33,6 +33,19 @@ bot is running (paused, dry-run or live).
 You can set defaults in an optional `chain_recorder:` section of `config/strategy_params.yaml` (see the example file).
 Command-line flags override them.
 
+## Desktop-app token, health check and exit codes
+
+When Schwab is connected through the installed desktop app, the token lives in the app's data folder
+(`%LOCALAPPDATA%\SPXIncomeTrader\SPXIncomeTrader\database\schwab_token.json` on Windows). Point the recorder at it:
+
+```bash
+python scripts/record_chains.py --check --token-path "%LOCALAPPDATA%/SPXIncomeTrader/SPXIncomeTrader/database/schwab_token.json"
+```
+
+`--check` prints only the token's age and hours left (never its contents) and makes no network calls. On a
+non-trading day the recorder exits before touching Schwab. Exit codes: `0` done or nothing to do, `2` Schwab not
+authenticated (reconnect in the app).
+
 ## Output
 
 `database/chain_snapshots.db`:

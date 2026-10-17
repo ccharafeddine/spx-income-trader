@@ -215,3 +215,45 @@ class TestScript:
         ex = yaml.safe_load((ROOT / "config" / "strategy_params.example.yaml").read_text())
         cfg = RecorderConfig.from_dict(ex["chain_recorder"])
         assert cfg.start == time(11, 45) and cfg.end == time(16, 0) and cfg.interval_seconds == 60
+
+
+class TestScriptAuthHandling:
+    def _mod(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("record_chains", ROOT / "scripts" / "record_chains.py")
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        return mod
+
+    def test_new_flags_parse(self):
+        args = self._mod().parse_args(["--check", "--token-path", "x/tok.json"])
+        assert args.check and args.token_path == "x/tok.json"
+
+    def test_check_missing_token_exits_2(self, tmp_path):
+        assert self._mod().main(["--check", "--token-path", str(tmp_path / "none.json")]) == 2
+
+    def test_token_report_never_includes_contents(self, tmp_path):
+        tok = tmp_path / "schwab_token.json"
+        tok.write_text('{"token": {"refresh_token": "SECRET-VALUE"}}')
+        mod = self._mod()
+        line = mod.token_report({"valid": True, "hours_remaining": 10.0, "created_at": "a", "expires_at": "b"}, tok)
+        assert "SECRET-VALUE" not in line and "10.0 h left" in line
+        assert "not found" in mod.token_report({}, tmp_path / "missing.json")
+
+    def test_unauthenticated_run_exits_2_without_traceback(self, tmp_path, monkeypatch):
+        import src.data.chain_recorder as cr
+        import src.utils.market_calendar as mc
+        monkeypatch.setattr(mc, "is_trading_day", lambda d: True)
+        def boom(token_path=None):
+            raise RuntimeError("Schwab is not authenticated.")
+        monkeypatch.setattr(cr, "build_read_only_schwab", boom)
+        assert self._mod().main(["--token-path", str(tmp_path / "none.json"), "--db", str(tmp_path / "c.db")]) == 2
+        assert not (tmp_path / "c.db").exists()
+
+    def test_non_trading_day_exits_0_before_auth(self, tmp_path, monkeypatch):
+        import src.data.chain_recorder as cr
+        import src.utils.market_calendar as mc
+        monkeypatch.setattr(mc, "is_trading_day", lambda d: False)
+        def must_not_call(token_path=None):
+            raise AssertionError("auth attempted on a non-trading day")
+        monkeypatch.setattr(cr, "build_read_only_schwab", must_not_call)
+        assert self._mod().main(["--token-path", str(tmp_path / "none.json")]) == 0
