@@ -49,12 +49,19 @@ class TestDIBudgetSizing:
                               spread_width=5.0, daily_contracts=7, max_contracts=10)
         assert pm.calculate_position_size(StrategyType.DAILY_INCOME, 500) == 7
 
-    def test_min_contracts_floor(self):
-        """Tiny budget should still return min_contracts."""
+    def test_tiny_budget_skips_instead_of_forcing_min_contracts(self):
+        """Budget below one contract's max loss -> 0 (skip), not min_contracts."""
         pm = PortfolioManager(account_size=1000, max_daily_loss_pct=1.0,
                               daily_contracts=7, max_contracts=10, min_contracts=1)
-        result = pm.calculate_position_size(StrategyType.DAILY_INCOME, 500)
-        assert result >= 1
+        assert pm.calculate_position_size(StrategyType.DAILY_INCOME, 500) == 0
+        assert pm.last_sizing_reason == 'risk_budget_exceeded'
+
+    def test_exactly_one_contract_fits(self):
+        """Budget equal to one contract's max loss -> 1 contract."""
+        pm = PortfolioManager(account_size=50000, max_daily_loss_pct=1.0,
+                              daily_contracts=7, max_contracts=10, min_contracts=1)
+        assert pm.calculate_position_size(StrategyType.DAILY_INCOME, 500) == 1
+        assert pm.last_sizing_reason is None
 
     def test_invalid_risk_returns_min(self):
         """Zero or negative risk per contract returns min_contracts."""

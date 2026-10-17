@@ -2747,6 +2747,12 @@ class TradingBot:
                 available_buying_power=buying_power,
             )
             if quantity <= 0:
+                if getattr(self.portfolio, 'last_sizing_reason', None) == 'risk_budget_exceeded':
+                    logger.warning(f"{strategy_name}: 1 contract risks ${max_risk_per_contract:,.2f}, "
+                                   f"more than the daily loss budget. Skipping trade")
+                    self._record_rejection(strategy_name, 'risk_budget_exceeded',
+                                           f'risk/contract=${max_risk_per_contract:,.2f}')
+                    return False
                 logger.warning(f"{strategy_name}: Insufficient buying power")
                 self._record_rejection(strategy_name, 'insufficient_buying_power',
                                        f'BP=${buying_power:,.2f}' if buying_power else 'unknown')
@@ -3150,6 +3156,12 @@ class TradingBot:
                 available_buying_power=buying_power,
             )
             if quantity <= 0:
+                if getattr(self.portfolio, 'last_sizing_reason', None) == 'risk_budget_exceeded':
+                    logger.warning(f"1 contract risks ${max_risk_per_contract:,.2f}, more than the "
+                                   f"daily loss budget. Skipping trade")
+                    self._record_rejection('daily_income', 'risk_budget_exceeded',
+                                           f'risk/contract=${max_risk_per_contract:,.2f}')
+                    return
                 logger.warning("Insufficient buying power for even 1 contract")
                 self._record_rejection('daily_income', 'insufficient_buying_power',
                                        f'BP=${buying_power:,.2f}' if buying_power else 'unknown')

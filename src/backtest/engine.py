@@ -305,6 +305,7 @@ class BacktestEngine:
         self._0dte_trade: Optional[Trade] = None
         self._0dte_strategy_type: Optional[str] = None
         self._pending_setup = None  # DI pulse -> breakout pending
+        self.risk_budget_skips = 0  # DI trades skipped: 1 contract > daily loss budget
 
         # Swing slot (TNT only, persists across days)
         self._tnt_trade: Optional[Trade] = None
@@ -348,7 +349,9 @@ class BacktestEngine:
 
         Mirrors PortfolioManager.calculate_position_size() for DAILY_INCOME:
             contracts = floor(daily_loss_budget / max_risk_per_contract)
-            capped by daily_contracts and max_contracts
+            capped by daily_contracts and max_contracts.
+        Returns 0 (skip the trade) when one contract's max loss exceeds the
+        daily loss budget, instead of forcing 1 contract.
         """
         if max_risk_per_contract <= 0:
             return 1
@@ -358,7 +361,8 @@ class BacktestEngine:
             return 1
         budget = current_balance * (self.max_daily_loss_pct / 100.0)
         contracts = int(math.floor(budget / max_risk_per_contract))
-        contracts = max(1, contracts)
+        if contracts < 1:
+            return 0
         contracts = min(contracts, self.daily_contracts)
         contracts = min(contracts, self.max_contracts)
         return contracts
@@ -809,6 +813,12 @@ class BacktestEngine:
             qty = self._get_swing_contracts()
         else:
             qty = self._calculate_di_position_size(max_risk_per_contract)
+            if qty <= 0:
+                self.risk_budget_skips += 1
+                logger.debug(f"DI skipped: 1 contract risks ${max_risk_per_contract:.0f}, "
+                             f"more than the daily loss budget")
+                self._pending_setup = None
+                return False
         order_id = self.broker.place_spread_order(spread, qty)
         order_status = self.broker.get_order_status(order_id)
 

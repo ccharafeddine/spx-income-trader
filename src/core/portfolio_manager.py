@@ -35,6 +35,10 @@ from src.core.drawdown_manager import DrawdownManager
 
 logger = logging.getLogger(__name__)
 
+# Reasons calculate_position_size() can return 0 (see last_sizing_reason)
+RISK_BUDGET_EXCEEDED = 'risk_budget_exceeded'
+INSUFFICIENT_BUYING_POWER = 'insufficient_buying_power'
+
 
 class StrategyType(Enum):
     """Strategy identifiers"""
@@ -78,6 +82,9 @@ class PortfolioManager:
     - Strategy priority when conflicts arise
     - Daily P&L circuit breaker
     """
+
+    # Why the last calculate_position_size() call returned 0 (None if it didn't)
+    last_sizing_reason: Optional[str] = None
 
     def __init__(
         self,
@@ -504,9 +511,21 @@ class PortfolioManager:
             logger.warning("Invalid max_risk_per_contract, using minimum contracts")
             return self.min_contracts
 
+        self.last_sizing_reason = None
+
         if strategy == StrategyType.DAILY_INCOME:
             daily_budget = self.account_size * (self.max_daily_loss_pct / 100)
             contracts = int(math.floor(daily_budget / max_risk_per_contract))
+            if contracts < 1:
+                # One contract would risk more than the daily loss budget:
+                # skip the trade rather than forcing min_contracts.
+                self.last_sizing_reason = RISK_BUDGET_EXCEEDED
+                logger.warning(
+                    f"Position sizing: skip {strategy.value}: 1 contract risks "
+                    f"${max_risk_per_contract:,.2f}, more than the daily loss budget "
+                    f"${daily_budget:,.2f} ({self.max_daily_loss_pct}% of ${self.account_size:,.2f})"
+                )
+                return 0
             contracts = max(self.min_contracts, contracts)
             contracts = min(contracts, self.daily_contracts)
             contracts = min(contracts, self.max_contracts)
@@ -523,6 +542,8 @@ class PortfolioManager:
                     f"{bp_contracts} contracts (was {contracts})"
                 )
                 contracts = max(0, bp_contracts)
+                if contracts == 0:
+                    self.last_sizing_reason = INSUFFICIENT_BUYING_POWER
 
         logger.info(
             f"Position sizing: {contracts} contracts for {strategy.value}, "
@@ -536,7 +557,10 @@ class PortfolioManager:
         """Return (calculated DI contracts, daily cap) for display."""
         max_risk = self.spread_width * 100
         budget = self.account_size * (self.max_daily_loss_pct / 100)
-        raw = max(self.min_contracts, int(math.floor(budget / max_risk)))
+        floor_contracts = int(math.floor(budget / max_risk))
+        if floor_contracts < 1:
+            return 0, self.daily_contracts  # 1 contract exceeds the budget: DI would skip
+        raw = max(self.min_contracts, floor_contracts)
         calculated = min(raw, self.daily_contracts, self.max_contracts)
         return calculated, self.daily_contracts
 

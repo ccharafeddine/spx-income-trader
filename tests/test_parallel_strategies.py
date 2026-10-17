@@ -1566,8 +1566,8 @@ class TestMaxContractsEnforcement:
 
         assert result == 1, f"max_contracts=1 must stick, got {result}"
 
-    def test_small_account_produces_1_contract(self):
-        """Small account with 2% loss limit should produce 1 contract, not 0."""
+    def test_small_account_skips_when_one_contract_exceeds_budget(self):
+        """Small account: if 1 contract risks more than the 2% budget, skip (0), don't force 1."""
         from src.core.portfolio_manager import PortfolioManager, StrategyType
 
         pm = PortfolioManager(
@@ -1579,14 +1579,14 @@ class TestMaxContractsEnforcement:
             swing_contracts=2,
         )
 
-        # $5k * 2% = $100 budget / $500 risk = 0.2 -> floor(0.2) = 0
-        # Clamped to min_contracts=1
+        # $5k * 2% = $100 budget / $500 risk = 0.2 -> floor(0.2) = 0 -> skip
         result = pm.calculate_position_size(
             strategy=StrategyType.DAILY_INCOME,
             max_risk_per_contract=500.0,
         )
 
-        assert result == 1, f"min_contracts=1 must be the floor, got {result}"
+        assert result == 0, f"trade must be skipped when 1 contract exceeds the budget, got {result}"
+        assert pm.last_sizing_reason == 'risk_budget_exceeded'
 
 
 class TestPartialFillAcceptance:
