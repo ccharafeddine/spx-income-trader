@@ -147,6 +147,18 @@ class TradingBot:
             except Exception as e:
                 logger.warning(f"Shadow mode failed to initialize: {e}")
 
+        # IronCondor0DTE: paper signals only, disabled by default.
+        # It never places orders; with the flag on in live mode it refuses to run.
+        self.iron_condor = None
+        try:
+            from src.core.iron_condor import IronCondor0DTE
+            _ic = IronCondor0DTE.from_params(STRATEGY_PARAMS, dry_run=dry_run)
+            if _ic.active:
+                self.iron_condor = _ic
+                logger.info("IronCondor0DTE: PAPER signals enabled (dry-run, no orders)")
+        except Exception as e:
+            logger.warning(f"IronCondor0DTE failed to initialize (ignored): {e}")
+
         # Initialize PDT Tracker
         pdt_cfg = STRATEGY_PARAMS.get('pdt', {})
         pdt_enabled = pdt_cfg.get('pdt_protection', True)
@@ -1025,6 +1037,8 @@ class TradingBot:
                 self._market_was_open = market_open_now
 
                 if not market_open_now:
+                    self._settle_iron_condor_paper(current_time)
+
                     # B&B: Finalize overnight signal once at market close
                     if (self.bnb_enabled and self.bnb_strategy
                             and not self._bnb_day_end_called
@@ -1106,6 +1120,9 @@ class TradingBot:
                         logger.info(f"Trade closed: ${closed_pnl:+.2f}")
                 except Exception as e:
                     logger.warning(f"Position monitoring error (non-fatal, will retry): {e}", exc_info=True)
+
+                # IronCondor0DTE paper signals (no-op unless enabled in dry-run)
+                self._run_iron_condor_paper(current_time)
 
                 # Danger alert: check if SPX has breached any open position's short strike
                 if self.notifier and self._current_spx_price > 0:
@@ -1387,6 +1404,44 @@ class TradingBot:
 
         except Exception as e:
             logger.warning(f"Position reconciliation failed (non-fatal): {e}")
+
+    def _run_iron_condor_paper(self, current_time):
+        """Feed IronCondor0DTE in dry-run. Reads a chain; never places orders."""
+        ic = getattr(self, 'iron_condor', None)
+        if ic is None or not ic.active or not self.dry_run:
+            return
+        try:
+            t = current_time.time()
+            if ic.position is None and not (ic.cfg.entry_time <= t <= ic.cfg.entry_deadline):
+                return
+            # Poll the chain at most once a minute
+            minute = current_time.replace(second=0, microsecond=0)
+            if getattr(self, '_ic_last_poll', None) == minute:
+                return
+            self._ic_last_poll = minute
+            chain = self.broker.get_options_chain('SPX', current_time.strftime('%Y-%m-%d'))
+            if getattr(self.broker, '_last_chain_source', 'real') == 'synthetic':
+                return  # paper results on a synthetic chain would be meaningless
+            ev = ic.on_tick(current_time, self._current_spx_price, chain,
+                            close_time=get_market_close_time(current_time.date()))
+            if ev:
+                self._log_signal(ev['event'], ev)
+        except Exception as e:
+            logger.warning(f"IronCondor0DTE paper tick failed (ignored): {e}")
+
+    def _settle_iron_condor_paper(self, current_time):
+        ic = getattr(self, 'iron_condor', None)
+        if ic is None or ic.position is None:
+            return
+        try:
+            if current_time.date() > ic.position.trade_date or current_time.time() >= get_market_close_time(current_time.date()):
+                spx_close = self.price_feed.get_latest_price() or self._current_spx_price
+                if spx_close and spx_close > 0:
+                    ev = ic.settle(spx_close, current_time)
+                    if ev:
+                        self._log_signal(ev['event'], ev)
+        except Exception as e:
+            logger.warning(f"IronCondor0DTE paper settle failed (ignored): {e}")
 
     def _is_market_open(self, dt: datetime) -> bool:
         """Check if market is currently open (respects early close days)."""

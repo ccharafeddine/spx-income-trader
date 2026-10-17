@@ -120,6 +120,17 @@ notifications:
     url: ""  # or set DISCORD_WEBHOOK_URL in .env
     min_level: info
     enabled: true
+# IronCondor0DTE (non-directional 0DTE condor, see docs/strategy_review/README.md).
+# OFF by default. When enabled it only logs PAPER signals in dry-run mode and
+# refuses to run in live mode. It never places orders.
+iron_condor:
+  enabled: false
+  entry_time: "12:00"
+  entry_deadline: "12:30"
+  short_delta: 0.10
+  wing_width: 10.0
+  stop_mult: 2.0
+  min_credit: 0.10
 # Dry-run SPXW 0DTE chain recorder (scripts/record_chains.py). Optional.
 # Read-only quotes only: it never places orders. Not started by the bot;
 # run the script yourself. Times are ET, quoted so YAML keeps them as text.
