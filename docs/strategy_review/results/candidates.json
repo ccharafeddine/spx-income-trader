@@ -1,0 +1,36 @@
+{
+ "A: 12:00 iron condor, 10-delta, $10 wings, stop 2x credit": {
+  "signal": "fixed",
+  "structure": "condor",
+  "short_mode": "delta",
+  "width": 10.0,
+  "profit_target": null,
+  "min_credit": 0.1,
+  "bias_filter": false,
+  "entry_min": 150,
+  "short_delta": 0.1,
+  "stop_mult": 2.0
+ },
+ "B: 12:00 iron condor, 15-delta, $10 wings, no stop": {
+  "signal": "fixed",
+  "structure": "condor",
+  "short_mode": "delta",
+  "width": 10.0,
+  "profit_target": null,
+  "min_credit": 0.1,
+  "bias_filter": false,
+  "entry_min": 150,
+  "short_delta": 0.15,
+  "stop_mult": null
+ },
+ "C: live signal, ATM $10 wide (best directional IS)": {
+  "width": 10.0,
+  "min_credit": 2.0
+ },
+ "D: live signal, 20-delta $10 wide": {
+  "short_mode": "delta",
+  "short_delta": 0.2,
+  "width": 10.0,
+  "min_credit": 0.6
+ }
+}

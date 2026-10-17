@@ -67,3 +67,6 @@ ARCHITECTURE.md
 # Copy config/strategy_params.example.yaml to create it.
 config/strategy_params.yaml
 config/local.yaml
+
+# Daily Melt review: downloaded market data (re-fetch with research/daily_melt_review/fetch_*.py)
+research/daily_melt_review/data/

@@ -1,0 +1,18 @@
+{
+ "all": {
+  "days": 1942,
+  "k_fair_variance": 0.617,
+  "k_fair_absmove": 0.542
+ },
+ "2019-2022": {
+  "days": 999,
+  "k_fair_variance": 0.627,
+  "k_fair_absmove": 0.553
+ },
+ "2023-2026": {
+  "days": 943,
+  "k_fair_variance": 0.597,
+  "k_fair_absmove": 0.527
+ },
+ "vix1d_open_over_vix_open_median": 0.614
+}

@@ -1,0 +1,16 @@
+A: 12:00 iron condor, 10-delta, $10 wings, stop 2x credit
+  IS {'trades': 1006, 'win_rate': 70.6, 'exp_per_trade': np.float64(16.6), 'avg_win': np.float64(71.6), 'avg_loss': np.float64(-115.3), 'profit_factor': np.float64(1.49), 'max_dd': np.float64(-5103.0), 'sharpe': np.float64(2.99), 't_stat': np.float64(5.98), 'avg_credit': np.float64(0.79), 'avg_risk': np.float64(921.0)}
+  OOS {'trades': 951, 'win_rate': 69.4, 'exp_per_trade': np.float64(20.9), 'avg_win': np.float64(83.5), 'avg_loss': np.float64(-120.9), 'profit_factor': np.float64(1.57), 'max_dd': np.float64(-2891.0), 'sharpe': np.float64(3.45), 't_stat': np.float64(6.7), 'avg_credit': np.float64(0.88), 'avg_risk': np.float64(912.0)}
+  by year {2019: 5823.0, 2020: 4283.0, 2021: 10790.0, 2022: -4233.0, 2023: 1694.0, 2024: 3574.0, 2025: 5108.0, 2026: 9522.0} worst day -369
+B: 12:00 iron condor, 15-delta, $10 wings, no stop
+  IS {'trades': 1006, 'win_rate': 87.6, 'exp_per_trade': np.float64(27.7), 'avg_win': np.float64(124.6), 'avg_loss': np.float64(-655.3), 'profit_factor': np.float64(1.34), 'max_dd': np.float64(-13220.0), 'sharpe': np.float64(1.59), 't_stat': np.float64(3.17), 'avg_credit': np.float64(1.33), 'avg_risk': np.float64(867.0)}
+  OOS {'trades': 951, 'win_rate': 88.1, 'exp_per_trade': np.float64(44.7), 'avg_win': np.float64(141.9), 'avg_loss': np.float64(-676.0), 'profit_factor': np.float64(1.56), 'max_dd': np.float64(-6680.0), 'sharpe': np.float64(2.51), 't_stat': np.float64(4.87), 'avg_credit': np.float64(1.48), 'avg_risk': np.float64(852.0)}
+  by year {2019: 14738.0, 2020: 6769.0, 2021: 17819.0, 2022: -11442.0, 2023: 6005.0, 2024: 4517.0, 2025: 13595.0, 2026: 18372.0} worst day -930
+C: live signal, ATM $10 wide (best directional IS)
+  IS {'trades': 555, 'win_rate': 66.1, 'exp_per_trade': np.float64(25.2), 'avg_win': np.float64(299.5), 'avg_loss': np.float64(-510.4), 'profit_factor': np.float64(1.15), 'max_dd': np.float64(-4921.0), 'sharpe': np.float64(0.74), 't_stat': np.float64(1.48), 'avg_credit': np.float64(3.88), 'avg_risk': np.float64(612.0)}
+  OOS {'trades': 527, 'win_rate': 62.6, 'exp_per_trade': np.float64(-6.6), 'avg_win': np.float64(319.1), 'avg_loss': np.float64(-552.4), 'profit_factor': np.float64(0.97), 'max_dd': np.float64(-9999.0), 'sharpe': np.float64(-0.18), 't_stat': np.float64(-0.35), 'avg_credit': np.float64(4.07), 'avg_risk': np.float64(593.0)}
+  by year {2019: 6655.0, 2020: 1677.0, 2021: 1644.0, 2022: 3988.0, 2023: 812.0, 2024: -1223.0, 2025: 847.0, 2026: -3937.0} worst day -713
+D: live signal, 20-delta $10 wide
+  IS {'trades': 545, 'win_rate': 90.8, 'exp_per_trade': np.float64(3.7), 'avg_win': np.float64(78.7), 'avg_loss': np.float64(-739.4), 'profit_factor': np.float64(1.05), 'max_dd': np.float64(-5815.0), 'sharpe': np.float64(0.17), 't_stat': np.float64(0.34), 'avg_credit': np.float64(1.03), 'avg_risk': np.float64(897.0)}
+  OOS {'trades': 527, 'win_rate': 90.5, 'exp_per_trade': np.float64(4.1), 'avg_win': np.float64(85.7), 'avg_loss': np.float64(-775.1), 'profit_factor': np.float64(1.06), 'max_dd': np.float64(-6062.0), 'sharpe': np.float64(0.18), 't_stat': np.float64(0.36), 'avg_credit': np.float64(1.11), 'avg_risk': np.float64(889.0)}
+  by year {2019: 3776.0, 2020: 1253.0, 2021: -692.0, 2022: -2328.0, 2023: -2820.0, 2024: 837.0, 2025: 5319.0, 2026: -1191.0} worst day -923

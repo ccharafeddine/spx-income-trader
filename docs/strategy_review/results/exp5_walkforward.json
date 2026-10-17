@@ -1,0 +1,188 @@
+{
+ "picks": [
+  {
+   "year": 2021,
+   "pick_index": 87,
+   "pick": {
+    "entry_min": 150,
+    "short_delta": 0.15,
+    "width": 10.0,
+    "profit_target": null,
+    "stop_mult": 2.0
+   },
+   "in_sample_score": 4.4,
+   "oos_year": {
+    "label": "",
+    "trades": 252,
+    "win_rate": 82.1,
+    "exp_per_trade": 76.1,
+    "avg_win": 136.2,
+    "avg_loss": -200.2,
+    "profit_factor": 3.13,
+    "total": 19175.0,
+    "max_dd": -1989.0,
+    "sharpe": 9.13,
+    "t_stat": 9.13,
+    "avg_credit": 1.42,
+    "avg_risk": 858.0,
+    "ret_on_risk_pct": 8.87
+   }
+  },
+  {
+   "year": 2022,
+   "pick_index": 87,
+   "pick": {
+    "entry_min": 150,
+    "short_delta": 0.15,
+    "width": 10.0,
+    "profit_target": null,
+    "stop_mult": 2.0
+   },
+   "in_sample_score": 5.93,
+   "oos_year": {
+    "label": "",
+    "trades": 251,
+    "win_rate": 47.4,
+    "exp_per_trade": -38.4,
+    "avg_win": 146.3,
+    "avg_loss": -205.0,
+    "profit_factor": 0.64,
+    "total": -9644.0,
+    "max_dd": -10521.0,
+    "sharpe": -3.39,
+    "t_stat": -3.38,
+    "avg_credit": 1.53,
+    "avg_risk": 847.0,
+    "ret_on_risk_pct": -4.54
+   }
+  },
+  {
+   "year": 2023,
+   "pick_index": 79,
+   "pick": {
+    "entry_min": 150,
+    "short_delta": 0.1,
+    "width": 10.0,
+    "profit_target": null,
+    "stop_mult": 2.0
+   },
+   "in_sample_score": 2.99,
+   "oos_year": {
+    "label": "",
+    "trades": 250,
+    "win_rate": 64.4,
+    "exp_per_trade": 6.8,
+    "avg_win": 72.2,
+    "avg_loss": -111.6,
+    "profit_factor": 1.17,
+    "total": 1694.0,
+    "max_dd": -1950.0,
+    "sharpe": 1.2,
+    "t_stat": 1.19,
+    "avg_credit": 0.78,
+    "avg_risk": 922.0,
+    "ret_on_risk_pct": 0.73
+   }
+  },
+  {
+   "year": 2024,
+   "pick_index": 87,
+   "pick": {
+    "entry_min": 150,
+    "short_delta": 0.15,
+    "width": 10.0,
+    "profit_target": null,
+    "stop_mult": 2.0
+   },
+   "in_sample_score": 2.76,
+   "oos_year": {
+    "label": "",
+    "trades": 252,
+    "win_rate": 65.5,
+    "exp_per_trade": 24.3,
+    "avg_win": 136.4,
+    "avg_loss": -188.1,
+    "profit_factor": 1.37,
+    "total": 6133.0,
+    "max_dd": -1760.0,
+    "sharpe": 2.42,
+    "t_stat": 2.42,
+    "avg_credit": 1.41,
+    "avg_risk": 859.0,
+    "ret_on_risk_pct": 2.83
+   }
+  },
+  {
+   "year": 2025,
+   "pick_index": 87,
+   "pick": {
+    "entry_min": 150,
+    "short_delta": 0.15,
+    "width": 10.0,
+    "profit_target": null,
+    "stop_mult": 2.0
+   },
+   "in_sample_score": 2.7,
+   "oos_year": {
+    "label": "",
+    "trades": 250,
+    "win_rate": 67.2,
+    "exp_per_trade": 34.7,
+    "avg_win": 151.4,
+    "avg_loss": -204.4,
+    "profit_factor": 1.52,
+    "total": 8677.0,
+    "max_dd": -4568.0,
+    "sharpe": 3.26,
+    "t_stat": 3.25,
+    "avg_credit": 1.58,
+    "avg_risk": 842.0,
+    "ret_on_risk_pct": 4.12
+   }
+  },
+  {
+   "year": 2026,
+   "pick_index": 87,
+   "pick": {
+    "entry_min": 150,
+    "short_delta": 0.15,
+    "width": 10.0,
+    "profit_target": null,
+    "stop_mult": 2.0
+   },
+   "in_sample_score": 2.79,
+   "oos_year": {
+    "label": "",
+    "trades": 199,
+    "win_rate": 77.9,
+    "exp_per_trade": 76.2,
+    "avg_win": 161.2,
+    "avg_loss": -223.1,
+    "profit_factor": 2.54,
+    "total": 15168.0,
+    "max_dd": -1219.0,
+    "sharpe": 7.25,
+    "t_stat": 6.44,
+    "avg_credit": 1.67,
+    "avg_risk": 833.0,
+    "ret_on_risk_pct": 9.15
+   }
+  }
+ ],
+ "combined_oos": {
+  "label": "",
+  "trades": 1454,
+  "win_rate": 67.1,
+  "exp_per_trade": 28.3,
+  "avg_win": 133.5,
+  "avg_loss": -185.7,
+  "profit_factor": 1.46,
+  "total": 41203.0,
+  "max_dd": -11798.0,
+  "sharpe": 2.87,
+  "t_stat": 6.88,
+  "avg_credit": 1.39,
+  "avg_risk": 861.0,
+  "ret_on_risk_pct": 3.29
+ }
+}

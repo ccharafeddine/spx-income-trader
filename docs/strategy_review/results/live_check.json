@@ -1,0 +1,11 @@
+{
+ "session_days": 34,
+ "live_trades": 21,
+ "model_trades": 22,
+ "days_both_traded": 16,
+ "traded_day_agreement": 23,
+ "win_loss_sign_agreement_on_common_days": 14,
+ "live_win_rate": 42.9,
+ "model_win_rate": 68.2,
+ "model_total_1lot": -66.0
+}

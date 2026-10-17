@@ -1,0 +1,287 @@
+{
+ "baseline": {
+  "label": "Live rules (baseline)",
+  "full": {
+   "label": "",
+   "trades": 1082,
+   "win_rate": 60.3,
+   "exp_per_trade": -14.7,
+   "avg_win": 158.7,
+   "avg_loss": -277.6,
+   "profit_factor": 0.87,
+   "total": -15881.0,
+   "max_dd": -18461.0,
+   "sharpe": -0.79,
+   "t_stat": -2.22,
+   "avg_credit": 2.04,
+   "avg_risk": 296.0,
+   "ret_on_risk_pct": -4.95
+  },
+  "IS": {
+   "label": "",
+   "trades": 555,
+   "win_rate": 61.4,
+   "exp_per_trade": -8.5,
+   "avg_win": 157.3,
+   "avg_loss": -272.8,
+   "profit_factor": 0.92,
+   "total": -4739.0,
+   "max_dd": -8186.0,
+   "sharpe": -0.47,
+   "t_stat": -0.94,
+   "avg_credit": 2.02,
+   "avg_risk": 298.0,
+   "ret_on_risk_pct": -2.86
+  },
+  "OOS": {
+   "label": "",
+   "trades": 527,
+   "win_rate": 59.0,
+   "exp_per_trade": -21.1,
+   "avg_win": 160.2,
+   "avg_loss": -282.3,
+   "profit_factor": 0.82,
+   "total": -11142.0,
+   "max_dd": -11893.0,
+   "sharpe": -1.13,
+   "t_stat": -2.19,
+   "avg_credit": 2.05,
+   "avg_risk": 295.0,
+   "ret_on_risk_pct": -7.18
+  },
+  "params": {
+   "_k": 0.62
+  }
+ },
+ "signal_hit_rate": 53.6,
+ "win_rate_by_side": [
+  {
+   "side": "call",
+   "n": 433,
+   "win": 0.543,
+   "exp": -30.894,
+   "credit": 2.178
+  },
+  {
+   "side": "put",
+   "n": 649,
+   "win": 0.643,
+   "exp": -3.859,
+   "credit": 1.941
+  }
+ ],
+ "coinflip_exp_per_trade": {
+  "mean": -27.0,
+  "p5": -36.8,
+  "p95": -18.6
+ },
+ "baseline_percentile_vs_coinflip": 98.0,
+ "cost_attribution": {
+  "gross_at_mid": 18005.0,
+  "bid_ask": -29474.0,
+  "stop_slippage": 0.0,
+  "commissions": -4412.0,
+  "net": -15881.0,
+  "trades_gross": 1082,
+  "trades_net": 1082
+ },
+ "reversed": {
+  "label": "Pulse reversed (fade the breakout)",
+  "full": {
+   "label": "",
+   "trades": 1082,
+   "win_rate": 54.8,
+   "exp_per_trade": -38.4,
+   "avg_win": 162.3,
+   "avg_loss": -281.8,
+   "profit_factor": 0.7,
+   "total": -41520.0,
+   "max_dd": -41980.0,
+   "sharpe": -2.01,
+   "t_stat": -5.64,
+   "avg_credit": 2.09,
+   "avg_risk": 291.0,
+   "ret_on_risk_pct": -13.19
+  },
+  "IS": {
+   "label": "",
+   "trades": 555,
+   "win_rate": 54.1,
+   "exp_per_trade": -43.0,
+   "avg_win": 160.2,
+   "avg_loss": -282.2,
+   "profit_factor": 0.67,
+   "total": -23889.0,
+   "max_dd": -24276.0,
+   "sharpe": -2.25,
+   "t_stat": -4.54,
+   "avg_credit": 2.08,
+   "avg_risk": 292.0,
+   "ret_on_risk_pct": -14.74
+  },
+  "OOS": {
+   "label": "",
+   "trades": 527,
+   "win_rate": 55.6,
+   "exp_per_trade": -33.5,
+   "avg_win": 164.5,
+   "avg_loss": -281.3,
+   "profit_factor": 0.73,
+   "total": -17631.0,
+   "max_dd": -18621.0,
+   "sharpe": -1.75,
+   "t_stat": -3.42,
+   "avg_credit": 2.1,
+   "avg_risk": 290.0,
+   "ret_on_risk_pct": -11.55
+  },
+  "params": {
+   "signal": "pulse_reverse",
+   "_k": 0.62
+  }
+ },
+ "zero_cost": {
+  "label": "Live rules, zero commissions and fills at mid",
+  "full": {
+   "label": "",
+   "trades": 1082,
+   "win_rate": 61.6,
+   "exp_per_trade": 16.6,
+   "avg_win": 184.6,
+   "avg_loss": -253.3,
+   "profit_factor": 1.17,
+   "total": 18005.0,
+   "max_dd": -2715.0,
+   "sharpe": 0.91,
+   "t_stat": 2.53,
+   "avg_credit": 2.29,
+   "avg_risk": 271.0,
+   "ret_on_risk_pct": 6.13
+  },
+  "IS": {
+   "label": "",
+   "trades": 555,
+   "win_rate": 62.9,
+   "exp_per_trade": 22.5,
+   "avg_win": 182.6,
+   "avg_loss": -248.7,
+   "profit_factor": 1.24,
+   "total": 12488.0,
+   "max_dd": -1969.0,
+   "sharpe": 1.24,
+   "t_stat": 2.49,
+   "avg_credit": 2.26,
+   "avg_risk": 274.0,
+   "ret_on_risk_pct": 8.2
+  },
+  "OOS": {
+   "label": "",
+   "trades": 527,
+   "win_rate": 60.3,
+   "exp_per_trade": 10.5,
+   "avg_win": 186.8,
+   "avg_loss": -257.8,
+   "profit_factor": 1.1,
+   "total": 5518.0,
+   "max_dd": -2715.0,
+   "sharpe": 0.56,
+   "t_stat": 1.09,
+   "avg_credit": 2.32,
+   "avg_risk": 268.0,
+   "ret_on_risk_pct": 3.9
+  },
+  "params": {
+   "commission_leg": 0.0,
+   "_zero_spread": true,
+   "stop_slip": 0.0,
+   "_k": 0.62
+  }
+ },
+ "by_gap_b": [
+  {
+   "gap_b": "<0.25%",
+   "n": 430,
+   "win_rate": 0.574,
+   "exp": -24.414
+  },
+  {
+   "gap_b": "0.25-0.5%",
+   "n": 303,
+   "win_rate": 0.62,
+   "exp": -6.032
+  },
+  {
+   "gap_b": "0.5-1%",
+   "n": 221,
+   "win_rate": 0.624,
+   "exp": -6.631
+  },
+  {
+   "gap_b": ">1%",
+   "n": 128,
+   "win_rate": 0.617,
+   "exp": -16.33
+  }
+ ],
+ "by_bar": [
+  {
+   "bar": "after 9:30 bar",
+   "n": 448,
+   "win_rate": 0.592,
+   "exp": -21.212
+  },
+  {
+   "bar": "after 10:00 bar",
+   "n": 382,
+   "win_rate": 0.623,
+   "exp": -5.541
+  },
+  {
+   "bar": "after 10:30 bar",
+   "n": 252,
+   "win_rate": 0.591,
+   "exp": -16.912
+  }
+ ],
+ "by_vix_b": [
+  {
+   "vix_b": "<15",
+   "n": 204,
+   "win_rate": 0.608,
+   "exp": -5.112
+  },
+  {
+   "vix_b": "15-20",
+   "n": 441,
+   "win_rate": 0.583,
+   "exp": -22.447
+  },
+  {
+   "vix_b": "20-25",
+   "n": 227,
+   "win_rate": 0.621,
+   "exp": -6.597
+  },
+  {
+   "vix_b": ">25",
+   "n": 210,
+   "win_rate": 0.619,
+   "exp": -16.389
+  }
+ ],
+ "by_reason": [
+  {
+   "reason": "settle",
+   "n": 467,
+   "win_rate": 0.079,
+   "exp": -245.977
+  },
+  {
+   "reason": "target",
+   "n": 615,
+   "win_rate": 1.0,
+   "exp": 160.959
+  }
+ ],
+ "breakeven_win_rate": 63.6
+}
