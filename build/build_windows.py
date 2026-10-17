@@ -45,7 +45,7 @@ DATA_FILES = [
     (PROJECT_ROOT / "dashboard" / "templates" / "settings.html", "dashboard/templates"),
     (PROJECT_ROOT / "dashboard" / "templates" / "setup.html",    "dashboard/templates"),
     # Strategy config (bundled default -- user copy lives in AppData)
-    (PROJECT_ROOT / "config" / "strategy_params.yaml",           "config"),
+    (PROJECT_ROOT / "config" / "strategy_params.example.yaml",           "config"),
     # Economic calendar (static event data used by src/data/economic_calendar.py)
     (PROJECT_ROOT / "config" / "economic_calendar.json",         "config"),
     # Database schema (required for fresh DB creation in packaged app)
@@ -275,7 +275,7 @@ def verify():
         "_internal/dashboard/templates/index.html",
         "_internal/dashboard/templates/settings.html",
         "_internal/dashboard/templates/setup.html",
-        "_internal/config/strategy_params.yaml",
+        "_internal/config/strategy_params.example.yaml",
         "_internal/config/economic_calendar.json",
         "_internal/database/schema.sql",
     ]

@@ -54,7 +54,11 @@ def load_schwab_config():
             config = yaml.safe_load(f) or {}
     else:
         config = {}
-    return config.get('broker', {}).get('schwab', {})
+    schwab = dict(config.get('broker', {}).get('schwab', {}) or {})
+    import os
+    if os.getenv('SCHWAB_ACCOUNT_NUMBER'):
+        schwab['account_number'] = os.getenv('SCHWAB_ACCOUNT_NUMBER').strip()
+    return schwab
 
 
 def get_schwab_client():

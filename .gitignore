@@ -62,3 +62,8 @@ nul
 
 # Architecture reference (local only)
 ARCHITECTURE.md
+
+# Local strategy config (account number, webhook URLs, balances).
+# Copy config/strategy_params.example.yaml to create it.
+config/strategy_params.yaml
+config/local.yaml

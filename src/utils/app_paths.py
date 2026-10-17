@@ -118,9 +118,12 @@ def _initialize_packaged_dirs() -> None:
     for directory in [LOG_DIR, DB_PATH.parent, TOKENS_DIR, CONFIG_DIR]:
         directory.mkdir(parents=True, exist_ok=True)
 
-    # Seed or merge strategy_params.yaml
+    # Seed or merge strategy_params.yaml from the bundled example
+    # (the real strategy_params.yaml is local-only and never bundled)
     user_config = CONFIG_DIR / 'strategy_params.yaml'
-    bundled_config = BUNDLE_DIR / 'config' / 'strategy_params.yaml'
+    bundled_config = BUNDLE_DIR / 'config' / 'strategy_params.example.yaml'
+    if not bundled_config.exists():
+        bundled_config = BUNDLE_DIR / 'config' / 'strategy_params.yaml'
 
     if not bundled_config.exists():
         return
@@ -132,6 +135,26 @@ def _initialize_packaged_dirs() -> None:
         init_messages.append(msg)
     else:
         _merge_config_updates(user_config, bundled_config)
+
+
+def _seed_source_config() -> None:
+    """Source mode: create config/strategy_params.yaml from the example.
+
+    strategy_params.yaml holds account-specific values (account number,
+    webhook URLs, balances) and is gitignored.  On a fresh clone it is
+    seeded from the committed strategy_params.example.yaml.
+    """
+    if IS_PACKAGED:
+        return
+    user_config = CONFIG_DIR / 'strategy_params.yaml'
+    example = CONFIG_DIR / 'strategy_params.example.yaml'
+    if user_config.exists() or not example.exists():
+        return
+    try:
+        shutil.copy2(example, user_config)
+        init_messages.append(f"Created {user_config} from strategy_params.example.yaml")
+    except OSError as e:
+        logger.warning("Could not seed %s: %s", user_config, e)
 
 
 # ---------------------------------------------------------------------------
@@ -148,3 +171,5 @@ CONFIG_DIR: Path = DATA_DIR / 'config'
 
 # Run first-time setup in packaged mode
 _initialize_packaged_dirs()
+# Seed the local (untracked) strategy config in source mode
+_seed_source_config()

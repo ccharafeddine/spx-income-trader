@@ -1,9 +1,13 @@
+# Example strategy configuration -- copy to config/strategy_params.yaml.
+# config/strategy_params.yaml is gitignored: put your account number,
+# webhook URLs and balances there (or in .env as SCHWAB_ACCOUNT_NUMBER /
+# DISCORD_WEBHOOK_URL), never in this file.
 broker:
   active: schwab
   schwab:
     callback_url: https://127.0.0.1
     token_path: database/schwab_token.json
-    account_number: REDACTED
+    account_number: ""  # or set SCHWAB_ACCOUNT_NUMBER in .env
   shadow:
     enabled: false
     compare_interval_min: 15
@@ -11,11 +15,11 @@ broker:
     host: 127.0.0.1
     port: 7496
     client_id: 1
-    paper_trading: false
+    paper_trading: true
 portfolio:
-  account_size: REDACTED
+  account_size: 50000.0
   dry_run_account_size: 50000.0
-  live_account_size: REDACTED
+  live_account_size: 0.0  # last known live balance (0 = not yet fetched)
   max_total_positions: 2
   max_0dte_positions: 1
   max_daily_risk_pct: 5.0
@@ -113,7 +117,7 @@ pdt:
 notifications:
   webhooks:
   - type: discord
-    url: REDACTED
+    url: ""  # or set DISCORD_WEBHOOK_URL in .env
     min_level: info
     enabled: true
 backtest:

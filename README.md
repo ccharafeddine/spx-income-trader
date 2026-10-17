@@ -366,7 +366,7 @@ Position Manager (P&L tracking, exit management, partial fill tracking, PDT-cond
 
 ## Settings
 
-All settings are configured via `config/strategy_params.yaml` and the dashboard Account page. Runtime changes (strategy toggles, risk controls, position sizing) are saved to `database/runtime_settings.json` and deep-merged over the YAML defaults on startup. The merge is recursive: nested keys in `runtime_settings.json` override the corresponding YAML keys without clobbering sibling values.
+All settings are configured via `config/strategy_params.yaml` and the dashboard Account page. `config/strategy_params.yaml` is local-only and gitignored (it holds your account number, webhook URLs and balances); on first run it is created from the committed `config/strategy_params.example.yaml`. Secrets can instead be supplied as environment variables (or in `.env`): `SCHWAB_ACCOUNT_NUMBER` and `DISCORD_WEBHOOK_URL`. Runtime changes (strategy toggles, risk controls, position sizing) are saved to `database/runtime_settings.json` and deep-merged over the YAML defaults on startup. The merge is recursive: nested keys in `runtime_settings.json` override the corresponding YAML keys without clobbering sibling values.
 
 ### What requires a restart
 - Trading mode (dry-run / live)
@@ -544,7 +544,8 @@ dashboard/
     static/                  # Icons and static assets
 
 config/
-    strategy_params.yaml     # All strategy and risk parameters
+    strategy_params.example.yaml  # Committed template (placeholders only)
+    strategy_params.yaml     # Local, gitignored: all strategy and risk parameters
     settings.py              # Environment, paths, DB config, keyring integration, runtime_settings deep merge
 
 database/

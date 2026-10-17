@@ -403,14 +403,62 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
     return result
 
 
+# Environment variables that override secret / account-specific values in
+# strategy_params.yaml.  Values may also be placed in an untracked .env file.
+ENV_SCHWAB_ACCOUNT_NUMBER = 'SCHWAB_ACCOUNT_NUMBER'
+ENV_DISCORD_WEBHOOK_URL = 'DISCORD_WEBHOOK_URL'
+
+
+def _apply_env_overrides(settings: dict) -> dict:
+    """Overlay secrets from environment variables onto loaded settings.
+
+    - SCHWAB_ACCOUNT_NUMBER -> broker.schwab.account_number
+    - DISCORD_WEBHOOK_URL   -> url of the first Discord entry in
+      notifications.webhooks (an entry is added if none exists)
+    """
+    account_number = os.getenv(ENV_SCHWAB_ACCOUNT_NUMBER, '').strip()
+    if account_number:
+        broker = settings.setdefault('broker', {}) or {}
+        settings['broker'] = broker
+        schwab = broker.setdefault('schwab', {}) or {}
+        broker['schwab'] = schwab
+        schwab['account_number'] = account_number
+
+    webhook_url = os.getenv(ENV_DISCORD_WEBHOOK_URL, '').strip()
+    if webhook_url:
+        notifications = settings.setdefault('notifications', {}) or {}
+        settings['notifications'] = notifications
+        webhooks = notifications.get('webhooks')
+        if not isinstance(webhooks, list):
+            webhooks = []
+            notifications['webhooks'] = webhooks
+        for hook in webhooks:
+            if isinstance(hook, dict) and hook.get('type') == 'discord':
+                hook['url'] = webhook_url
+                break
+        else:
+            webhooks.append({'type': 'discord', 'url': webhook_url,
+                             'min_level': 'info', 'enabled': True})
+    return settings
+
+
 def load_strategy_params():
     """Load strategy parameters from YAML, overlaid with runtime overrides.
+
+    strategy_params.yaml is a local, untracked file (copy
+    strategy_params.example.yaml to create it). If it is missing, the
+    committed example file is used. Secrets can be supplied via the
+    SCHWAB_ACCOUNT_NUMBER / DISCORD_WEBHOOK_URL environment variables.
 
     Merge order: strategy_params.yaml (defaults) → runtime_settings.json
     (user overrides from Settings page). This ensures the bot respects
     the same values the dashboard displays.
     """
     params_file = CONFIG_DIR / 'strategy_params.yaml'
+    if not params_file.exists():
+        example_file = CONFIG_DIR / 'strategy_params.example.yaml'
+        if example_file.exists():
+            params_file = example_file
 
     if not params_file.exists():
         settings = {
@@ -445,7 +493,7 @@ def load_strategy_params():
         except (json.JSONDecodeError, OSError):
             pass
 
-    return settings
+    return _apply_env_overrides(settings)
 
 STRATEGY_PARAMS = load_strategy_params()
 

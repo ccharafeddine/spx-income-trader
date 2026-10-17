@@ -50,7 +50,7 @@ DATA_FILES = [
         str(PROJECT_ROOT / "dashboard" / "templates" / "setup.html"),
     ]),
     ("config", [
-        str(PROJECT_ROOT / "config" / "strategy_params.yaml"),
+        str(PROJECT_ROOT / "config" / "strategy_params.example.yaml"),
         str(PROJECT_ROOT / "config" / "economic_calendar.json"),
     ]),
     ("database", [
@@ -552,7 +552,7 @@ def verify():
         "dashboard/templates/index.html",
         "dashboard/templates/settings.html",
         "dashboard/templates/setup.html",
-        "config/strategy_params.yaml",
+        "config/strategy_params.example.yaml",
         "config/economic_calendar.json",
     ]
     for rel in expected:
