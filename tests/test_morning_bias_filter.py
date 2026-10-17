@@ -224,128 +224,73 @@ def _make_bullish_pulse_bar(dt):
     )
 
 
+def _open_for_move(bar_close, move_pct):
+    """Day open such that bar_close is move_pct % above it."""
+    return bar_close / (1 + move_pct / 100.0)
+
+
 class TestMorningBiasFilterBacktest:
-    """Test that morning bias filter uses full-day return in backtest engine."""
+    """Backtest bias filter uses the move from the open to the setup bar's
+    close (what the live bot can see), never the full-day close."""
 
-    def test_bearish_skipped_on_up_day(self):
-        """Bearish DI pulse skipped when full-day return is Up (>0.25%)."""
-        engine = _make_engine(di_morning_bias_filter=True)
-        engine._spx_open = 5000.0
-        engine._spx_close = 5020.0  # +0.4% full-day return (Up)
-
+    def _run(self, bar_factory, move_pct, filter_on=True, full_day_close=None):
+        engine = _make_engine(di_morning_bias_filter=filter_on)
         bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
-        bar = _make_bearish_pulse_bar(bar_dt)
+        bar = bar_factory(bar_dt)
+        engine._spx_open = _open_for_move(bar.close, move_pct)
+        engine._spx_close = full_day_close if full_day_close is not None else bar.close
         engine._check_for_setup(bar, bar_dt, vix=15.0)
+        return engine
 
-        assert engine._pending_setup is None
-        assert engine._direction_filter_skips == 1
+    def test_bearish_skipped_when_up_at_bar_close(self):
+        e = self._run(_make_bearish_pulse_bar, +0.4)
+        assert e._pending_setup is None and e._direction_filter_skips == 1
 
-    def test_bullish_proceeds_on_up_day(self):
-        """Bullish DI pulse proceeds when full-day return is Up."""
-        engine = _make_engine(di_morning_bias_filter=True)
-        engine._spx_open = 5000.0
-        engine._spx_close = 5020.0  # +0.4% full-day return (Up)
+    def test_bearish_skipped_when_strong_up_at_bar_close(self):
+        e = self._run(_make_bearish_pulse_bar, +1.2)
+        assert e._pending_setup is None and e._direction_filter_skips == 1
 
-        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
-        bar = _make_bullish_pulse_bar(bar_dt)
-        engine._check_for_setup(bar, bar_dt, vix=15.0)
+    def test_bullish_proceeds_when_up(self):
+        e = self._run(_make_bullish_pulse_bar, +0.4)
+        assert e._pending_setup['direction'] == TradeDirection.BULLISH
+        assert e._direction_filter_skips == 0
 
-        assert engine._pending_setup is not None
-        assert engine._pending_setup['direction'] == TradeDirection.BULLISH
-        assert engine._direction_filter_skips == 0
+    def test_bullish_skipped_when_down(self):
+        e = self._run(_make_bullish_pulse_bar, -0.5)
+        assert e._pending_setup is None and e._direction_filter_skips == 1
 
-    def test_bullish_skipped_on_down_day(self):
-        """Bullish DI pulse skipped when full-day return is Down (<-0.25%)."""
-        engine = _make_engine(di_morning_bias_filter=True)
-        engine._spx_open = 5000.0
-        engine._spx_close = 4975.0  # -0.5% full-day return (Down)
+    def test_bullish_skipped_when_strong_down(self):
+        e = self._run(_make_bullish_pulse_bar, -1.5)
+        assert e._pending_setup is None and e._direction_filter_skips == 1
 
-        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
-        bar = _make_bullish_pulse_bar(bar_dt)
-        engine._check_for_setup(bar, bar_dt, vix=15.0)
+    def test_bullish_allowed_when_flat(self):
+        e = self._run(_make_bullish_pulse_bar, -0.1)
+        assert e._pending_setup['direction'] == TradeDirection.BULLISH
 
-        assert engine._pending_setup is None
-        assert engine._direction_filter_skips == 1
+    def test_bearish_allowed_when_flat(self):
+        e = self._run(_make_bearish_pulse_bar, +0.1)
+        assert e._pending_setup is not None
 
-    def test_bullish_skipped_on_strong_down_day(self):
-        """Bullish DI pulse skipped on Strong Down (<-1%) full-day return."""
-        engine = _make_engine(di_morning_bias_filter=True)
-        engine._spx_open = 5000.0
-        engine._spx_close = 4925.0  # -1.5% full-day return (Strong Down)
+    def test_bearish_allowed_when_down(self):
+        e = self._run(_make_bearish_pulse_bar, -0.6)
+        assert e._pending_setup is not None
 
-        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
-        bar = _make_bullish_pulse_bar(bar_dt)
-        engine._check_for_setup(bar, bar_dt, vix=15.0)
+    def test_filter_disabled_allows_bearish_when_up(self):
+        e = self._run(_make_bearish_pulse_bar, +0.4, filter_on=False)
+        assert e._pending_setup['direction'] == TradeDirection.BEARISH
 
-        assert engine._pending_setup is None
-        assert engine._direction_filter_skips == 1
+    def test_full_day_close_is_ignored_no_lookahead(self):
+        """A big rally LATER in the day must not block a bearish setup that
+        formed while SPX was flat (this was the look-ahead bug)."""
+        bar_close = _make_bearish_pulse_bar(ET.localize(datetime(2024, 1, 3, 10, 0))).close
+        e = self._run(_make_bearish_pulse_bar, +0.05, full_day_close=bar_close * 1.03)
+        assert e._pending_setup is not None
+        assert e._direction_filter_skips == 0
 
-    def test_bullish_allowed_on_flat_day_backtest(self):
-        """Bullish DI pulse proceeds when full-day return is Flat."""
-        engine = _make_engine(di_morning_bias_filter=True)
-        engine._spx_open = 5000.0
-        engine._spx_close = 4995.0  # -0.1% full-day return (Flat)
-
-        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
-        bar = _make_bullish_pulse_bar(bar_dt)
-        engine._check_for_setup(bar, bar_dt, vix=15.0)
-
-        assert engine._pending_setup is not None
-        assert engine._pending_setup['direction'] == TradeDirection.BULLISH
-        assert engine._direction_filter_skips == 0
-
-    def test_filter_disabled_allows_bearish_on_up_day(self):
-        """With filter disabled, bearish DI pulse proceeds on Up days."""
-        engine = _make_engine(di_morning_bias_filter=False)
-        engine._spx_open = 5000.0
-        engine._spx_close = 5020.0  # +0.4% full-day return (Up)
-
-        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
-        bar = _make_bearish_pulse_bar(bar_dt)
-        engine._check_for_setup(bar, bar_dt, vix=15.0)
-
-        assert engine._pending_setup is not None
-        assert engine._pending_setup['direction'] == TradeDirection.BEARISH
-        assert engine._direction_filter_skips == 0
-
-    def test_bearish_allowed_on_flat_day(self):
-        """Bearish DI pulse proceeds when full-day return is Flat."""
-        engine = _make_engine(di_morning_bias_filter=True)
-        engine._spx_open = 5000.0
-        engine._spx_close = 5005.0  # +0.1% full-day return (Flat)
-
-        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
-        bar = _make_bearish_pulse_bar(bar_dt)
-        engine._check_for_setup(bar, bar_dt, vix=15.0)
-
-        assert engine._pending_setup is not None
-        assert engine._direction_filter_skips == 0
-
-    def test_bearish_allowed_on_down_day(self):
-        """Bearish DI pulse proceeds when full-day return is Down."""
-        engine = _make_engine(di_morning_bias_filter=True)
-        engine._spx_open = 5000.0
-        engine._spx_close = 4970.0  # -0.6% full-day return (Down)
-
-        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
-        bar = _make_bearish_pulse_bar(bar_dt)
-        engine._check_for_setup(bar, bar_dt, vix=15.0)
-
-        assert engine._pending_setup is not None
-        assert engine._direction_filter_skips == 0
-
-    def test_bearish_skipped_on_strong_up_day(self):
-        """Bearish DI pulse skipped on Strong Up (>1%) full-day return."""
-        engine = _make_engine(di_morning_bias_filter=True)
-        engine._spx_open = 5000.0
-        engine._spx_close = 5060.0  # +1.2% full-day return (Strong Up)
-
-        bar_dt = ET.localize(datetime(2024, 1, 3, 10, 0))
-        bar = _make_bearish_pulse_bar(bar_dt)
-        engine._check_for_setup(bar, bar_dt, vix=15.0)
-
-        assert engine._pending_setup is None
-        assert engine._direction_filter_skips == 1
+    def test_full_day_selloff_does_not_block_bullish(self):
+        bar_close = _make_bullish_pulse_bar(ET.localize(datetime(2024, 1, 3, 10, 0))).close
+        e = self._run(_make_bullish_pulse_bar, +0.05, full_day_close=bar_close * 0.97)
+        assert e._pending_setup['direction'] == TradeDirection.BULLISH
 
     def test_direction_filter_skips_in_report(self):
         """Backtest report should include direction_filter_skips count."""

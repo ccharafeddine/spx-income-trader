@@ -646,18 +646,20 @@ class BacktestEngine:
         if direction is None:
             return
 
-        # Morning bias filter: block counter-trend DI entries
-        # In backtest mode, uses full-day return (spx_close vs spx_open) since
-        # the day's data is known. This matches the dashboard direction drill-down.
+        # Morning bias filter: block counter-trend DI entries.
+        # Uses the move from the open to this bar's close -- the price the
+        # live bot sees when the bar completes. The full-day close is NOT
+        # known at that moment; using it (as earlier versions did) leaked the
+        # day's outcome into the signal and inflated the backtest win rate.
         if self.strategy.di_morning_bias_filter:
             allowed, regime, move_pct = SPXIncomeStrategy.check_morning_bias_filter(
-                direction, self._spx_open, self._spx_close
+                direction, self._spx_open, bar.close
             )
             if not allowed:
                 self._direction_filter_skips += 1
                 logger.debug(
                     f"[BT] {bar_dt.strftime('%Y-%m-%d %H:%M')} DI {direction.value} setup skipped - "
-                    f"day return is {regime} ({'+' if move_pct >= 0 else ''}{move_pct:.2f}%)"
+                    f"move from open is {regime} ({'+' if move_pct >= 0 else ''}{move_pct:.2f}%)"
                 )
                 return
 
