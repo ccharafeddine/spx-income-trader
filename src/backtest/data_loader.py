@@ -5,8 +5,9 @@ Loads historical 30-minute SPX bars from CSV or downloads them from
 Yahoo Finance. Also fetches daily VIX close for IV proxy in option pricing.
 
 When 30-minute data is unavailable (yfinance only provides ~60 days of
-intraday history), automatically falls back to daily bars and synthesizes
-realistic 30-minute bars that preserve daily OHLCV.
+intraday history), real 1-minute S&P 500 bars are loaded instead (see
+minute_data.py). Bars synthesized from daily OHLC are produced only with
+allow_synthetic=True, because their shape leaks the day's outcome.
 """
 
 import logging
@@ -168,36 +169,64 @@ def _download_daily_bars(
 
 # ---------- Public API ----------
 
+def _official_daily(start_date: date, end_date: date, cache_dir: Path) -> pd.DataFrame:
+    daily_csv = _download_daily_bars(start_date, end_date, cache_dir)
+    daily_df = pd.read_csv(daily_csv, parse_dates=True, index_col=0)
+    daily_df.columns = [c.lower().strip() for c in daily_df.columns]
+    return daily_df
+
+
 def download_spx_bars(
     start_date: date,
     end_date: date,
     cache_dir: Optional[Path] = None,
+    allow_synthetic: bool = False,
+    minute_getter=None,
 ) -> Path:
     """
-    Download historical SPX 30-minute bars from Yahoo Finance and save to CSV.
+    Download historical SPX 30-minute bars and save to CSV.
 
-    If intraday data is unavailable (yfinance only keeps ~60 days of 30-min
-    history), automatically falls back to downloading daily bars and
-    synthesizing 30-minute bars.
+    Order of sources:
+      1. Yahoo Finance 30-minute bars (only ~60 days of history).
+      2. Real 1-minute S&P 500 bars (Dukascopy index CFD) aligned to the
+         official SPX close -- see ``src/backtest/minute_data.py``. Missing
+         days are skipped and listed in ``<csv>.quality.json``.
+      3. Bars synthesized from daily OHLC -- ONLY when ``allow_synthetic=True``.
+         Synthetic bars encode the day's outcome in their shape and must not
+         be used to judge an intraday signal.
 
     Args:
         start_date: First date to download
         end_date: Last date to download
         cache_dir: Directory to save CSV (default: database/backtest_data/)
+        allow_synthetic: Permit the synthetic fallback (off by default).
+        minute_getter: Optional HTTP getter override (tests).
 
     Returns:
         Path to the saved CSV file
+
+    Raises:
+        ValueError: if no real data is available and synthesis is not allowed.
     """
     import yfinance as yf
+
+    if start_date > date.today():
+        raise ValueError(f"No SPX data available for future dates {start_date} to {end_date}")
 
     cache_dir = cache_dir or _get_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    csv_path = cache_dir / f'spx_30m_{start_date}_{end_date}.csv'
+    # v2 cache name: earlier caches named spx_30m_<dates>.csv may hold
+    # synthetic bars and are deliberately not reused.
+    csv_path = cache_dir / f'spx_30m_v2_{start_date}_{end_date}.csv'
+    synth_path = cache_dir / f'spx_30m_SYNTHETIC_{start_date}_{end_date}.csv'
 
     if csv_path.exists():
         logger.info(f"Using cached SPX data: {csv_path}")
         return csv_path
+    if allow_synthetic and synth_path.exists():
+        logger.warning(f"Using cached SYNTHETIC SPX data: {synth_path}")
+        return synth_path
 
     logger.info(f"Downloading SPX 30-min bars: {start_date} to {end_date}")
 
@@ -234,9 +263,6 @@ def download_spx_bars(
         df = df[~df.index.duplicated(keep='first')]
         df = df.sort_index()
 
-        # Check coverage: if 30m data covers less than 50% of the
-        # requested range, fall back to daily synthesis to avoid
-        # caching a partial result (yfinance only keeps ~60 days).
         requested_days = (end_date - start_date).days
         actual_days = len(set(df.index.date))
         expected_trading_days = max(1, requested_days * 252 / 365)
@@ -246,22 +272,47 @@ def download_spx_bars(
             df.to_csv(csv_path)
             logger.info(f"Saved {len(df)} 30-min bars to {csv_path}")
             return csv_path
-        else:
-            logger.info(
-                f"30-min data only covers {actual_days} of ~{int(expected_trading_days)} "
-                f"expected trading days ({coverage:.0%}), falling back to daily synthesis"
-            )
+        logger.info(
+            f"Yahoo 30-min data only covers {actual_days} of ~{int(expected_trading_days)} "
+            f"expected trading days ({coverage:.0%}); loading real 1-minute data instead"
+        )
 
-    # Fallback: download daily bars and synthesize 30-min bars
-    logger.info("30-min data unavailable from Yahoo Finance, falling back to daily bars")
-    daily_csv = _download_daily_bars(start_date, end_date, cache_dir)
-    daily_df = pd.read_csv(daily_csv, parse_dates=True, index_col=0)
-    daily_df.columns = [c.lower().strip() for c in daily_df.columns]
+    # Real 1-minute data aligned to the official close
+    daily_df = _official_daily(start_date, end_date, cache_dir)
+    try:
+        from .minute_data import build_minute_bars, resample_30m, write_quality_report
+        from src.utils.market_calendar import is_early_close
+        official = {ts.date(): float(c) for ts, c in daily_df['close'].items()}
+        days = sorted(d for d in official if start_date <= d <= end_date)
+        kwargs = {'getter': minute_getter} if minute_getter else {}
+        minutes, skipped = build_minute_bars(
+            days, official, cache_dir / 'minute_usa500',
+            early_closes=[d for d in days if is_early_close(d)], **kwargs)
+        if len(minutes):
+            bars = resample_30m(minutes)
+            bars.to_csv(csv_path)
+            write_quality_report(Path(str(csv_path) + '.quality.json'), days, skipped,
+                                 'dukascopy USA500IDXUSD 1-min, aligned to official SPX close')
+            if skipped:
+                logger.warning(f"Real minute data: {len(skipped)} of {len(days)} days skipped "
+                               f"(see {csv_path}.quality.json)")
+            logger.info(f"Saved {len(bars)} real 30-min bars to {csv_path}")
+            return csv_path
+    except Exception as e:
+        logger.warning(f"Real minute data unavailable: {e}")
 
+    if not allow_synthetic:
+        raise ValueError(
+            f"No real intraday SPX data for {start_date} to {end_date}. Synthetic bars "
+            "built from daily OHLC are refused because they leak the day's outcome; "
+            "pass allow_synthetic=True only for UI demos."
+        )
+
+    logger.warning("Falling back to SYNTHETIC 30-min bars from daily OHLC (allow_synthetic=True)")
     synthetic = _synthesize_30m_from_daily(daily_df)
-    synthetic.to_csv(csv_path)
-    logger.info(f"Saved {len(synthetic)} synthetic 30-min bars to {csv_path}")
-    return csv_path
+    synthetic.to_csv(synth_path)
+    logger.info(f"Saved {len(synthetic)} synthetic 30-min bars to {synth_path}")
+    return synth_path
 
 
 def download_vix_daily(
