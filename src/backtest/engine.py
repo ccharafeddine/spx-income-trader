@@ -33,6 +33,7 @@ from src.core.bollinger_filter import BollingerFilter
 from src.core.tag_n_turn import TagNTurnStrategy
 from src.core.bnb_strategy import BnBStrategy
 from src.core.orb_strategy import ORBStrategy
+from config.settings import STRATEGY_PARAMS
 from src.backtest.sim_broker import BacktestBroker
 from src.backtest.data_loader import get_trading_days, get_bars_for_day
 
@@ -224,6 +225,8 @@ class BacktestEngine:
         max_daily_loss_pct: float = 2.0,
         progress_callback=None,
         strategies: Optional[Dict] = None,
+        min_bar_range_points: Optional[float] = None,
+        commission_per_leg: float = 1.30,
     ):
         self.bars_df = bars_df
         self.vix_daily = vix_daily
@@ -234,6 +237,9 @@ class BacktestEngine:
         self.swing_contracts = swing_contracts if swing_contracts is not None else 2
         self.max_daily_loss_pct = max_daily_loss_pct
         self.progress_callback = progress_callback
+        # Commission + exchange/regulatory fees per option leg per contract,
+        # charged on entry and on early exits (not on cash settlement).
+        self.commission_per_leg = commission_per_leg
 
         # Fill quality factor (1.0 = theoretical mid, <1.0 = reduced entry credit)
         self._fill_quality_factor = fill_quality_factor
@@ -257,11 +263,17 @@ class BacktestEngine:
         # Initialize DI strategy (SAME class as live trading)
         strat_cfg = strategies or {}
         self._di_enabled = strat_cfg.get('daily_income', {}).get('enabled', True)
+        # Live parity: same minimum pulse-bar range as the live config
+        if min_bar_range_points is None:
+            min_bar_range_points = float(
+                STRATEGY_PARAMS.get('strategy', {}).get('min_bar_range_points', 0.0) or 0.0)
+        self.min_bar_range_points = min_bar_range_points
         self.strategy = SPXIncomeStrategy(
             pulse_threshold=pulse_threshold,
             spread_width=spread_width,
             profit_target_pct=profit_target_pct,
             min_credit=min_credit,
+            min_bar_range_points=min_bar_range_points,
         )
         self.pulse_detector = PulseBarDetector(pulse_threshold)
         self._di_spread_width = spread_width
@@ -586,21 +598,20 @@ class BacktestEngine:
                         if not ok:
                             self._orb_strat.rollback_entry()
 
-                # DI: pulse -> breakout flow
+                # DI: pulse -> breakout flow (live parity, see _di_window_flags)
                 if self._di_enabled and not self._0dte_trade:
-                    bar_time = bar_dt.time()
+                    can_trigger, can_setup, expire = self._di_window_flags(bar_dt)
 
-                    # Check breakout trigger
-                    if self._pending_setup:
+                    # Check breakout trigger (live checks triggers before new setups)
+                    if self._pending_setup and can_trigger:
                         self._check_breakout(bar, bar_dt, vix)
 
-                    # Check for new DI setups (9:30-11:30 window)
-                    if time(9, 30) <= bar_time <= time(11, 30):
-                        if not self._pending_setup and not self._0dte_trade:
-                            self._check_for_setup(bar, bar_dt, vix)
+                    # A newer pulse replaces an older pending one, as in live
+                    if can_setup and not self._0dte_trade:
+                        self._check_for_setup(bar, bar_dt, vix)
 
-                    # Expire pending DI setup after 11:30
-                    if self._pending_setup and bar_time > time(11, 30):
+                    # Expire pending DI setup once the window has closed
+                    if self._pending_setup and expire:
                         self._pending_setup = None
 
         # ---- End of day ----
@@ -640,6 +651,35 @@ class BacktestEngine:
     # ------------------------------------------------------------------
     # DI: Setup detection and breakout (unchanged from original)
     # ------------------------------------------------------------------
+
+    BAR_MINUTES = 30
+    DI_WINDOW_START = time(9, 30)
+    DI_WINDOW_END = time(11, 30)
+
+    def _di_window_flags(self, bar_dt: datetime):
+        """Live-parity window rules for a bar starting at ``bar_dt``.
+
+        Live trading evaluates a pulse bar when it COMPLETES and expires
+        pending setups as soon as the clock passes 11:30, so:
+          - a bar may arm a setup only if it completes before 11:30
+            (9:30, 10:00, 10:30 bars; the 11:00 bar never trades live);
+          - a bar may trigger a pending setup only if it starts before 11:30;
+          - pending setups expire once a bar reaches the window end.
+        Returns (can_trigger, can_setup, expire).
+        """
+        start = datetime.combine(bar_dt.date(), self.DI_WINDOW_START)
+        end = datetime.combine(bar_dt.date(), self.DI_WINDOW_END)
+        bs = datetime.combine(bar_dt.date(), bar_dt.time().replace(tzinfo=None))
+        be = bs + timedelta(minutes=self.BAR_MINUTES)
+        can_trigger = start <= bs < end
+        can_setup = start <= bs and be < end
+        expire = be >= end
+        return can_trigger, can_setup, expire
+
+    def _fees(self, quantity: int, closing: bool) -> float:
+        """Round-trip fees in dollars for a 2-leg spread."""
+        legs = 2 * (2 if closing else 1)
+        return legs * self.commission_per_leg * (quantity or 1)
 
     def _check_for_setup(self, bar: Bar, bar_dt: datetime, vix: float):
         """Check if a completed bar creates a valid DI pulse setup."""
@@ -697,11 +737,18 @@ class BacktestEngine:
         if not triggered:
             return
 
-        # Execute DI entry into the 0DTE slot
+        # Live enters the moment price crosses the trigger, not at the bar
+        # close: price the entry at the trigger (or the bar open if it gapped
+        # through it).
+        if direction == TradeDirection.BULLISH:
+            entry_price = max(bar.open, trigger_price)
+        else:
+            entry_price = min(bar.open, trigger_price)
         self._execute_0dte_entry(
             bar, bar_dt, direction, vix,
             strategy_type='daily_income',
             setup_bar=setup['bar'],
+            entry_price=entry_price,
         )
 
     # ------------------------------------------------------------------
@@ -718,6 +765,7 @@ class BacktestEngine:
         setup_bar: Optional[Bar] = None,
         spread_width: Optional[float] = None,
         min_credit: Optional[float] = None,
+        entry_price: Optional[float] = None,
     ) -> bool:
         """Execute a 0DTE trade entry into the shared slot.
 
@@ -727,9 +775,14 @@ class BacktestEngine:
         if isinstance(direction, str):
             direction = TradeDirection.BULLISH if 'bullish' in direction.lower() else TradeDirection.BEARISH
 
-        current_price = bar.close
+        current_price = entry_price if entry_price else bar.close
         expiration_str = bar_dt.strftime('%Y-%m-%d')
-        chain = self.broker.get_options_chain('SPX', expiration_str)
+        saved_px = self.broker._current_price
+        self.broker._current_price = current_price
+        try:
+            chain = self.broker.get_options_chain('SPX', expiration_str)
+        finally:
+            self.broker._current_price = saved_px
         if not chain:
             return False
 
@@ -1009,7 +1062,10 @@ class BacktestEngine:
                 reason=reason,
             )
 
-        self._daily_pnl += trade.pnl or 0
+        fees = self._fees(trade.quantity, closing=True)
+        trade.pnl = (trade.pnl or 0) - fees
+        self.broker.balance -= fees
+        self._daily_pnl += trade.pnl
         self._record_trade(trade, bar, strategy_type)
 
         logger.debug(
@@ -1083,7 +1139,9 @@ class BacktestEngine:
 
         strategy_type = self._0dte_strategy_type or 'daily_income'
         expire_dt = ET.localize(datetime.combine(trading_day, close_time))
-        final_pnl = trade.spread.profit_at_price(settlement_price) * trade.quantity
+        gross_pnl = trade.spread.profit_at_price(settlement_price) * trade.quantity
+        fees = self._fees(trade.quantity, closing=False)  # settlement: no closing fee
+        final_pnl = gross_pnl - fees
         expire_label = f"Expiration ({close_time.strftime('%I:%M %p').lstrip('0')})"
         norm_reason, detail = _normalize_exit_reason(expire_label)
 
@@ -1098,9 +1156,10 @@ class BacktestEngine:
         # Update balance for expiration P&L
         # max_profit and profit_at_price() both return dollar values (multiplier baked in),
         # so the difference is already in dollars -- no /100 conversion needed.
-        if final_pnl < trade.spread.max_profit * trade.quantity:
-            itm_cost = trade.spread.max_profit * trade.quantity - final_pnl
+        if gross_pnl < trade.spread.max_profit * trade.quantity:
+            itm_cost = trade.spread.max_profit * trade.quantity - gross_pnl
             self.broker.balance -= itm_cost
+        self.broker.balance -= fees
 
         self._daily_pnl += final_pnl
 
